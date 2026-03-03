@@ -74,6 +74,63 @@ async def cerca_item_smart(interaction: Interaction, nome_input: str, tabella="i
     await interaction.followup.send(f"🤔 Ho trovato più oggetti per '{nome_input}'. Quale intendevi?", view=view, ephemeral=True)
     await view.wait()
     return view.value
+
+@bot.tree.command(name="deposita_item_fazione", description="Sposta un oggetto dal tuo inventario al deposito fazione")
+async def deposita_item_fazione(interaction: Interaction, nome: str, quantita: int = 1):
+    # Usiamo defer perché la ricerca intelligente e il database possono richiedere tempo
+    await interaction.response.defer(ephemeral=True)
+
+    if quantita <= 0:
+        return await interaction.followup.send("❌ La quantità deve essere superiore a 0.")
+
+    # 1. Ricerca intelligente nell'inventario dell'utente
+    nome_esatto = await cerca_item_smart(interaction, nome, "inventory")
+    if not nome_esatto:
+        return # La funzione smart gestisce già il messaggio di errore
+
+    # 2. Controllo se l'utente ha un ruolo fazione valido
+    cursor.execute("SELECT role_id FROM depositi")
+    ruoli_fazione_registrati = [r[0] for r in cursor.fetchall()]
+    
+    # Trova il primo ruolo dell'utente che corrisponde a una fazione registrata
+    my_role = next((str(role.id) for role in interaction.user.roles if str(role.id) in ruoli_fazione_registrati), None)
+    
+    if not my_role:
+        return await interaction.followup.send("❌ Non hai un ruolo fazione autorizzato a usare un deposito.")
+
+    # 3. Controllo se l'utente possiede effettivamente l'oggetto e la quantità
+    cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (str(interaction.user.id), nome_esatto))
+    result = cursor.fetchone()
+    
+    if not result or result[0] < quantita:
+        return await interaction.followup.send(f"❌ Non hai abbastanza {nome_esatto} nel tuo inventario.")
+
+    # 4. Operazione di spostamento (Transazione)
+    try:
+        # Rimuovi dall'inventario utente
+        cursor.execute("UPDATE inventory SET quantity = quantity - ? WHERE user_id = ? AND item_name = ?", (quantita, str(interaction.user.id), nome_esatto))
+        
+        # Aggiungi al deposito fazione
+        cursor.execute("""
+            INSERT INTO depositi_items (role_id, item_name, quantity) 
+            VALUES (?, ?, ?) 
+            ON CONFLICT(role_id, item_name) 
+            DO UPDATE SET quantity = quantity + ?
+        """, (my_role, nome_esatto, quantita, quantita))
+        
+        # Pulisci inventario utente se la quantità arriva a 0
+        cursor.execute("DELETE FROM inventory WHERE quantity <= 0")
+        
+        conn.commit()
+        
+        ruolo_obj = interaction.guild.get_role(int(my_role))
+        await interaction.followup.send(f"✅ Hai depositato {quantita}x **{nome_esatto}** nel deposito della fazione **{ruolo_obj.name}**.")
+        
+    except Exception as e:
+        print(f"Errore deposito fazione: {e}")
+        await interaction.followup.send("❌ Si è verificato un errore durante il deposito.")
+
+
 # ================= SISTEMA NEGOZIO (SHOP) =================
 
 @bot.tree.command(name="shop", description="Mostra la lista degli oggetti in vendita")
