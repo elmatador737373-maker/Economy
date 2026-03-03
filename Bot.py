@@ -264,92 +264,167 @@ async def preleva(interaction: Interaction, importo: int):
 # ================= FAZIONI =================
 
 @bot.tree.command(name="deposita_item_fazione", description="Sposta un oggetto nel deposito fazione")
-async def deposita_item_fazione(interaction: Interaction, nome: str, quantita: int = 1):
-    await interaction.response.defer(ephemeral=True)
-    nome_esatto = await cerca_item_smart(interaction, nome, "inventory")
-    if not nome_esatto: return
+# ================= COMANDI FAZIONE CON SELEZIONE MULTIPLA =================
 
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT role_id FROM depositi")
-    validi = [r[0] for r in cur.fetchall()]
-    my_role = next((str(r.id) for r in interaction.user.roles if str(r.id) in validi), None)
-    
-    if not my_role: return await interaction.followup.send("❌ Non sei in una fazione registrata.")
-
-    cur.execute("SELECT quantity FROM inventory WHERE user_id = %s AND item_name = %s", (str(interaction.user.id), nome_esatto))
-    res = cur.fetchone()
-    if not res or res[0] < quantita: return await interaction.followup.send("❌ Non ne hai abbastanza.")
-
-    cur.execute("UPDATE inventory SET quantity = quantity - %s WHERE user_id = %s AND item_name = %s", (quantita, str(interaction.user.id), nome_esatto))
-    cur.execute("INSERT INTO depositi_items (role_id, item_name, quantity) VALUES (%s, %s, %s) ON CONFLICT (role_id, item_name) DO UPDATE SET quantity = depositi_items.quantity + %s", (my_role, nome_esatto, quantita, quantita))
-    cur.execute("DELETE FROM inventory WHERE quantity <= 0")
-    conn.commit()
-    cur.close()
-    conn.close()
-    await interaction.followup.send(f"✅ Depositati {quantita}x **{nome_esatto}**.")
-
-@bot.tree.command(name="preleva_item_fazione", description="Preleva oggetto da fazione")
-async def preleva_item_fazione(interaction: Interaction, nome: str, quantita: int = 1):
-    await interaction.response.defer(ephemeral=True)
-    nome_esatto = await cerca_item_smart(interaction, nome, "depositi_items")
-    if nome_esatto == "NO_ROLE": return await interaction.followup.send("❌ No Fazione.")
-    if not nome_esatto: return
-
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT role_id FROM depositi")
-    my_role = next((str(r.id) for r in interaction.user.roles if str(r.id) in [x[0] for x in cur.fetchall()]), None)
-
-    cur.execute("SELECT quantity FROM depositi_items WHERE role_id = %s AND item_name = %s", (my_role, nome_esatto))
-    disp = cur.fetchone()[0]
-    if disp < quantita: return await interaction.followup.send(f"❌ Disponibili solo {disp}x.")
-
-    cur.execute("UPDATE depositi_items SET quantity = quantity - %s WHERE role_id = %s AND item_name = %s", (quantita, my_role, nome_esatto))
-    cur.execute("INSERT INTO inventory (user_id, item_name, quantity) VALUES (%s, %s, %s) ON CONFLICT (user_id, item_name) DO UPDATE SET quantity = inventory.quantity + %s", (str(interaction.user.id), nome_esatto, quantita, quantita))
-    cur.execute("DELETE FROM depositi_items WHERE quantity <= 0")
-    conn.commit()
-    cur.close()
-    conn.close()
-    await interaction.followup.send(f"📦 Prelevati {quantita}x **{nome_esatto}**.")
-
-@bot.tree.command(name="deposita_soldi_fazione", description="Deposita soldi fazione")
+@bot.tree.command(name="deposita_soldi_fazione", description="Deposita soldi in una delle tue fazioni")
 async def deposita_soldi_fazione(interaction: Interaction, importo: int):
     await interaction.response.defer(ephemeral=True)
-    user = get_user_data(interaction.user.id)
-    if importo <= 0 or user['wallet'] < importo: return await interaction.followup.send("❌ Soldi insufficienti.")
+    miei_ruoli = await get_miei_ruoli_fazione(interaction)
     
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT role_id FROM depositi")
-    my_role = next((str(r.id) for r in interaction.user.roles if str(r.id) in [x[0] for x in cur.fetchall()]), None)
-    if not my_role: return await interaction.followup.send("❌ No Fazione.")
+    if not miei_ruoli: 
+        return await interaction.followup.send("❌ Non appartieni a nessuna fazione registrata.")
+    
+    user = get_user_data(interaction.user.id)
+    if importo <= 0 or user['wallet'] < importo: 
+        return await interaction.followup.send("❌ Fondi insufficienti nel portafoglio.")
 
-    cur.execute("UPDATE users SET wallet = wallet - %s WHERE user_id = %s", (importo, str(interaction.user.id)))
-    cur.execute("UPDATE depositi SET money = money + %s WHERE role_id = %s", (importo, my_role))
-    conn.commit()
-    cur.close()
-    conn.close()
-    await interaction.followup.send(f"✅ Depositati **{importo}$** in fazione.")
+    async def procedi_deposito(inter: Interaction, role_id: str):
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("UPDATE users SET wallet = wallet - %s WHERE user_id = %s", (importo, str(inter.user.id)))
+        cur.execute("UPDATE depositi SET money = money + %s WHERE role_id = %s", (importo, role_id))
+        conn.commit()
+        cur.close()
+        conn.close()
+        await inter.followup.send(f"✅ Depositati **{importo}$** nella fazione.")
 
-@bot.tree.command(name="preleva_soldi_fazione", description="Preleva soldi fazione")
+    if len(miei_ruoli) == 1:
+        await procedi_deposito(interaction, str(miei_ruoli[0].id))
+    else:
+        view = discord.ui.View()
+        options = [discord.SelectOption(label=r.name, value=str(r.id)) for r in miei_ruoli]
+        select = discord.ui.Select(placeholder="Scegli la fazione...", options=options)
+        async def callback(inter: Interaction):
+            await inter.response.defer(ephemeral=True)
+            await procedi_deposito(inter, select.values[0])
+        select.callback = callback
+        view.add_item(select)
+        await interaction.followup.send("💰 In quale fazione vuoi depositare i soldi?", view=view)
+
+@bot.tree.command(name="preleva_soldi_fazione", description="Preleva soldi da una delle tue fazioni")
 async def preleva_soldi_fazione(interaction: Interaction, importo: int):
     await interaction.response.defer(ephemeral=True)
-    conn = get_db_connection()
-    cur = conn.cursor(cursor_factory=RealDictCursor)
-    cur.execute("SELECT role_id FROM depositi")
-    my_role = next((str(r.id) for r in interaction.user.roles if str(r.id) in [x[0] for x in cur.fetchall()]), None)
+    miei_ruoli = await get_miei_ruoli_fazione(interaction)
     
-    cur.execute("SELECT money FROM depositi WHERE role_id = %s", (my_role,))
-    f_money = cur.fetchone()['money']
-    if f_money < importo: return await interaction.followup.send("❌ Cassa fazione vuota.")
+    if not miei_ruoli: 
+        return await interaction.followup.send("❌ Non appartieni a nessuna fazione registrata.")
 
-    cur.execute("UPDATE depositi SET money = money - %s WHERE role_id = %s", (importo, my_role))
-    cur.execute("UPDATE users SET wallet = wallet + %s WHERE user_id = %s", (importo, str(interaction.user.id)))
-    conn.commit()
-    cur.close()
-    conn.close()
-    await interaction.followup.send(f"💸 Prelevati **{importo}$** dalla fazione.")
+    async def procedi_prelievo(inter: Interaction, role_id: str):
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("SELECT money FROM depositi WHERE role_id = %s", (role_id,))
+        res = cur.fetchone()
+        if not res or res['money'] < importo: 
+            cur.close()
+            conn.close()
+            return await inter.followup.send("❌ La fazione non ha abbastanza fondi.")
+        
+        cur.execute("UPDATE depositi SET money = money - %s WHERE role_id = %s", (importo, role_id))
+        cur.execute("UPDATE users SET wallet = wallet + %s WHERE user_id = %s", (importo, str(inter.user.id)))
+        conn.commit()
+        cur.close()
+        conn.close()
+        await inter.followup.send(f"💸 Prelevati **{importo}$** dalla fazione.")
+
+    if len(miei_ruoli) == 1:
+        await procedi_prelievo(interaction, str(miei_ruoli[0].id))
+    else:
+        view = discord.ui.View()
+        options = [discord.SelectOption(label=r.name, value=str(r.id)) for r in miei_ruoli]
+        select = discord.ui.Select(placeholder="Scegli la fazione...", options=options)
+        async def callback(inter: Interaction):
+            await inter.response.defer(ephemeral=True)
+            await procedi_prelievo(inter, select.values[0])
+        select.callback = callback
+        view.add_item(select)
+        await interaction.followup.send("💸 Da quale fazione vuoi prelevare i soldi?", view=view)
+
+@bot.tree.command(name="deposita_item_fazione", description="Metti un oggetto in un deposito fazione")
+async def deposita_item_fazione(interaction: Interaction, nome: str, quantita: int = 1):
+    await interaction.response.defer(ephemeral=True)
+    nome_e = await cerca_item_smart(interaction, nome, "inventory")
+    if not nome_e: return
+    
+    miei_ruoli = await get_miei_ruoli_fazione(interaction)
+    if not miei_ruoli: 
+        return await interaction.followup.send("❌ Non appartieni a nessuna fazione registrata.")
+
+    async def procedi_dep_item(inter: Interaction, role_id: str):
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("UPDATE inventory SET quantity = quantity - %s WHERE user_id = %s AND item_name = %s", (quantita, str(inter.user.id), nome_e))
+        cur.execute("""
+            INSERT INTO depositi_items (role_id, item_name, quantity) 
+            VALUES (%s, %s, %s) 
+            ON CONFLICT (role_id, item_name) 
+            DO UPDATE SET quantity = depositi_items.quantity + %s
+        """, (role_id, nome_e, quantita, quantita))
+        cur.execute("DELETE FROM inventory WHERE quantity <= 0")
+        conn.commit()
+        cur.close()
+        conn.close()
+        await inter.followup.send(f"✅ Depositati {quantita}x **{nome_e}** nel magazzino.")
+
+    if len(miei_ruoli) == 1:
+        await procedi_dep_item(interaction, str(miei_ruoli[0].id))
+    else:
+        view = discord.ui.View()
+        options = [discord.SelectOption(label=r.name, value=str(r.id)) for r in miei_ruoli]
+        select = discord.ui.Select(placeholder="Scegli la fazione...", options=options)
+        async def callback(inter: Interaction):
+            await inter.response.defer(ephemeral=True)
+            await procedi_dep_item(inter, select.values[0])
+        select.callback = callback
+        view.add_item(select)
+        await interaction.followup.send(f"📦 In quale magazzino vuoi depositare {nome_e}?", view=view)
+
+@bot.tree.command(name="preleva_item_fazione", description="Preleva un oggetto da un deposito fazione")
+async def preleva_item_fazione(interaction: Interaction, nome: str, quantita: int = 1):
+    await interaction.response.defer(ephemeral=True)
+    miei_ruoli = await get_miei_ruoli_fazione(interaction)
+    if not miei_ruoli: 
+        return await interaction.followup.send("❌ Non appartieni a nessuna fazione registrata.")
+
+    async def procedi_prel_item(inter: Interaction, role_id: str):
+        # Cerchiamo l'oggetto specificamente nel magazzino della fazione scelta
+        nome_e = await cerca_item_smart(inter, nome, f"fazione_{role_id}")
+        if not nome_e: return
+        
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT quantity FROM depositi_items WHERE role_id = %s AND item_name = %s", (role_id, nome_e))
+        res = cur.fetchone()
+        if not res or res[0] < quantita:
+            cur.close()
+            conn.close()
+            return await inter.followup.send(f"❌ La fazione non ha abbastanza {nome_e}.")
+        
+        cur.execute("UPDATE depositi_items SET quantity = quantity - %s WHERE role_id = %s AND item_name = %s", (quantita, role_id, nome_e))
+        cur.execute("""
+            INSERT INTO inventory (user_id, item_name, quantity) 
+            VALUES (%s, %s, %s) 
+            ON CONFLICT (user_id, item_name) 
+            DO UPDATE SET quantity = inventory.quantity + %s
+        """, (str(inter.user.id), nome_e, quantita, quantita))
+        cur.execute("DELETE FROM depositi_items WHERE quantity <= 0")
+        conn.commit()
+        cur.close()
+        conn.close()
+        await inter.followup.send(f"📦 Prelevati {quantita}x **{nome_e}** dal magazzino.")
+
+    if len(miei_ruoli) == 1:
+        await procedi_prel_item(interaction, str(miei_ruoli[0].id))
+    else:
+        view = discord.ui.View()
+        options = [discord.SelectOption(label=r.name, value=str(r.id)) for r in miei_ruoli]
+        select = discord.ui.Select(placeholder="Scegli la fazione...", options=options)
+        async def callback(inter: Interaction):
+            await inter.response.defer(ephemeral=True)
+            await procedi_prel_item(inter, select.values[0])
+        select.callback = callback
+        view.add_item(select)
+        await interaction.followup.send(f"📦 Da quale magazzino vuoi prelevare {nome}?", view=view)
+
 
 # ================= SHOP =================
 
