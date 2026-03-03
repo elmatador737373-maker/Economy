@@ -249,6 +249,82 @@ async def preleva_item_fazione(interaction: Interaction, nome: str, quantita: in
         async def call(i): await i.response.defer(ephemeral=True); await procedi(i, sel.values[0])
         sel.callback = call; view.add_item(sel)
         await interaction.followup.send(f"Da quale magazzino prelevi?", view=view)
+# ================= COMANDI ADMIN & SHOP (SUPABASE) =================
+
+@bot.tree.command(name="rimuovisoldi", description="ADMIN - Togli soldi a un utente")
+async def rimuovisoldi(interaction: Interaction, utente: discord.Member, importo: int):
+    if not interaction.user.guild_permissions.administrator: return
+    conn = get_db_connection(); cur = conn.cursor()
+    cur.execute("UPDATE users SET wallet = GREATEST(0, wallet - %s) WHERE user_id = %s", (importo, str(utente.id)))
+    conn.commit(); cur.close(); conn.close()
+    await interaction.response.send_message(f"✅ Rimossi **{importo}$** dal portafoglio di {utente.mention}.")
+
+@bot.tree.command(name="aggiungi_item", description="ADMIN - Regala un oggetto a un utente")
+async def aggiungi_item(interaction: Interaction, utente: discord.Member, nome: str, quantita: int = 1):
+    if not interaction.user.guild_permissions.administrator: return
+    await interaction.response.defer(ephemeral=True)
+    nome_e = await cerca_item_smart(interaction, nome, "items") # Cerca se l'item esiste nello shop
+    if not nome_e: return
+
+    conn = get_db_connection(); cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO inventory (user_id, item_name, quantity) 
+        VALUES (%s, %s, %s) 
+        ON CONFLICT (user_id, item_name) 
+        DO UPDATE SET quantity = inventory.quantity + %s
+    """, (str(utente.id), nome_e, quantita, quantita))
+    conn.commit(); cur.close(); conn.close()
+    await interaction.followup.send(f"✅ Aggiunti {quantita}x **{nome_e}** a {utente.mention}.")
+
+@bot.tree.command(name="rimuovi_item", description="ADMIN - Togli un oggetto a un utente")
+async def rimuovi_item(interaction: Interaction, utente: discord.Member, nome: str, quantita: int = 1):
+    if not interaction.user.guild_permissions.administrator: return
+    await interaction.response.defer(ephemeral=True)
+    
+    conn = get_db_connection(); cur = conn.cursor()
+    # Cerchiamo l'item nell'inventario dell'utente
+    cur.execute("SELECT item_name FROM inventory WHERE user_id = %s AND item_name ILIKE %s", (str(utente.id), f"%{nome}%"))
+    res = cur.fetchone()
+    if not res: return await interaction.followup.send("❌ L'utente non ha questo oggetto.")
+    nome_e = res[0]
+
+    cur.execute("UPDATE inventory SET quantity = GREATEST(0, quantity - %s) WHERE user_id = %s AND item_name = %s", (quantita, str(utente.id), nome_e))
+    cur.execute("DELETE FROM inventory WHERE quantity <= 0")
+    conn.commit(); cur.close(); conn.close()
+    await interaction.followup.send(f"✅ Rimossi {quantita}x **{nome_e}** a {utente.mention}.")
+
+@bot.tree.command(name="compra", description="Compra un oggetto dal negozio")
+async def compra(interaction: Interaction, nome: str, quantita: int = 1):
+    await interaction.response.defer(ephemeral=True)
+    nome_e = await cerca_item_smart(interaction, nome, "items")
+    if not nome_e: return
+
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute("SELECT * FROM items WHERE name = %s", (nome_e,))
+    item = cur.fetchone()
+    
+    u = get_user_data(interaction.user.id)
+    prezzo_totale = item['price'] * quantita
+
+    # Controllo Ruolo (se l'item richiede un ruolo fazione)
+    if item['role_required'] != "None":
+        if not any(str(r.id) == item['role_required'] for r in interaction.user.roles):
+            return await interaction.followup.send(f"❌ Non hai il grado necessario per comprare questo oggetto.")
+
+    if u['wallet'] < prezzo_totale:
+        return await interaction.followup.send(f"❌ Non hai abbastanza soldi. Ti servono **{prezzo_totale}$**.")
+
+    # Esecuzione acquisto
+    cur.execute("UPDATE users SET wallet = wallet - %s WHERE user_id = %s", (prezzo_totale, str(interaction.user.id)))
+    cur.execute("""
+        INSERT INTO inventory (user_id, item_name, quantity) 
+        VALUES (%s, %s, %s) 
+        ON CONFLICT (user_id, item_name) 
+        DO UPDATE SET quantity = inventory.quantity + %s
+    """, (str(interaction.user.id), nome_e, quantita, quantita))
+    
+    conn.commit(); cur.close(); conn.close()
+    await interaction.followup.send(f"🛍️ Hai comprato {quantita}x **{nome_e}** per **{prezzo_totale}$**!")
 
 # ================= SHOP & GIOCHI =================
 
