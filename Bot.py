@@ -372,20 +372,6 @@ async def inventario(interaction: Interaction):
     lista = "\n".join([f"📦 **{i[0]}** x{i[1]}" for i in items])
     await interaction.followup.send(embed=discord.Embed(title="Il tuo Inventario", description=lista, color=discord.Color.blue()))
 
-@bot.tree.command(name="compra", description="Compra qualcosa dallo shop")
-async def compra(interaction: Interaction, nome: str):
-    await interaction.response.defer(ephemeral=True)
-    n_e = await cerca_item_smart(interaction, nome, "items")
-    if not n_e: return
-    user = get_user_data(interaction.user.id)
-    cursor.execute("SELECT price, role_required FROM items WHERE name = ?", (n_e,))
-    p, r = cursor.fetchone()
-    if user[1] < p: return await interaction.followup.send("❌ Soldi insufficienti.")
-    if r != "None" and not any(role.id == int(r) for role in interaction.user.roles): return await interaction.followup.send(f"⚠️ Serve il ruolo <@&{r}>.")
-    cursor.execute("UPDATE users SET wallet = wallet - ? WHERE user_id = ?", (p, str(interaction.user.id)))
-    cursor.execute("INSERT INTO inventory (user_id, item_name, quantity) VALUES (?, ?, 1) ON CONFLICT(user_id, item_name) DO UPDATE SET quantity = quantity + 1", (str(interaction.user.id), n_e))
-    conn.commit()
-    await interaction.followup.send(f"🛍️ Hai comprato **{n_e}**!")
 
 @bot.tree.command(name="crea_item_shop", description="ADMIN - Aggiungi oggetto allo shop")
 async def crea_item_shop(interaction: Interaction, nome: str, descrizione: str, prezzo: int, ruolo_richiesto: discord.Role = None):
