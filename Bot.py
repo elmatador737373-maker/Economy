@@ -274,6 +274,131 @@ async def cerca(interaction: Interaction):
     conn.commit(); cur.close(); conn.close()
     await interaction.followup.send(f"✅ Hai trovato: **{mat}**!")
 
+# ================= GIOCHI D'AZZARDO (SUPABASE) =================
+
+@bot.tree.command(name="blackjack", description="Gioca a Blackjack contro il banco")
+async def blackjack(interaction: Interaction, scommessa: int):
+    if scommessa <= 0: 
+        return await interaction.response.send_message("❌ La scommessa deve essere maggiore di 0.", ephemeral=True)
+    
+    u = get_user_data(interaction.user.id)
+    if u['wallet'] < scommessa:
+        return await interaction.response.send_message("❌ Non hai abbastanza soldi nel portafoglio.", ephemeral=True)
+
+    def get_deck():
+        cards = [2, 3, 4, 5, 6, 7, 8, 9, 10, 10, 10, 10, 11] * 4
+        random.shuffle(cards)
+        return cards
+
+    deck = get_deck()
+    player_cards = [deck.pop(), deck.pop()]
+    dealer_cards = [deck.pop(), deck.pop()]
+
+    async def create_bj_embed(p_cards, d_cards, ended=False):
+        p_score = sum(p_cards)
+        d_score = sum(d_cards)
+        emb = discord.Embed(title="🃏 Blackjack", color=discord.Color.blue())
+        emb.add_field(name="Le tue carte", value=f"{', '.join(map(str, p_cards))} (Totale: **{p_score}**)", inline=False)
+        dealer_val = f"{', '.join(map(str, d_cards))} (Totale: **{d_score}**)" if ended else f"{d_cards[0]}, ?"
+        emb.add_field(name="Banco", value=dealer_val, inline=False)
+        return emb
+
+    view = discord.ui.View()
+    hit_btn = discord.ui.Button(label="Carta", style=discord.ButtonStyle.green)
+    stand_btn = discord.ui.Button(label="Stai", style=discord.ButtonStyle.red)
+    view.add_item(hit_btn)
+    view.add_item(stand_btn)
+
+    await interaction.response.send_message(embed=await create_bj_embed(player_cards, dealer_cards), view=view)
+
+    async def end_game(inter, result):
+        conn = get_db_connection()
+        cur = conn.cursor()
+        if result == "win":
+            cur.execute("UPDATE users SET wallet = wallet + %s WHERE user_id = %s", (scommessa, str(interaction.user.id)))
+            msg = f"🏆 Hai vinto **{scommessa}$**!"
+        elif result == "lose":
+            cur.execute("UPDATE users SET wallet = wallet - %s WHERE user_id = %s", (scommessa, str(interaction.user.id)))
+            msg = f"💀 Hai perso **{scommessa}$**."
+        else:
+            msg = "🤝 Pareggio, i soldi restano a te."
+        
+        conn.commit()
+        cur.close(); conn.close()
+        
+        emb = await create_bj_embed(player_cards, dealer_cards, True)
+        emb.set_footer(text=msg)
+        await inter.edit_original_response(embed=emb, view=None)
+
+    async def hit_callback(i: Interaction):
+        if i.user.id != interaction.user.id: return
+        player_cards.append(deck.pop())
+        if sum(player_cards) > 21:
+            view.stop()
+            await end_game(i, "lose")
+        else:
+            await i.response.edit_message(embed=await create_bj_embed(player_cards, dealer_cards))
+
+    async def stand_callback(i: Interaction):
+        if i.user.id != interaction.user.id: return
+        view.stop()
+        while sum(dealer_cards) < 17:
+            dealer_cards.append(deck.pop())
+        
+        p_total, d_total = sum(player_cards), sum(dealer_cards)
+        if d_total > 21 or p_total > d_total: res = "win"
+        elif p_total < d_total: res = "lose"
+        else: res = "draw"
+        await i.response.defer()
+        await end_game(i, res)
+
+    hit_btn.callback = hit_callback
+    stand_btn.callback = stand_callback
+
+@bot.tree.command(name="roulette", description="Scommetti su un colore (rosso/nero) o un numero (0-36)")
+async def roulette(interaction: Interaction, scommessa: int, scelta: str):
+    await interaction.response.defer()
+    u = get_user_data(interaction.user.id)
+    
+    if scommessa <= 0 or u['wallet'] < scommessa:
+        return await interaction.followup.send("❌ Fondi insufficienti o scommessa non valida.")
+
+    numero_vincente = random.randint(0, 36)
+    rossi = [1,3,5,7,9,12,14,16,18,19,21,23,25,27,30,32,34,36]
+    
+    if numero_vincente == 0: colore_vincente = "verde"
+    elif numero_vincente in rossi: colore_vincente = "rosso"
+    else: colore_vincente = "nero"
+
+    vinto = False
+    moltiplicatore = 0
+    scelta_pulita = scelta.lower().strip()
+
+    # Logica Vittoria
+    if scelta_pulita == colore_vincente:
+        vinto = True
+        moltiplicatore = 1 # Raddoppia la posta
+    elif scelta_pulita.isdigit() and int(scelta_pulita) == numero_vincente:
+        vinto = True
+        moltiplicatore = 35 # 35 volte la posta
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    if vinto:
+        premio = scommessa * moltiplicatore
+        cur.execute("UPDATE users SET wallet = wallet + %s WHERE user_id = %s", (premio, str(interaction.user.id)))
+        color_emoji = "🔴" if colore_vincente == "rosso" else "⚫" if colore_vincente == "nero" else "🟢"
+        result_text = f"🎡 Risultato: **{numero_vincente} {color_emoji}**\n✅ Complimenti! Hai vinto **{premio}$**!"
+    else:
+        cur.execute("UPDATE users SET wallet = wallet - %s WHERE user_id = %s", (scommessa, str(interaction.user.id)))
+        color_emoji = "🔴" if colore_vincente == "rosso" else "⚫" if colore_vincente == "nero" else "🟢"
+        result_text = f"🎡 Risultato: **{numero_vincente} {color_emoji}**\n❌ Mi dispiace, hai perso **{scommessa}$**."
+    
+    conn.commit()
+    cur.close(); conn.close()
+    await interaction.followup.send(result_text)
+
 # ================= COMANDI ADMIN =================
 
 @bot.tree.command(name="aggiungisoldi", description="ADMIN - Regala soldi")
