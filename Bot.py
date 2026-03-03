@@ -134,7 +134,8 @@ async def creadeposito(interaction: Interaction, ruolo: discord.Role):
     cursor.execute("INSERT INTO depositi (role_id, money) VALUES (?, ?)", (str(ruolo.id), 0))
     conn.commit()
     await interaction.response.send_message(f"Deposito creato per il ruolo {ruolo.mention}!", ephemeral=True)
-   @bot.tree.command(name="deposito", description="Apri il deposito del tuo ruolo")
+   
+@bot.tree.command(name="deposito", description="Apri il deposito del tuo ruolo")
 async def deposito(interaction: Interaction):
     await interaction.response.defer(ephemeral=True)
 
