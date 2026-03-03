@@ -100,10 +100,6 @@ async def cerca_item_smart(interaction: Interaction, nome_input: str, modo="item
 @bot.tree.command(name="portafoglio", description="Vedi i tuoi soldi")
 async def portafoglio(interaction: Interaction):
     u = get_user_data(interaction.user.id)
-    for item in self.children:
-    item.disabled = True
-await interaction.message.edit(view=self)
-self.stop()
     await interaction.response.send_message(f"💰 **Wallet:** {u['wallet']}$ | 🏦 **Banca:** {u['bank']}$", ephemeral=True)
 
 @bot.tree.command(name="deposita", description="Metti soldi in banca")
@@ -114,10 +110,6 @@ async def deposita(interaction: Interaction, importo: int):
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("UPDATE users SET wallet = wallet - %s, bank = bank + %s WHERE user_id = %s", (importo, importo, str(interaction.user.id)))
-   for item in self.children:
-    item.disabled = True
-await interaction.message.edit(view=self)
-self.stop()
     conn.commit(); cur.close(); conn.close()
     await interaction.response.send_message(f"✅ Depositati {importo}$ in banca.")
 
@@ -129,70 +121,8 @@ async def preleva(interaction: Interaction, importo: int):
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("UPDATE users SET bank = bank - %s, wallet = wallet + %s WHERE user_id = %s", (importo, importo, str(interaction.user.id)))
- for item in self.children:
-    item.disabled = True
-await interaction.message.edit(view=self)
-self.stop()  
-conn.commit(); cur.close(); conn.close()
+    conn.commit(); cur.close(); conn.close()
     await interaction.response.send_message(f"✅ Prelevati {importo}$ dalla banca.")
-@bot.tree.command(name="modifica_item_shop", description="ADMIN - Modifica un oggetto esistente nello shop")
-@app_commands.describe(
-    nome="Il nome esatto dell'oggetto da modificare",
-    nuovo_prezzo="Inserisci il nuovo prezzo (lascia vuoto per non cambiare)",
-    nuova_descrizione="Inserisci la nuova descrizione (lascia vuoto per non cambiare)",
-    nuovo_ruolo="Seleziona il nuovo ruolo richiesto (lascia vuoto per non cambiare)"
-)
-async def modifica_item_shop(
-    interaction: Interaction, 
-    nome: str, 
-    nuovo_prezzo: int = None, 
-    nuova_descrizione: str = None, 
-    nuovo_ruolo: discord.Role = None
-):
-    if not interaction.user.guild_permissions.administrator:
-        return await interaction.response.send_message("❌ Non hai i permessi per farlo.", ephemeral=True)
-
-    await interaction.response.defer(ephemeral=True)
-    
-    # Ricerca intelligente per trovare l'oggetto corretto
-    nome_e = await cerca_item_smart(interaction, nome, "items")
-    if not nome_e: return
-
-    conn = get_db_connection()
-    cur = conn.cursor(cursor_factory=RealDictCursor)
-    
-    # Verifichiamo che l'item esista
-    cur.execute("SELECT * FROM items WHERE name = %s", (nome_e,))
-    item_attuale = cur.fetchone()
-    
-    if not item_attuale:
-        cur.close(); conn.close()
-        return await interaction.followup.send("❌ Errore imprevisto: oggetto non trovato.")
-
-    # Prepariamo i nuovi valori (se non forniti, teniamo quelli vecchi)
-    prezzo = nuovo_prezzo if nuovo_prezzo is not None else item_attuale['price']
-    desc = nuova_descrizione if nuova_descrizione is not None else item_attuale['description']
-    ruolo = str(nuovo_ruolo.id) if nuovo_ruolo else item_attuale['role_required']
-
-    # Eseguiamo l'update
-    cur.execute("""
-        UPDATE items 
-        SET price = %s, description = %s, role_required = %s 
-        WHERE name = %s
-    """, (prezzo, desc, ruolo, nome_e))
-    
-    conn.commit()
-    cur.close(); conn.close()
-
-    embed = discord.Embed(title="✅ Oggetto Modificato", color=discord.Color.green())
-    embed.add_field(name="Oggetto", value=nome_e, inline=False)
-    embed.add_field(name="Nuovo Prezzo", value=f"{prezzo}$", inline=True)
-    role_mention = f"<@&{ruolo}>" if ruolo != "None" else "Nessuno"
-    embed.add_field(name="Ruolo Richiesto", value=role_mention, inline=True)
-    embed.add_field(name="Nuova Descrizione", value=desc, inline=False)
-    
-    await interaction.followup.send(embed=embed)
-
 
 # ================= COMANDI FAZIONE (MULTI-RUOLO) =================
 
@@ -235,10 +165,6 @@ async def deposita_soldi_fazione(interaction: Interaction, importo: int):
         conn = get_db_connection(); cur = conn.cursor()
         cur.execute("UPDATE users SET wallet = wallet - %s WHERE user_id = %s", (importo, str(inter.user.id)))
         cur.execute("UPDATE depositi SET money = money + %s WHERE role_id = %s", (importo, rid))
-       for item in self.children:
-    item.disabled = True
-await interaction.message.edit(view=self)
-self.stop()
         conn.commit(); cur.close(); conn.close()
         await inter.followup.send(f"✅ Depositati {importo}$")
 
@@ -262,10 +188,6 @@ async def preleva_soldi_fazione(interaction: Interaction, importo: int):
         if cur.fetchone()['money'] < importo: return await inter.followup.send("❌ Fondi fazione insufficienti.")
         cur.execute("UPDATE depositi SET money = money - %s WHERE role_id = %s", (importo, rid))
         cur.execute("UPDATE users SET wallet = wallet + %s WHERE user_id = %s", (importo, str(inter.user.id)))
-        for item in self.children:
-    item.disabled = True
-await interaction.message.edit(view=self)
-self.stop()
         conn.commit(); cur.close(); conn.close()
         await inter.followup.send(f"💸 Prelevati {importo}$")
 
@@ -290,10 +212,6 @@ async def deposita_item_fazione(interaction: Interaction, nome: str, quantita: i
         cur.execute("UPDATE inventory SET quantity = quantity - %s WHERE user_id = %s AND item_name = %s", (quantita, str(inter.user.id), nome_e))
         cur.execute("INSERT INTO depositi_items (role_id, item_name, quantity) VALUES (%s, %s, %s) ON CONFLICT (role_id, item_name) DO UPDATE SET quantity = depositi_items.quantity + %s", (rid, nome_e, quantita, quantita))
         cur.execute("DELETE FROM inventory WHERE quantity <= 0")
-        for item in self.children:
-    item.disabled = True
-await interaction.message.edit(view=self)
-self.stop()
         conn.commit(); cur.close(); conn.close()
         await inter.followup.send(f"✅ Depositati {quantita}x {nome_e}")
 
@@ -321,10 +239,6 @@ async def preleva_item_fazione(interaction: Interaction, nome: str, quantita: in
         cur.execute("UPDATE depositi_items SET quantity = quantity - %s WHERE role_id = %s AND item_name = %s", (quantita, rid, nome_e))
         cur.execute("INSERT INTO inventory (user_id, item_name, quantity) VALUES (%s, %s, %s) ON CONFLICT (user_id, item_name) DO UPDATE SET quantity = inventory.quantity + %s", (str(inter.user.id), nome_e, quantita, quantita))
         cur.execute("DELETE FROM depositi_items WHERE quantity <= 0")
-       for item in self.children:
-    item.disabled = True
-await interaction.message.edit(view=self)
-self.stop()
         conn.commit(); cur.close(); conn.close()
         await inter.followup.send(f"📦 Prelevati {quantita}x {nome_e}")
 
@@ -798,6 +712,69 @@ async def inventario(interaction: Interaction):
     embed.set_footer(text="Solo tu puoi vedere questo messaggio")
     await interaction.followup.send(embed=embed)
 
+@bot.tree.command(name="modifica_item_shop", description="ADMIN - Modifica un oggetto esistente nello shop")
+@app_commands.describe(
+    nome="Il nome dell'oggetto da modificare",
+    nuovo_prezzo="Nuovo prezzo (lascia vuoto per non cambiare)",
+    nuova_descrizione="Nuova descrizione (lascia vuoto per non cambiare)",
+    nuovo_ruolo="Nuovo ruolo richiesto (lascia vuoto per non cambiare)"
+)
+async def modifica_item_shop(
+    interaction: discord.Interaction, 
+    nome: str, 
+    nuovo_prezzo: int = None, 
+    nuova_descrizione: str = None, 
+    nuovo_ruolo: discord.Role = None
+):
+    # Controllo permessi amministratore
+    if not interaction.user.guild_permissions.administrator:
+        return await interaction.response.send_message("❌ Non hai i permessi per farlo.", ephemeral=True)
+
+    await interaction.response.defer(ephemeral=True)
+    
+    # Ricerca intelligente per trovare l'oggetto (gestisce maiuscole/minuscole)
+    nome_e = await cerca_item_smart(interaction, nome, "items")
+    if not nome_e:
+        return 
+
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    
+    # Recuperiamo i dati attuali per non sovrascrivere con 'None' i campi non compilati
+    cur.execute("SELECT * FROM items WHERE name = %s", (nome_e,))
+    item_attuale = cur.fetchone()
+    
+    if not item_attuale:
+        cur.close()
+        conn.close()
+        return await interaction.followup.send("❌ Errore: oggetto non trovato nel database.")
+
+    # Se l'utente non inserisce un valore, usiamo quello già presente nel DB
+    prezzo = nuovo_prezzo if nuovo_prezzo is not None else item_attuale['price']
+    desc = nuova_descrizione if nuova_descrizione is not None else item_attuale['description']
+    ruolo = str(nuovo_ruolo.id) if nuovo_ruolo else item_attuale['role_required']
+
+    # Eseguiamo l'aggiornamento su Supabase
+    cur.execute("""
+        UPDATE items 
+        SET price = %s, description = %s, role_required = %s 
+        WHERE name = %s
+    """, (prezzo, desc, ruolo, nome_e))
+    
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    # Messaggio di conferma con i nuovi dati
+    emb = discord.Embed(title="✅ Oggetto Modificato", color=discord.Color.green())
+    emb.add_field(name="📦 Oggetto", value=nome_e, inline=False)
+    emb.add_field(name="💰 Nuovo Prezzo", value=f"{prezzo}$", inline=True)
+    
+    ruolo_display = f"<@&{ruolo}>" if ruolo != "None" else "Nessuno"
+    emb.add_field(name="🎖️ Ruolo Req.", value=ruolo_display, inline=True)
+    emb.add_field(name="📝 Nuova Descrizione", value=desc, inline=False)
+    
+    await interaction.followup.send(embed=emb)
 
 # ================= WEB SERVER & START =================
 @bot.event
