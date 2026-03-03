@@ -91,6 +91,66 @@ def role_has_deposito(user_roles, role_required):
             return True
     return False
 
+# ================= PRELEVA DAL DEPOSITO =================
+@bot.tree.command(name="preleva_deposito", description="Preleva soldi o item dal deposito del tuo ruolo")
+@app_commands.describe(tipo="soldi o item", nome_item="Nome dell'item (solo se tipo=item)", quantita="Quantità (solo se tipo=item)")
+async def preleva_deposito(interaction: discord.Interaction, tipo: str, nome_item: str = None, quantita: int = None):
+    roles_user = interaction.user.roles
+
+    # Trova quale deposito può usare
+    cursor.execute("SELECT role_id FROM depositi")
+    depositi = cursor.fetchall()
+    accessibile = None
+    for r in depositi:
+        if any(str(role.id) == str(r[0]) for role in roles_user):
+            accessibile = r[0]
+            break
+
+    if not accessibile:
+        await interaction.response.send_message("Non hai il ruolo richiesto per accedere a nessun deposito.", ephemeral=True)
+        return
+
+    if tipo.lower() == "soldi":
+        cursor.execute("SELECT money FROM depositi WHERE role_id = ?", (accessibile,))
+        soldi = cursor.fetchone()[0]
+
+        if soldi <= 0:
+            await interaction.response.send_message("Non ci sono soldi nel deposito.", ephemeral=True)
+            return
+
+        # Aggiunge soldi al wallet del player e li rimuove dal deposito
+        cursor.execute("UPDATE depositi SET money = money - ? WHERE role_id = ?", (soldi, accessibile))
+        cursor.execute("UPDATE users SET wallet = wallet + ? WHERE user_id = ?", (soldi, str(interaction.user.id)))
+        conn.commit()
+
+        await interaction.response.send_message(f"Hai prelevato {soldi}$ dal deposito del ruolo.")
+
+    elif tipo.lower() == "item":
+        if not nome_item or not quantita or quantita <= 0:
+            await interaction.response.send_message("Devi specificare nome_item e quantita valida.", ephemeral=True)
+            return
+
+        cursor.execute("SELECT quantity FROM depositi_items WHERE role_id = ? AND item_name = ?", (accessibile, nome_item))
+        res = cursor.fetchone()
+        if not res or res[0] < quantita:
+            await interaction.response.send_message("Non ci sono abbastanza item nel deposito.", ephemeral=True)
+            return
+
+        # Rimuove gli item dal deposito e li aggiunge all'inventario del player
+        cursor.execute("UPDATE depositi_items SET quantity = quantity - ? WHERE role_id = ? AND item_name = ?", (quantita, accessibile, nome_item))
+        cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (str(interaction.user.id), nome_item))
+        inv_item = cursor.fetchone()
+        if inv_item:
+            cursor.execute("UPDATE inventory SET quantity = quantity + ? WHERE user_id = ? AND item_name = ?", (quantita, str(interaction.user.id), nome_item))
+        else:
+            cursor.execute("INSERT INTO inventory (user_id, item_name, quantity) VALUES (?, ?, ?)", (str(interaction.user.id), nome_item, quantita))
+
+        conn.commit()
+        await interaction.response.send_message(f"Hai prelevato {quantita} x {nome_item} dal deposito del ruolo.")
+
+    else:
+        await interaction.response.send_message("Tipo non valido. Usa 'soldi' o 'item'.", ephemeral=True)
+
 # ================= COMANDI =================
 # INVENTARIO
 @bot.tree.command(name="inventario", description="Visualizza il tuo inventario e i tuoi soldi")
