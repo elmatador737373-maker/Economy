@@ -90,6 +90,43 @@ async def cerca_item_smart(interaction: Interaction, nome_input: str, tabella="i
     await interaction.followup.send(f"🤔 Più risultati per '{nome_input}':", view=view, ephemeral=True)
     await view.wait()
     return view.value
+@bot.tree.command(name="crea_item_shop", description="ADMIN - Aggiungi un nuovo oggetto allo shop")
+async def crea_item_shop(interaction: discord.Interaction, nome: str, descrizione: str, prezzo: int, ruolo: discord.Role = None):
+    await interaction.response.defer(ephemeral=True)
+    
+    # Controllo permessi
+    if not interaction.user.guild_permissions.administrator:
+        return await interaction.followup.send("❌ Solo un Amministratore può aggiungere oggetti allo shop.")
+
+    ruolo_id = str(ruolo.id) if ruolo else "None"
+    
+    conn = get_db_connection()
+    if not conn:
+        return await interaction.followup.send("❌ Errore di connessione al database.")
+    
+    try:
+        cur = conn.cursor()
+        # Utilizziamo ON CONFLICT per aggiornare l'oggetto se esiste già con lo stesso nome
+        cur.execute("""
+            INSERT INTO items (name, description, price, role_required) 
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (name) 
+            DO UPDATE SET description = EXCLUDED.description, price = EXCLUDED.price, role_required = EXCLUDED.role_required
+        """, (nome, descrizione, prezzo, ruolo_id))
+        
+        conn.commit()
+        cur.close()
+        conn.close()
+        
+        embed = discord.Embed(title="✅ Oggetto Creato", color=discord.Color.green())
+        embed.add_field(name="Nome", value=nome)
+        embed.add_field(name="Prezzo", value=f"{prezzo}$")
+        embed.add_field(name="Requisito", value=ruolo.mention if ruolo else "Nessuno")
+        
+        await interaction.followup.send(embed=embed)
+    except Exception as e:
+        if conn: conn.close()
+        await interaction.followup.send(f"❌ Errore durante la creazione: {e}")
 
 # ================= GESTIONE CATALOGO SHOP (ADMIN) =================
 
