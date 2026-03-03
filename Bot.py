@@ -310,6 +310,97 @@ async def crea_item_shop(interaction: Interaction, nome: str, descrizione: str, 
     conn.commit(); cur.close(); conn.close()
     await interaction.response.send_message(f"✅ Item {nome} creato.")
 
+# ID del ruolo staff fornito
+RUOLO_STAFF_ID = 1465412245264662734
+
+# Helper per controllare se l'utente è staff
+def is_staff(interaction: discord.Interaction):
+    return any(role.id == RUOLO_STAFF_ID for role in interaction.user.roles)
+
+# ================= COMANDI VISUALIZZAZIONE STAFF =================
+
+@bot.tree.command(name="staff_vedi_portafoglio", description="STAFF - Vedi i soldi di un utente")
+async def staff_vedi_portafoglio(interaction: Interaction, utente: discord.Member):
+    if not is_staff(interaction):
+        return await interaction.response.send_message("❌ Non hai il ruolo Staff per usare questo comando.", ephemeral=True)
+    
+    await interaction.response.defer(ephemeral=True)
+    u = get_user_data(utente.id)
+    
+    embed = discord.Embed(title=f"💰 Bilancio di {utente.display_name}", color=discord.Color.gold())
+    embed.add_field(name="Portafoglio", value=f"{u['wallet']}$", inline=True)
+    embed.add_field(name="Banca", value=f"{u['bank']}$", inline=True)
+    await interaction.followup.send(embed=embed)
+
+@bot.tree.command(name="staff_vedi_inventario", description="STAFF - Vedi l'inventario di un utente")
+async def staff_vedi_inventario(interaction: Interaction, utente: discord.Member):
+    if not is_staff(interaction):
+        return await interaction.response.send_message("❌ Non hai il ruolo Staff.", ephemeral=True)
+    
+    await interaction.response.defer(ephemeral=True)
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute("SELECT item_name, quantity FROM inventory WHERE user_id = %s", (str(utente.id),))
+    items = cur.fetchall()
+    cur.close(); conn.close()
+
+    embed = discord.Embed(title=f"🎒 Inventario di {utente.display_name}", color=discord.Color.blue())
+    if items:
+        desc = "\n".join([f"📦 **{i['item_name']}** x{i['quantity']}" for i in items])
+        embed.description = desc
+    else:
+        embed.description = "*L'inventario è vuoto.*"
+    
+    await interaction.followup.send(embed=embed)
+
+@bot.tree.command(name="staff_vedi_deposito", description="STAFF - Vedi un deposito fazione")
+async def staff_vedi_deposito(interaction: Interaction):
+    if not is_staff(interaction):
+        return await interaction.response.send_message("❌ Non hai il ruolo Staff.", ephemeral=True)
+    
+    await interaction.response.defer(ephemeral=True)
+    
+    # Lo staff vede TUTTE le fazioni registrate nel DB
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT role_id FROM depositi")
+    fazioni_id = [r[0] for r in cur.fetchall()]
+    cur.close(); conn.close()
+
+    if not fazioni_id:
+        return await interaction.followup.send("❌ Non ci sono fazioni registrate nel database.")
+
+    async def mostra_staff(inter, rid):
+        conn_i = get_db_connection(); cur_i = conn_i.cursor(cursor_factory=RealDictCursor)
+        cur_i.execute("SELECT money FROM depositi WHERE role_id = %s", (rid,))
+        m = cur_i.fetchone()['money']
+        cur_i.execute("SELECT item_name, quantity FROM depositi_items WHERE role_id = %s", (rid,))
+        it = cur_i.fetchall()
+        r_obj = inter.guild.get_role(int(rid))
+        
+        emb = discord.Embed(title=f"🏦 Ispezione Deposito: {r_obj.name if r_obj else rid}", color=discord.Color.red())
+        emb.add_field(name="Soldi", value=f"{m}$", inline=False)
+        lista = "\n".join([f"📦 {i['item_name']} x{i['quantity']}" for i in it]) if it else "Vuoto"
+        emb.add_field(name="Oggetti", value=lista, inline=False)
+        await inter.followup.send(embed=emb); cur_i.close(); conn_i.close()
+
+    # Menu di selezione per lo staff
+    view = discord.ui.View()
+    options = []
+    for rid in fazioni_id:
+        role = interaction.guild.get_role(int(rid))
+        label = role.name if role else f"ID: {rid}"
+        options.append(discord.SelectOption(label=label, value=rid))
+    
+    select = discord.ui.Select(placeholder="Scegli quale fazione ispezionare...", options=options[:25])
+    async def callback(i):
+        await i.response.defer(ephemeral=True)
+        await mostra_staff(i, select.values[0])
+    
+    select.callback = callback
+    view.add_item(select)
+    await interaction.followup.send("🕵️ Ispezione Staff: Quale deposito vuoi controllare?", view=view)
+
 # ================= WEB SERVER & START =================
 @bot.event
 async def on_ready():
