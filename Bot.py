@@ -47,7 +47,44 @@ CREATE TABLE IF NOT EXISTS depositi (
     money INTEGER DEFAULT 0
 )
 """)
+@bot.tree.command(name="cerca", description="Cerca oggetti nella spazzatura con probabilità")
+async def cerca(interaction: discord.Interaction):
+    import random
 
+    user_id = str(interaction.user.id)
+
+    # Lista loot con probabilità (in percentuale)
+    loot = [
+        ("Rame", 10),       # bassa probabilità
+        ("Ferro", 30),      # media probabilità
+        ("Plastica", 30),   # media probabilità
+        ("Nulla", 30)       # non trovare nulla
+    ]
+
+    roll = random.randint(1, 100)
+    current = 0
+    trovato = "Nulla"
+
+    for item, chance in loot:
+        current += chance
+        if roll <= current:
+            trovato = item
+            break
+
+    if trovato == "Nulla":
+        await interaction.response.send_message("Non hai trovato nulla.")
+        return
+
+    # Aggiungi l'item all'inventario
+    cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, trovato))
+    res = cursor.fetchone()
+    if res:
+        cursor.execute("UPDATE inventory SET quantity = quantity + 1 WHERE user_id = ? AND item_name = ?", (user_id, trovato))
+    else:
+        cursor.execute("INSERT INTO inventory (user_id, item_name, quantity) VALUES (?, ?, ?)", (user_id, trovato, 1))
+    conn.commit()
+
+    await interaction.response.send_message(f"Hai trovato: {trovato}!")
 conn.commit()
 @bot.tree.command(name="aggiungisoldi", description="ADMIN - Aggiungi soldi a un utente")
 @app_commands.describe(utente="Utente da premiare", importo="Quantità di soldi")
