@@ -135,6 +135,64 @@ await interaction.message.edit(view=self)
 self.stop()  
 conn.commit(); cur.close(); conn.close()
     await interaction.response.send_message(f"✅ Prelevati {importo}$ dalla banca.")
+@bot.tree.command(name="modifica_item_shop", description="ADMIN - Modifica un oggetto esistente nello shop")
+@app_commands.describe(
+    nome="Il nome esatto dell'oggetto da modificare",
+    nuovo_prezzo="Inserisci il nuovo prezzo (lascia vuoto per non cambiare)",
+    nuova_descrizione="Inserisci la nuova descrizione (lascia vuoto per non cambiare)",
+    nuovo_ruolo="Seleziona il nuovo ruolo richiesto (lascia vuoto per non cambiare)"
+)
+async def modifica_item_shop(
+    interaction: Interaction, 
+    nome: str, 
+    nuovo_prezzo: int = None, 
+    nuova_descrizione: str = None, 
+    nuovo_ruolo: discord.Role = None
+):
+    if not interaction.user.guild_permissions.administrator:
+        return await interaction.response.send_message("❌ Non hai i permessi per farlo.", ephemeral=True)
+
+    await interaction.response.defer(ephemeral=True)
+    
+    # Ricerca intelligente per trovare l'oggetto corretto
+    nome_e = await cerca_item_smart(interaction, nome, "items")
+    if not nome_e: return
+
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    
+    # Verifichiamo che l'item esista
+    cur.execute("SELECT * FROM items WHERE name = %s", (nome_e,))
+    item_attuale = cur.fetchone()
+    
+    if not item_attuale:
+        cur.close(); conn.close()
+        return await interaction.followup.send("❌ Errore imprevisto: oggetto non trovato.")
+
+    # Prepariamo i nuovi valori (se non forniti, teniamo quelli vecchi)
+    prezzo = nuovo_prezzo if nuovo_prezzo is not None else item_attuale['price']
+    desc = nuova_descrizione if nuova_descrizione is not None else item_attuale['description']
+    ruolo = str(nuovo_ruolo.id) if nuovo_ruolo else item_attuale['role_required']
+
+    # Eseguiamo l'update
+    cur.execute("""
+        UPDATE items 
+        SET price = %s, description = %s, role_required = %s 
+        WHERE name = %s
+    """, (prezzo, desc, ruolo, nome_e))
+    
+    conn.commit()
+    cur.close(); conn.close()
+
+    embed = discord.Embed(title="✅ Oggetto Modificato", color=discord.Color.green())
+    embed.add_field(name="Oggetto", value=nome_e, inline=False)
+    embed.add_field(name="Nuovo Prezzo", value=f"{prezzo}$", inline=True)
+    role_mention = f"<@&{ruolo}>" if ruolo != "None" else "Nessuno"
+    embed.add_field(name="Ruolo Richiesto", value=role_mention, inline=True)
+    embed.add_field(name="Nuova Descrizione", value=desc, inline=False)
+    
+    await interaction.followup.send(embed=embed)
+
 
 # ================= COMANDI FAZIONE (MULTI-RUOLO) =================
 
