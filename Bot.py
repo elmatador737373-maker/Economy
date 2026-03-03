@@ -3,25 +3,29 @@ from discord import app_commands, Interaction
 from discord.ext import commands
 from discord.ui import View, Select
 import sqlite3
+import random
 import os
 import threading
 from flask import Flask
 
-# Configurazione Iniziale
+# ================= CONFIGURAZIONE INIZIALE =================
 TOKEN = os.environ.get("TOKEN")
 intents = discord.Intents.default()
 intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# ================= DATABASE =================
+# Connessione DB (check_same_thread=False è vitale per Flask + Discord)
 conn = sqlite3.connect("economia.db", check_same_thread=False)
 cursor = conn.cursor()
 
 def init_db():
     cursor.execute("CREATE TABLE IF NOT EXISTS users (user_id TEXT PRIMARY KEY, wallet INTEGER DEFAULT 500, bank INTEGER DEFAULT 0)")
+    cursor.execute("CREATE TABLE IF NOT EXISTS items (name TEXT PRIMARY KEY, description TEXT, price INTEGER, role_required TEXT)")
     cursor.execute("CREATE TABLE IF NOT EXISTS inventory (user_id TEXT, item_name TEXT, quantity INTEGER)")
     cursor.execute("CREATE TABLE IF NOT EXISTS depositi (role_id TEXT PRIMARY KEY, money INTEGER DEFAULT 0)")
     cursor.execute("CREATE TABLE IF NOT EXISTS depositi_items (role_id TEXT, item_name TEXT, quantity INTEGER)")
+    cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_user_item ON inventory (user_id, item_name)")
+    cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_role_item ON depositi_items (role_id, item_name)")
     conn.commit()
 
 init_db()
@@ -34,237 +38,174 @@ def get_user_data(user_id):
         conn.commit()
         return (str(user_id), 500, 0)
     return user
-# ================= COMANDI NEGOZIO UTENTE =================
 
-@bot.tree.command(name="shop", description="Visualizza gli articoli disponibili nel negozio")
-async def shop(interaction: Interaction):
-    # Defer pubblico perché lo shop deve essere visibile a tutti
-    await interaction.response.defer(ephemeral=False)
+# ================= COMANDO AGGIUNGI SOLDI (ADMIN) =================
 
-    cursor.execute("SELECT name, description, price, role_required FROM items")
-    articoli = cursor.fetchall()
-
-    if not articoli:
-        return await interaction.followup.send("🛒 Il negozio è attualmente vuoto.")
-
-    embed = discord.Embed(title="🏪 Negozio del Server", color=discord.Color.green())
-    for nome, desc, prezzo, ruolo_id in articoli:
-        req_text = f"Richiede: <@&{ruolo_id}>" if ruolo_id != "None" else "Nessun requisito"
-        embed.add_field(
-            name=f"{nome} — {prezzo}$", 
-            value=f"*{desc}*\n{req_text}", 
-            inline=False
-        )
-    await interaction.followup.send(embed=embed)
-
-@bot.tree.command(name="compra", description="Acquista un oggetto dal negozio")
-async def compra(interaction: Interaction, nome: str):
-    # Defer privato per non intasare la chat con i tentativi di acquisto
+@bot.tree.command(name="aggiungisoldi", description="ADMIN - Aggiungi soldi al portafoglio di un utente")
+@app_commands.describe(utente="L'utente a cui regalare i soldi", importo="Quantità da aggiungere")
+async def aggiungisoldi(interaction: Interaction, utente: discord.Member, importo: int):
+    # Diciamo a Discord di attendere (evita l'errore "L'applicazione non risponde")
     await interaction.response.defer(ephemeral=True)
 
-    user_id = str(interaction.user.id)
-    user_data = get_user_data(user_id) # Recupera wallet e bank
-    wallet = user_data[1]
+    # Controllo permessi Admin
+    if not interaction.user.guild_permissions.administrator:
+        return await interaction.followup.send("❌ Non hai i permessi necessari per usare questo comando.")
+    
+    if importo <= 0:
+        return await interaction.followup.send("⚠️ Inserisci un importo maggiore di zero.")
 
-    # Cerca l'item nel database
-    cursor.execute("SELECT name, price, role_required FROM items WHERE name = ?", (nome,))
-    item = cursor.fetchone()
+    # Assicuriamoci che l'utente esista nel database
+    get_user_data(utente.id)
 
-    if not item:
-        return await interaction.followup.send("⚠️ Questo oggetto non esiste nel negozio.")
+    # Esecuzione dell'aggiunta nel database
+    try:
+        cursor.execute("UPDATE users SET wallet = wallet + ? WHERE user_id = ?", (importo, str(utente.id)))
+        conn.commit()
+        
+        # Recuperiamo il nuovo saldo per conferma
+        cursor.execute("SELECT wallet FROM users WHERE user_id = ?", (str(utente.id),))
+        nuovo_saldo = cursor.fetchone()[0]
 
-    nome_item, prezzo, ruolo_id = item
+        await interaction.followup.send(f"✅ Accreditati **{importo}$** a {utente.mention}.\n💰 Nuovo saldo portafoglio: **{nuovo_saldo}$**")
+    except Exception as e:
+        await interaction.followup.send(f"❌ Errore durante l'operazione: {e}")
 
-    # 1. Controllo disponibilità economica
-    if wallet < prezzo:
-        return await interaction.followup.send(f"⚠️ Non hai abbastanza soldi! Ti mancano {prezzo - wallet}$.")
 
-    # 2. Controllo requisiti di ruolo
-    if ruolo_id != "None":
-        role = interaction.guild
-
-# ================= GESTIONE SHOP (ADMIN) =================
+# ================= COMANDI ADMIN (SHOP & GESTIONE) =================
 
 @bot.tree.command(name="crea_item_shop", description="ADMIN - Aggiungi un oggetto al negozio")
-@app_commands.describe(nome="Nome dell'oggetto", descrizione="Descrizione", prezzo="Prezzo in $", ruolo_richiesto="Ruolo necessario (opzionale)")
 async def crea_item_shop(interaction: Interaction, nome: str, descrizione: str, prezzo: int, ruolo_richiesto: discord.Role = None):
-    # Usiamo defer per evitare il timeout dei 3 secondi
     await interaction.response.defer(ephemeral=True)
-
     if not interaction.user.guild_permissions.administrator:
-        return await interaction.followup.send("❌ Permessi insufficienti.")
+        return await interaction.followup.send("❌ Solo gli admin possono farlo.")
 
-    id_ruolo = str(ruolo_richiesto.id) if ruolo_richiesto else "None"
-    
+    r_id = str(ruolo_richiesto.id) if ruolo_richiesto else "None"
     try:
-        cursor.execute("INSERT INTO items (name, description, price, role_required) VALUES (?, ?, ?, ?)", 
-                       (nome, descrizione, prezzo, id_ruolo))
+        cursor.execute("INSERT INTO items (name, description, price, role_required) VALUES (?, ?, ?, ?)", (nome, descrizione, prezzo, r_id))
         conn.commit()
-        await interaction.followup.send(f"✅ Item **{nome}** aggiunto al negozio per {prezzo}$.")
-    except sqlite3.IntegrityError:
-        await interaction.followup.send("⚠️ Un oggetto con questo nome esiste già nel negozio.")
+        await interaction.followup.send(f"✅ Creato: **{nome}** ({prezzo}$)")
+    except:
+        await interaction.followup.send("⚠️ Errore: l'item esiste già.")
 
 @bot.tree.command(name="elimina_item_shop", description="ADMIN - Rimuovi un oggetto dal negozio")
 async def elimina_item_shop(interaction: Interaction, nome: str):
     await interaction.response.defer(ephemeral=True)
-
     if not interaction.user.guild_permissions.administrator:
         return await interaction.followup.send("❌ Permessi insufficienti.")
-
     cursor.execute("DELETE FROM items WHERE name = ?", (nome,))
     conn.commit()
-    await interaction.followup.send(f"🗑️ Item **{nome}** rimosso dal negozio.")
+    await interaction.followup.send(f"🗑️ Item **{nome}** rimosso.")
 
-
-
-# ================= COMANDI ADMIN =================
-
-@bot.tree.command(name="aggiungisoldi", description="ADMIN - Aggiungi soldi a un utente")
-async def aggiungisoldi(interaction: Interaction, utente: discord.Member, importo: int):
+@bot.tree.command(name="rimuovisoldi", description="ADMIN - Togli soldi a un utente")
+async def rimuovisoldi(interaction: Interaction, utente: discord.Member, importo: int):
+    await interaction.response.defer(ephemeral=True)
     if not interaction.user.guild_permissions.administrator:
-        return await interaction.response.send_message("Non sei admin.", ephemeral=True)
-    
-    get_user_data(utente.id) # Assicura che l'utente esista nel DB
-    cursor.execute("UPDATE users SET wallet = wallet + ? WHERE user_id = ?", (importo, str(utente.id)))
+        return await interaction.followup.send("❌ Non sei admin.")
+    cursor.execute("UPDATE users SET wallet = MAX(0, wallet - ?) WHERE user_id = ?", (importo, str(utente.id)))
     conn.commit()
-    await interaction.response.send_message(f"Aggiunti {importo}$ a {utente.mention}")
+    await interaction.followup.send(f"✅ Rimossi {importo}$ a {utente.mention}.")
 
-@bot.tree.command(name="aggiungiitem", description="ADMIN - Aggiungi item a un utente")
-async def aggiungiitem(interaction: Interaction, utente: discord.Member, item: str, quantita: int):
-    if not interaction.user.guild_permissions.administrator:
-        return await interaction.response.send_message("Non sei admin.", ephemeral=True)
-    
-    cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (str(utente.id), item))
-    res = cursor.fetchone()
-    if res:
-        cursor.execute("UPDATE inventory SET quantity = quantity + ? WHERE user_id = ? AND item_name = ?", (quantita, str(utente.id), item))
-    else:
-        cursor.execute("INSERT INTO inventory (user_id, item_name, quantity) VALUES (?, ?, ?)", (str(utente.id), item, quantita))
-    conn.commit()
-    await interaction.response.send_message(f"Aggiunti {quantita}x {item} a {utente.mention}")
-
-# ================= COMANDI ECONOMIA =================
+# ================= COMANDI ECONOMIA BASE (DAL TUO CODICE) =================
 
 @bot.tree.command(name="cerca", description="Cerca oggetti nella spazzatura")
 async def cerca(interaction: Interaction):
-    import random
-    user_id = str(interaction.user.id)
-    loot_pool = [("Rame", 10), ("Ferro", 30), ("Plastica", 30), ("Nulla", 30)]
-    
-    roll = random.randint(1, 100)
-    current = 0
-    trovato = "Nulla"
+    await interaction.response.defer()
+    loot_pool = [("Rame", 20), ("Ferro", 30), ("Plastica", 30), ("Nulla", 20)]
+    scelta = random.choices([i[0] for i in loot_pool], weights=[i[1] for i in loot_pool])[0]
 
-    for item, chance in loot_pool:
-        current += chance
-        if roll <= current:
-            trovato = item
-            break
+    if scelta == "Nulla":
+        return await interaction.followup.send("Non hai trovato niente oggi.")
 
-    if trovato == "Nulla":
-        return await interaction.response.send_message("Non hai trovato nulla.")
-
-    cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, trovato))
-    if cursor.fetchone():
-        cursor.execute("UPDATE inventory SET quantity = quantity + 1 WHERE user_id = ? AND item_name = ?", (user_id, trovato))
-    else:
-        cursor.execute("INSERT INTO inventory (user_id, item_name, quantity) VALUES (?, ?, 1)", (user_id, trovato))
+    cursor.execute("INSERT INTO inventory (user_id, item_name, quantity) VALUES (?, ?, 1) ON CONFLICT(user_id, item_name) DO UPDATE SET quantity = quantity + 1", (str(interaction.user.id), scelta))
     conn.commit()
-    await interaction.response.send_message(f"Hai trovato: {trovato}!")
+    await interaction.followup.send(f"📦 Hai trovato: **{scelta}**!")
 
-@bot.tree.command(name="inventario", description="Visualizza il tuo inventario")
-async def inventario(interaction: Interaction):
+@bot.tree.command(name="portafoglio", description="Controlla i tuoi soldi")
+async def portafoglio(interaction: Interaction):
+    await interaction.response.defer()
     user = get_user_data(interaction.user.id)
-    cursor.execute("SELECT item_name, quantity FROM inventory WHERE user_id = ?", (str(interaction.user.id),))
+    await interaction.followup.send(f"💰 **Portafoglio:** {user[1]}$ | 🏦 **Banca:** {user[2]}$")
+
+# ================= SISTEMA NEGOZIO & ACQUISTO =================
+
+@bot.tree.command(name="shop", description="Mostra il negozio")
+async def shop(interaction: Interaction):
+    await interaction.response.defer()
+    cursor.execute("SELECT name, description, price, role_required FROM items")
     items = cursor.fetchall()
+    if not items: return await interaction.followup.send("Negozio vuoto.")
     
-    desc = "\n".join([f"**{i[0]}**: x{i[1]}" for i in items]) if items else "Vuoto"
-    embed = discord.Embed(title=f"Inventario di {interaction.user.display_name}", color=discord.Color.blue())
-    embed.add_field(name="💰 Portafoglio", value=f"{user[1]}$", inline=True)
-    embed.add_field(name="🏦 Banca", value=f"{user[2]}$", inline=True)
-    embed.add_field(name="📦 Oggetti", value=desc, inline=False)
-    await interaction.response.send_message(embed=embed)
+    embed = discord.Embed(title="🏪 Shop", color=discord.Color.gold())
+    for n, d, p, r in items:
+        req = f"<@&{r}>" if r != "None" else "Libero"
+        embed.add_field(name=f"{n} - {p}$", value=f"{d}\nRichiede: {req}", inline=False)
+    await interaction.followup.send(embed=embed)
 
-# ================= GESTIONE CASSA DI RUOLO =================
-
-@bot.tree.command(name="deposita_cassa", description="Deposita soldi nella cassa del tuo ruolo")
-async def depositasoldi(interaction: Interaction, importo: int):
+@bot.tree.command(name="compra", description="Compra un oggetto")
+async def compra(interaction: Interaction, nome: str):
+    await interaction.response.defer(ephemeral=True)
     user = get_user_data(interaction.user.id)
-    if user[1] < importo:
-        return await interaction.response.send_message("Non hai abbastanza soldi nel portafoglio.", ephemeral=True)
+    cursor.execute("SELECT name, price, role_required FROM items WHERE name = ?", (nome,))
+    item = cursor.fetchone()
 
-    # Controlla se l'utente ha un ruolo con deposito
-    user_role_ids = [str(r.id) for r in interaction.user.roles]
-    cursor.execute("SELECT role_id FROM depositi")
-    available_deposits = [row[0] for row in cursor.fetchall()]
+    if not item: return await interaction.followup.send("Item non trovato.")
     
-    target_role = next((r for r in user_role_ids if r in available_deposits), None)
-    if not target_role:
-        return await interaction.response.send_message("Non hai un ruolo associato a un deposito.", ephemeral=True)
+    n, p, r = item
+    if user[1] < p: return await interaction.followup.send("Non hai abbastanza soldi.")
+    if r != "None" and discord.utils.get(interaction.user.roles, id=int(r)) is None:
+        return await interaction.followup.send(f"Ti serve il ruolo <@&{r}>.")
+
+    cursor.execute("UPDATE users SET wallet = wallet - ? WHERE user_id = ?", (p, str(interaction.user.id)))
+    cursor.execute("INSERT INTO inventory (user_id, item_name, quantity) VALUES (?, ?, 1) ON CONFLICT(user_id, item_name) DO UPDATE SET quantity = quantity + 1", (str(interaction.user.id), n))
+    conn.commit()
+    await interaction.followup.send(f"🛍️ Hai comprato **{n}**!")
+
+# ================= DEPOSITI DI RUOLO (DAL TUO CODICE) =================
+
+@bot.tree.command(name="deposita_cassa", description="Deposita soldi nella cassa fazione")
+async def deposita_cassa(interaction: Interaction, importo: int):
+    await interaction.response.defer(ephemeral=True)
+    user = get_user_data(interaction.user.id)
+    if user[1] < importo: return await interaction.followup.send("Soldi insufficienti.")
+
+    # Trova se l'utente ha un ruolo che ha un deposito
+    cursor.execute("SELECT role_id FROM depositi")
+    roles_with_dep = [int(r[0]) for r in cursor.fetchall()]
+    user_role = next((r.id for r in interaction.user.roles if r.id in roles_with_dep), None)
+
+    if not user_role: return await interaction.followup.send("Non hai ruoli con deposito.")
 
     cursor.execute("UPDATE users SET wallet = wallet - ? WHERE user_id = ?", (importo, str(interaction.user.id)))
-    cursor.execute("UPDATE depositi SET money = money + ? WHERE role_id = ?", (importo, target_role))
+    cursor.execute("UPDATE depositi SET money = money + ? WHERE role_id = ?", (importo, str(user_role)))
     conn.commit()
-    await interaction.response.send_message(f"Hai depositato {importo}$ nella cassa di fazione.")
+    await interaction.followup.send(f"✅ Depositati {importo}$ nella cassa fazione.")
 
-@bot.tree.command(name="creadeposito", description="ADMIN - Crea un deposito per un ruolo")
-async def creadeposito(interaction: Interaction, ruolo: discord.Role):
-    if not interaction.user.guild_permissions.administrator:
-        return await interaction.response.send_message("Non sei admin.", ephemeral=True)
-
+@bot.tree.command(name="crea_deposito_fazione", description="ADMIN - Crea deposito per un ruolo")
+async def crea_deposito_fazione(interaction: Interaction, ruolo: discord.Role):
+    await interaction.response.defer(ephemeral=True)
+    if not interaction.user.guild_permissions.administrator: return await interaction.followup.send("No admin.")
     try:
-        cursor.execute("INSERT INTO depositi (role_id, money) VALUES (?, ?)", (str(ruolo.id), 0))
+        cursor.execute("INSERT INTO depositi (role_id, money) VALUES (?, 0)", (str(ruolo.id),))
         conn.commit()
-        await interaction.response.send_message(f"Deposito creato per {ruolo.mention}")
-    except sqlite3.IntegrityError:
-        await interaction.response.send_message("Questo ruolo ha già un deposito.")
+        await interaction.followup.send(f"🏦 Deposito creato per {ruolo.mention}")
+    except:
+        await interaction.followup.send("Esiste già.")
 
-# ================= COMANDO RIMUOVI SOLDI (ADMIN) =================
-
-@bot.tree.command(name="rimuovisoldi", description="ADMIN - Rimuovi soldi dal portafoglio di un utente")
-@app_commands.describe(utente="L'utente a cui togliere i soldi", importo="Quantità da rimuovere")
-async def rimuovisoldi(interaction: Interaction, utente: discord.Member, importo: int):
-    # Controllo permessi Admin
-    if not interaction.user.guild_permissions.administrator:
-        return await interaction.response.send_message("❌ Non hai i permessi necessari per usare questo comando.", ephemeral=True)
-    
-    if importo <= 0:
-        return await interaction.response.send_message("⚠️ Inserisci un importo maggiore di zero.", ephemeral=True)
-
-    # Assicuriamoci che l'utente sia presente nel database
-    user = get_user_data(utente.id)
-    current_wallet = user[1]
-
-    # Controllo se l'utente ha abbastanza soldi (opzionale)
-    if current_wallet < importo:
-        # Se preferisci che i soldi vadano in negativo, commenta le due righe sotto
-        return await interaction.response.send_message(f"⚠️ {utente.mention} ha solo {current_wallet}$ nel portafoglio. Non puoi rimuoverne {importo}$.", ephemeral=True)
-
-    # Esecuzione della rimozione
-    cursor.execute("UPDATE users SET wallet = wallet - ? WHERE user_id = ?", (importo, str(utente.id)))
-    conn.commit()
-
-    await interaction.response.send_message(f"✅ Rimossi {importo}$ dal portafoglio di {utente.mention}. Nuovo saldo: {current_wallet - importo}$.")
-
-
-# ================= READY & FLASK =================
+# ================= WEB SERVER & START =================
 
 @bot.event
 async def on_ready():
     await bot.tree.sync()
-    print(f"Bot connesso come {bot.user}")
+    print(f"✅ {bot.user} è pronto!")
 
 app = Flask("")
-@app.route('/')
-def main(): return "Bot is Online!"
+@app.route("/")
+def home(): return "Bot Online!"
 
-def run():
+def run_web():
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
 
-def keep_alive():
-    t = threading.Thread(target=run)
-    t.start()
-
 if __name__ == "__main__":
-    keep_alive()
+    threading.Thread(target=run_web).start()
     bot.run(TOKEN)
+
