@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS depositi (
     money INTEGER DEFAULT 0
 )
 """)
+
 @bot.tree.command(name="cerca", description="Cerca oggetti nella spazzatura con probabilità")
 async def cerca(interaction: discord.Interaction):
     import random
@@ -98,12 +99,20 @@ async def aggiungisoldi(interaction: discord.Interaction, utente: discord.Member
     @bot.tree.command(name="rimuovisoldi", description="ADMIN - Rimuovi soldi a un utente")
 @app_commands.describe(utente="Utente target", importo="Quantità di soldi")
 async def rimuovisoldi(interaction: discord.Interaction, utente: discord.Member, importo: int):
+    # Controllo permessi admin
     if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message("Non sei admin.", ephemeral=True)
         return
-    cursor.execute("UPDATE users SET wallet = wallet - ? WHERE user_id = ?", (importo, str(utente.id)))
+
+    # Aggiorna il wallet dell'utente
+    cursor.execute(
+        "UPDATE users SET wallet = wallet - ? WHERE user_id = ?",
+        (importo, str(utente.id))
+    )
     conn.commit()
-    await interaction.response.send_message(f"Rimossi {importo}$ a {utente.mention}")
+
+    # Messaggio di conferma
+    await interaction.response.send_message(f"Rimossi {importo}$ a {utente.mention}", ephemeral=True)
     @bot.tree.command(name="aggiungiitem", description="ADMIN - Aggiungi item a un utente")
 @app_commands.describe(utente="Utente target", item="Nome item", quantita="Quantità")
 async def aggiungiitem(interaction: discord.Interaction, utente: discord.Member, item: str, quantita: int):
