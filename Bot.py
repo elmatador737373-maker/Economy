@@ -34,6 +34,92 @@ def get_user_data(user_id):
         conn.commit()
         return (str(user_id), 500, 0)
     return user
+# ================= COMANDI NEGOZIO =================
+
+@bot.tree.command(name="shop", description="Visualizza gli articoli disponibili nel negozio")
+async def shop(interaction: Interaction):
+    cursor.execute("SELECT name, description, price, role_required FROM items")
+    articoli = cursor.fetchall()
+
+    if not articoli:
+        return await interaction.response.send_message("🛒 Il negozio è attualmente vuoto.")
+
+    embed = discord.Embed(title="🏪 Negozio del Server", color=discord.Color.green())
+    for nome, desc, prezzo, ruolo_id in articoli:
+        req_text = f"Richiede: <@&{ruolo_id}>" if ruolo_id != "None" else "Nessun requisito"
+        embed.add_field(
+            name=f"{nome} — {prezzo}$", 
+            value=f"*{desc}*\n{req_text}", 
+            inline=False
+        )
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="compra", description="Acquista un oggetto dal negozio")
+async def compra(interaction: Interaction, nome: str):
+    user_id = str(interaction.user.id)
+    user_data = get_user_data(user_id) # (id, wallet, bank)
+    wallet = user_data[1]
+
+    # Cerca l'item
+    cursor.execute("SELECT name, price, role_required FROM items WHERE name = ?", (nome,))
+    item = cursor.fetchone()
+
+    if not item:
+        return await interaction.response.send_message("⚠️ Questo oggetto non esiste nel negozio.", ephemeral=True)
+
+    nome_item, prezzo, ruolo_id = item
+
+    # Controllo soldi
+    if wallet < prezzo:
+        return await interaction.response.send_message(f"⚠️ Non hai abbastanza soldi! Ti mancano {prezzo - wallet}$.", ephemeral=True)
+
+    # Controllo ruolo richiesto
+    if ruolo_id != "None":
+        role = interaction.guild.get_role(int(ruolo_id))
+        if role not in interaction.user.roles:
+            return await interaction.response.send_message(f"⚠️ Per comprare questo oggetto devi avere il ruolo {role.mention}.", ephemeral=True)
+
+    # Esecuzione transazione
+    cursor.execute("UPDATE users SET wallet = wallet - ? WHERE user_id = ?", (prezzo, user_id))
+    
+    # Aggiungi all'inventario
+    cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, nome_item))
+    res = cursor.fetchone()
+    if res:
+        cursor.execute("UPDATE inventory SET quantity = quantity + 1 WHERE user_id = ? AND item_name = ?", (user_id, nome_item))
+    else:
+        cursor.execute("INSERT INTO inventory (user_id, item_name, quantity) VALUES (?, ?, 1)", (user_id, nome_item))
+    
+    conn.commit()
+    await interaction.response.send_message(f"🛍️ Hai acquistato **{nome_item}** per {prezzo}$!")
+
+# ================= GESTIONE SHOP (ADMIN) =================
+
+@bot.tree.command(name="crea_item_shop", description="ADMIN - Aggiungi un oggetto al negozio")
+@app_commands.describe(nome="Nome dell'oggetto", descrizione="Descrizione", prezzo="Prezzo in $", ruolo_richiesto="Ruolo necessario (opzionale)")
+async def crea_item_shop(interaction: Interaction, nome: str, descrizione: str, prezzo: int, ruolo_richiesto: discord.Role = None):
+    if not interaction.user.guild_permissions.administrator:
+        return await interaction.response.send_message("❌ Permessi insufficienti.", ephemeral=True)
+
+    id_ruolo = str(ruolo_richiesto.id) if ruolo_richiesto else "None"
+    
+    try:
+        cursor.execute("INSERT INTO items (name, description, price, role_required) VALUES (?, ?, ?, ?)", 
+                       (nome, descrizione, prezzo, id_ruolo))
+        conn.commit()
+        await interaction.response.send_message(f"✅ Item **{nome}** aggiunto al negozio per {prezzo}$.")
+    except sqlite3.IntegrityError:
+        await interaction.response.send_message("⚠️ Un oggetto con questo nome esiste già nel negozio.", ephemeral=True)
+
+@bot.tree.command(name="elimina_item_shop", description="ADMIN - Rimuovi un oggetto dal negozio")
+async def elimina_item_shop(interaction: Interaction, nome: str):
+    if not interaction.user.guild_permissions.administrator:
+        return await interaction.response.send_message("❌ Permessi insufficienti.", ephemeral=True)
+
+    cursor.execute("DELETE FROM items WHERE name = ?", (nome,))
+    conn.commit()
+    await interaction.response.send_message(f"🗑️ Item **{nome}** rimosso dal negozio.")
+
 
 # ================= COMANDI ADMIN =================
 
