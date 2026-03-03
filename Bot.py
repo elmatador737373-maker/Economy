@@ -96,23 +96,7 @@ async def aggiungisoldi(interaction: discord.Interaction, utente: discord.Member
     cursor.execute("UPDATE users SET wallet = wallet + ? WHERE user_id = ?", (importo, str(utente.id)))
     conn.commit()
     await interaction.response.send_message(f"Aggiunti {importo}$ a {utente.mention}")
-    @bot.tree.command(name="rimuovisoldi", description="ADMIN - Rimuovi soldi a un utente")
-@app_commands.describe(utente="Utente target", importo="Quantità di soldi")
-async def rimuovisoldi(interaction: discord.Interaction, utente: discord.Member, importo: int):
-    # Controllo permessi admin
-    if not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message("Non sei admin.", ephemeral=True)
-        return
-
-    # Aggiorna il wallet dell'utente
-    cursor.execute(
-        "UPDATE users SET wallet = wallet - ? WHERE user_id = ?",
-        (importo, str(utente.id))
-    )
-    conn.commit()
-
-    # Messaggio di conferma
-    await interaction.response.send_message(f"Rimossi {importo}$ a {utente.mention}", ephemeral=True)
+    
     @bot.tree.command(name="aggiungiitem", description="ADMIN - Aggiungi item a un utente")
 @app_commands.describe(utente="Utente target", item="Nome item", quantita="Quantità")
 async def aggiungiitem(interaction: discord.Interaction, utente: discord.Member, item: str, quantita: int):
@@ -127,7 +111,8 @@ async def aggiungiitem(interaction: discord.Interaction, utente: discord.Member,
         cursor.execute("INSERT INTO inventory (user_id, item_name, quantity) VALUES (?, ?, ?)", (str(utente.id), item, quantita))
     conn.commit()
     await interaction.response.send_message(f"Aggiunti {quantita}x {item} a {utente.mention}")
-    @bot.tree.command(name="rimuoviitem", description="ADMIN - Rimuovi item da un utente")
+    
+ @bot.tree.command(name="rimuoviitem", description="ADMIN - Rimuovi item da un utente")
 @app_commands.describe(utente="Utente target", item="Nome item", quantita="Quantità")
 async def rimuoviitem(interaction: discord.Interaction, utente: discord.Member, item: str, quantita: int):
     if not interaction.user.guild_permissions.administrator:
