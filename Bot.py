@@ -306,6 +306,59 @@ async def deposito(interaction: discord.Interaction):
     embed.add_field(name="💵 Fondo cassa", value=f"{soldi}$")
     await interaction.response.send_message(embed=embed)
 
+@bot.tree.command(name="preleva", description="Preleva soldi dalla banca")
+@app_commands.describe(importo="Quantità da prelevare")
+async def preleva(interaction: discord.Interaction, importo: int):
+    user = get_user(interaction.user.id)
+
+    if importo <= 0:
+        await interaction.response.send_message("Importo non valido.", ephemeral=True)
+        return
+
+    if user[2] < importo:
+        await interaction.response.send_message("Non hai abbastanza soldi in banca.", ephemeral=True)
+        return
+
+    cursor.execute("UPDATE users SET bank = bank - ?, wallet = wallet + ? WHERE user_id = ?", (importo, importo, str(interaction.user.id)))
+    conn.commit()
+
+    await interaction.response.send_message(f"Hai prelevato {importo}$ dalla banca.")
+
+@bot.tree.command(name="compra", description="Acquista un oggetto dal negozio")
+@app_commands.describe(nome="Nome dell'oggetto da comprare")
+async def compra(interaction: discord.Interaction, nome: str):
+    user = get_user(interaction.user.id)
+
+    # Controlla se l'item esiste
+    cursor.execute("SELECT price, role_required FROM items WHERE name = ?", (nome,))
+    item = cursor.fetchone()
+    if not item:
+        await interaction.response.send_message("Oggetto non trovato nello shop.", ephemeral=True)
+        return
+
+    prezzo, ruolo_req = item
+
+    # Controllo ruolo richiesto
+    if ruolo_req and not any(str(role.id) == ruolo_req for role in interaction.user.roles):
+        await interaction.response.send_message("Non hai il ruolo richiesto per acquistare questo item.", ephemeral=True)
+        return
+
+    if user[1] < prezzo:
+        await interaction.response.send_message("Non hai abbastanza soldi nel portafoglio.", ephemeral=True)
+        return
+
+    # Deduce soldi e aggiunge all'inventario
+    cursor.execute("UPDATE users SET wallet = wallet - ? WHERE user_id = ?", (prezzo, str(interaction.user.id)))
+    cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (str(interaction.user.id), nome))
+    inv_item = cursor.fetchone()
+    if inv_item:
+        cursor.execute("UPDATE inventory SET quantity = quantity + 1 WHERE user_id = ? AND item_name = ?", (str(interaction.user.id), nome))
+    else:
+        cursor.execute("INSERT INTO inventory (user_id, item_name, quantity) VALUES (?, ?, 1)", (str(interaction.user.id), nome))
+    conn.commit()
+
+    await interaction.response.send_message(f"Hai acquistato **{nome}** per {prezzo}$!")
+    
 # ================= READY =================
 @bot.event
 async def on_ready():
