@@ -74,6 +74,48 @@ async def cerca_item_smart(interaction: Interaction, nome_input: str, tabella="i
     await interaction.followup.send(f"🤔 Ho trovato più oggetti per '{nome_input}'. Quale intendevi?", view=view, ephemeral=True)
     await view.wait()
     return view.value
+# ================= COMANDI BANCA (DEPOSITA/PRELEVA) =================
+
+@bot.tree.command(name="deposita", description="Sposta i soldi dal portafoglio alla banca")
+async def deposita(interaction: discord.Interaction, importo: int):
+    await interaction.response.defer(ephemeral=True)
+    
+    user = get_user_data(interaction.user.id)
+    wallet = user[1]
+
+    if importo <= 0:
+        return await interaction.followup.send("❌ Inserisci un importo valido.")
+
+    if wallet < importo:
+        return await interaction.followup.send(f"❌ Non hai abbastanza contanti. Possiedi solo **{wallet}$**.")
+
+    # Esegui lo spostamento
+    cursor.execute("UPDATE users SET wallet = wallet - ?, bank = bank + ? WHERE user_id = ?", 
+                   (importo, importo, str(interaction.user.id)))
+    conn.commit()
+
+    await interaction.followup.send(f"🏦 Hai depositato **{importo}$** in banca.")
+
+@bot.tree.command(name="preleva", description="Sposta i soldi dalla banca al portafoglio")
+async def preleva(interaction: discord.Interaction, importo: int):
+    await interaction.response.defer(ephemeral=True)
+    
+    user = get_user_data(interaction.user.id)
+    bank = user[2]
+
+    if importo <= 0:
+        return await interaction.followup.send("❌ Inserisci un importo valido.")
+
+    if bank < importo:
+        return await interaction.followup.send(f"❌ Non hai abbastanza soldi in banca. Possiedi solo **{bank}$**.")
+
+    # Esegui lo spostamento
+    cursor.execute("UPDATE users SET wallet = wallet + ?, bank = bank - ? WHERE user_id = ?", 
+                   (importo, importo, str(interaction.user.id)))
+    conn.commit()
+
+    await interaction.followup.send(f"💸 Hai prelevato **{importo}$** dalla banca.")
+
 
 @bot.tree.command(name="deposita_item_fazione", description="Sposta un oggetto dal tuo inventario al deposito fazione")
 async def deposita_item_fazione(interaction: Interaction, nome: str, quantita: int = 1):
