@@ -287,4 +287,24 @@ async def on_ready():
     print(f"Bot online come {bot.user}!")
 
 # ================= RUN =================
+
+from flask import Flask
+from threading import Thread
+import os
+
+# -------------------- Flask Keep-Alive --------------------
+app = Flask("")
+
+@app.route("/")
+def home():
+    return "Bot online e funzionante! 🚀"
+
+def run():
+    port = int(os.environ.get("PORT", 10000))  # usa la porta di Render
+    app.run(host="0.0.0.0", port=port)
+
+def keep_alive():
+    t = Thread(target=run)
+    t.start()
+    
 bot.run(TOKEN)
