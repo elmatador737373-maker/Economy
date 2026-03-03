@@ -117,21 +117,41 @@ async def preleva(interaction: Interaction, importo: int):
     conn.commit()
     await interaction.followup.send(f"Hai prelevato {importo}$ dalla banca.", ephemeral=True)
 # ================= DEPOSITO RUOLO =================
-@bot.tree.command(name="deposito", description="Apri il deposito del tuo ruolo")
+@bot.tree.command(name="creadeposito", description="ADMIN - Crea un deposito per un ruolo")
+@app_commands.describe(ruolo="Ruolo da associare al deposito")
+async def creadeposito(interaction: Interaction, ruolo: discord.Role):
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("Non sei admin.", ephemeral=True)
+        return
+
+    # Controllo se esiste già
+    cursor.execute("SELECT role_id FROM depositi WHERE role_id = ?", (str(ruolo.id),))
+    if cursor.fetchone():
+        await interaction.response.send_message(f"Il ruolo {ruolo.mention} ha già un deposito.", ephemeral=True)
+        return
+
+    # Crea deposito
+    cursor.execute("INSERT INTO depositi (role_id, money) VALUES (?, ?)", (str(ruolo.id), 0))
+    conn.commit()
+    await interaction.response.send_message(f"Deposito creato per il ruolo {ruolo.mention}!", ephemeral=True)
+   @bot.tree.command(name="deposito", description="Apri il deposito del tuo ruolo")
 async def deposito(interaction: Interaction):
     await interaction.response.defer(ephemeral=True)
 
-    # Controllo ruoli: trova i ruoli che hanno un deposito
+    # Prendi tutti i depositi
     cursor.execute("SELECT role_id FROM depositi")
     deposit_roles = [int(r[0]) for r in cursor.fetchall()]
-    user_roles = [r.id for r in interaction.user.roles]
-    ruoli_possibili = [r for r in user_roles if r in deposit_roles]
 
+    # Ruoli dell'utente
+    user_roles = [r.id for r in interaction.user.roles]
+
+    # Ruoli disponibili per l'utente
+    ruoli_possibili = [r for r in user_roles if r in deposit_roles]
     if not ruoli_possibili:
-        await interaction.followup.send("Non hai il ruolo richiesto per accedere a nessun deposito.", ephemeral=True)
+        await interaction.followup.send("Non hai il ruolo richiesto per nessun deposito.", ephemeral=True)
         return
 
-    # Se ha più ruoli con deposito, menu per scegliere
+    # Menu per scegliere il ruolo
     options_ruoli = [discord.SelectOption(label=f"<@&{r}>", value=str(r)) for r in ruoli_possibili]
 
     class RoleSelect(Select):
@@ -141,7 +161,7 @@ async def deposito(interaction: Interaction):
         async def callback(self, role_inter: Interaction):
             role_id = int(self.values[0])
 
-            # Menu scelta soldi o item
+            # Menu soldi o item
             choice_options = [
                 discord.SelectOption(label="Soldi", value="soldi"),
                 discord.SelectOption(label="Item", value="item")
@@ -157,13 +177,14 @@ async def deposito(interaction: Interaction):
                         cursor.execute("SELECT money FROM depositi WHERE role_id = ?", (str(role_id),))
                         money = cursor.fetchone()[0]
                         await choice_inter.response.send_message(f"Fondo cassa: {money}$\nUsa /depositosoldi o /prelevasoldi per gestire i soldi.", ephemeral=True)
-                    else:  # item
+                    else:
                         # Mostra gli item depositati
                         cursor.execute("SELECT item_name, quantity FROM inventory WHERE user_id = ?", (f"deposit_{role_id}",))
                         items = cursor.fetchall()
                         if not items:
                             await choice_inter.response.send_message("Nessun item nel deposito.", ephemeral=True)
                             return
+
                         options_item = [discord.SelectOption(label=f"{i[0]} x{i[1]}", value=i[0]) for i in items]
 
                         class ItemSelect(Select):
@@ -172,43 +193,12 @@ async def deposito(interaction: Interaction):
 
                             async def callback(self, item_inter: Interaction):
                                 nome_item = self.values[0]
-                                # Modalità scelta: preleva o deposita item
-                                modal = Modal(title="Gestione item deposito")
-                                quantity_input = TextInput(label="Quantità da prelevare", style=discord.TextStyle.short, placeholder="Inserisci quantità")
-                                modal.add_item(quantity_input)
-
-                                async def modal_callback(modal_inter: Interaction):
-                                    try:
-                                        qty = int(quantity_input.value)
-                                    except:
-                                        await modal_inter.response.send_message("Quantità non valida.", ephemeral=True)
-                                        return
-                                    if qty <= 0:
-                                        await modal_inter.response.send_message("Quantità non valida.", ephemeral=True)
-                                        return
-                                    cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (f"deposit_{role_id}", nome_item))
-                                    current = cursor.fetchone()[0]
-                                    if qty > current:
-                                        await modal_inter.response.send_message("Non ci sono abbastanza item nel deposito.", ephemeral=True)
-                                        return
-                                    # Rimuove dal deposito e aggiunge all'inventario dell'utente
-                                    cursor.execute("UPDATE inventory SET quantity = quantity - ? WHERE user_id = ? AND item_name = ?", (qty, f"deposit_{role_id}", nome_item))
-                                    cursor.execute("DELETE FROM inventory WHERE user_id = ? AND item_name = ? AND quantity <= 0", (f"deposit_{role_id}", nome_item))
-                                    cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (str(interaction.user.id), nome_item))
-                                    res = cursor.fetchone()
-                                    if res:
-                                        cursor.execute("UPDATE inventory SET quantity = quantity + ? WHERE user_id = ? AND item_name = ?", (qty, str(interaction.user.id), nome_item))
-                                    else:
-                                        cursor.execute("INSERT INTO inventory (user_id, item_name, quantity) VALUES (?, ?, ?)", (str(interaction.user.id), nome_item, qty))
-                                    conn.commit()
-                                    await modal_inter.response.send_message(f"Hai prelevato {qty} {nome_item} dal deposito.", ephemeral=True)
-
-                                modal.on_submit = modal_callback
-                                await item_inter.response.send_modal(modal)
+                                await item_inter.response.send_message(f"Per prelevare o depositare {nome_item} userai il modal specifico.", ephemeral=True)
+                                # Qui puoi richiamare modal per quantità
 
                         view_item = View()
                         view_item.add_item(ItemSelect())
-                        await choice_inter.response.send_message("Scegli l'item da prelevare dal deposito:", view=view_item, ephemeral=True)
+                        await choice_inter.response.send_message("Scegli l'item da gestire:", view=view_item, ephemeral=True)
 
             view_choice = View()
             view_choice.add_item(ChoiceSelect())
@@ -216,70 +206,7 @@ async def deposito(interaction: Interaction):
 
     view_role = View()
     view_role.add_item(RoleSelect())
-    await interaction.followup.send("Seleziona il ruolo del deposito:", view=view_role, ephemeral=True)
-# ================= SHOP =================
-@bot.tree.command(name="negozio", description="Visualizza gli oggetti acquistabili")
-async def negozio(interaction: Interaction):
-    await interaction.response.defer(ephemeral=True)
-    cursor.execute("SELECT name, description, price, role_required FROM items")
-    items = cursor.fetchall()
-    if not items:
-        await interaction.followup.send("Nessun oggetto disponibile.", ephemeral=True)
-        return
-    desc = ""
-    for item in items:
-        role_mention = f"<@&{item[3]}>" if item[3] else "Nessuno"
-        desc += f"**{item[0]}** - {item[2]}$ - Ruolo richiesto: {role_mention}\n{item[1]}\n\n"
-    embed = discord.Embed(title="🛒 Negozio", description=desc, color=discord.Color.green())
-    await interaction.followup.send(embed=embed, ephemeral=True)
-
-# ====== COMPRA ITEM ======
-@bot.tree.command(name="compra", description="Compra un item dallo shop")
-async def compra(interaction: Interaction):
-    await interaction.response.defer(ephemeral=True)
-    cursor.execute("SELECT name, price, role_required FROM items")
-    items = cursor.fetchall()
-    if not items:
-        await interaction.followup.send("Nessun item disponibile.", ephemeral=True)
-        return
-
-    options = []
-    for item in items:
-        # Se c'è un ruolo richiesto, controlla se l'utente ce l'ha
-        if item[2] and not discord.utils.get(interaction.user.roles, id=int(item[2])):
-            continue
-        options.append(discord.SelectOption(label=f"{item[0]} - {item[1]}$", value=item[0]))
-
-    if not options:
-        await interaction.followup.send("Non hai il ruolo richiesto per comprare nessun item.", ephemeral=True)
-        return
-
-    class CompraSelect(Select):
-        def __init__(self):
-            super().__init__(placeholder="Seleziona l'item da comprare", min_values=1, max_values=1, options=options)
-
-        async def callback(self, select_interaction: Interaction):
-            nome_item = self.values[0]
-            cursor.execute("SELECT price FROM items WHERE name = ?", (nome_item,))
-            prezzo = cursor.fetchone()[0]
-            user = get_user(interaction.user.id)
-            if user[1] < prezzo:
-                await select_interaction.response.send_message("Non hai abbastanza soldi.", ephemeral=True)
-                return
-            cursor.execute("UPDATE users SET wallet = wallet - ? WHERE user_id = ?", (prezzo, str(interaction.user.id)))
-            cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (str(interaction.user.id), nome_item))
-            result = cursor.fetchone()
-            if result:
-                cursor.execute("UPDATE inventory SET quantity = quantity + 1 WHERE user_id = ? AND item_name = ?", (str(interaction.user.id), nome_item))
-            else:
-                cursor.execute("INSERT INTO inventory (user_id, item_name, quantity) VALUES (?, ?, ?)", (str(interaction.user.id), nome_item, 1))
-            conn.commit()
-            await select_interaction.response.send_message(f"Hai comprato **{nome_item}** per {prezzo}$!", ephemeral=True)
-
-    view = View()
-    view.add_item(CompraSelect())
-    await interaction.followup.send("Scegli un item da comprare:", view=view, ephemeral=True)
-
+    await interaction.followup.send("Seleziona il ruolo del deposito:", view=view_role, ephemeral=True) 
 # ================= READY =================
 @bot.event
 async def on_ready():
