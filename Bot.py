@@ -74,6 +74,58 @@ async def cerca_item_smart(interaction: Interaction, nome_input: str, tabella="i
     await interaction.followup.send(f"🤔 Ho trovato più oggetti per '{nome_input}'. Quale intendevi?", view=view, ephemeral=True)
     await view.wait()
     return view.value
+
+# ================= GESTIONE CATALOGO SHOP (ADMIN) =================
+
+@bot.tree.command(name="edit_item_shop", description="ADMIN - Modifica un oggetto esistente nello shop")
+async def edit_item_shop(
+    interaction: discord.Interaction, 
+    nome: str, 
+    nuova_descrizione: str = None, 
+    nuovo_prezzo: int = None, 
+    nuovo_ruolo: discord.Role = None
+):
+    await interaction.response.defer(ephemeral=True)
+    if not interaction.user.guild_permissions.administrator:
+        return await interaction.followup.send("❌ Non hai i permessi per modificare lo shop.")
+
+    # Trova l'item con la ricerca intelligente
+    nome_esatto = await cerca_item_smart(interaction, nome, "items")
+    if not nome_esatto: return
+
+    # Recupera i dati attuali per non sovrascrivere con None se l'admin non compila tutto
+    cursor.execute("SELECT description, price, role_required FROM items WHERE name = ?", (nome_esatto,))
+    current_desc, current_price, current_role = cursor.fetchone()
+
+    # Applica i cambiamenti solo se forniti
+    desc = nuova_descrizione if nuova_descrizione else current_desc
+    price = nuovo_prezzo if nuovo_prezzo is not None else current_price
+    role = str(nuovo_ruolo.id) if nuovo_ruolo else current_role
+
+    cursor.execute("""
+        UPDATE items 
+        SET description = ?, price = ?, role_required = ? 
+        WHERE name = ?
+    """, (desc, price, role, nome_esatto))
+    
+    conn.commit()
+    await interaction.followup.send(f"✅ Oggetto **{nome_esatto}** aggiornato correttamente!")
+
+@bot.tree.command(name="elimina_item_shop", description="ADMIN - Rimuove definitivamente un oggetto dallo shop")
+async def elimina_item_shop(interaction: discord.Interaction, nome: str):
+    await interaction.response.defer(ephemeral=True)
+    if not interaction.user.guild_permissions.administrator:
+        return await interaction.followup.send("❌ Non hai i permessi.")
+
+    # Trova l'item con la ricerca intelligente
+    nome_esatto = await cerca_item_smart(interaction, nome, "items")
+    if not nome_esatto: return
+
+    cursor.execute("DELETE FROM items WHERE name = ?", (nome_esatto,))
+    conn.commit()
+    
+    await interaction.followup.send(f"🗑️ L'oggetto **{nome_esatto}** è stato rimosso dallo shop.")
+
 # ================= COMANDI BANCA (DEPOSITA/PRELEVA) =================
 
 @bot.tree.command(name="deposita", description="Sposta i soldi dal portafoglio alla banca")
