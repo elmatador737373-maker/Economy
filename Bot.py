@@ -128,7 +128,7 @@ async def depositoruolo(interaction: discord.Interaction, ruolo: discord.Role):
 
     await interaction.response.send_message(embed=embed)
 
-== COMANDI =================
+#== COMANDI =================
 
 @bot.tree.command(name="inventario", description="Visualizza il tuo inventario e i tuoi soldi")
 async def inventario(interaction: discord.Interaction):
