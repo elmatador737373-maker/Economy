@@ -127,6 +127,57 @@ async def crea_item_shop(interaction: discord.Interaction, nome: str, descrizion
     except Exception as e:
         if conn: conn.close()
         await interaction.followup.send(f"❌ Errore durante la creazione: {e}")
+@bot.tree.command(name="deposito_fazione", description="Apri il deposito della tua fazione (Solo se hai il ruolo)")
+async def deposito_fazione(interaction: Interaction):
+    await interaction.response.defer(ephemeral=True)
+
+    # 1. Recupera tutti i ruoli fazione registrati nel DB
+    conn = get_db_connection()
+    if not conn:
+        return await interaction.followup.send("❌ Errore di connessione al database.")
+    
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute("SELECT role_id FROM depositi")
+    fazioni_registrate = [row['role_id'] for row in cur.fetchall()]
+
+    # 2. Controlla se l'utente ha uno di questi ruoli
+    # Cerchiamo il primo ruolo dell'utente che compare nella lista delle fazioni registrate
+    my_role_id = next((str(ruolo.id) for ruolo in interaction.user.roles if str(ruolo.id) in fazioni_registrate), None)
+
+    if not my_role_id:
+        cur.close()
+        conn.close()
+        return await interaction.followup.send("❌ Non hai il permesso di accedere a nessun deposito fazione. Non possiedi un ruolo fazione registrato.")
+
+    # 3. Se l'utente ha il ruolo, recuperiamo i dati del deposito (soldi e item)
+    cur.execute("SELECT money FROM depositi WHERE role_id = %s", (my_role_id,))
+    fazione_info = cur.fetchone()
+    
+    cur.execute("SELECT item_name, quantity FROM depositi_items WHERE role_id = %s", (my_role_id,))
+    items_fazione = cur.fetchall()
+    
+    cur.close()
+    conn.close()
+
+    # 4. Creazione dell'Embed per mostrare il deposito
+    ruolo_obj = interaction.guild.get_role(int(my_role_id))
+    nome_fazione = ruolo_obj.name if ruolo_obj else "Fazione Sconosciuta"
+
+    embed = discord.Embed(
+        title=f"🏦 Deposito Fazione: {nome_fazione}",
+        color=discord.Color.blue(),
+        description="Ecco il contenuto della cassa comune e del magazzino."
+    )
+    
+    embed.add_field(name="💰 Fondi comuni", value=f"**{fazione_info['money']}$**", inline=False)
+
+    if items_fazione:
+        lista_item = "\n".join([f"📦 **{i['item_name']}** x{i['quantity']}" for i in items_fazione])
+        embed.add_field(name="📦 Oggetti in deposito", value=lista_item, inline=False)
+    else:
+        embed.add_field(name="📦 Oggetti in deposito", value="*Il magazzino è vuoto.*", inline=False)
+
+    await interaction.followup.send(embed=embed)
 
 # ================= GESTIONE CATALOGO SHOP (ADMIN) =================
 
