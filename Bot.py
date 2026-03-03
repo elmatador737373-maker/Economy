@@ -401,6 +401,38 @@ async def staff_vedi_deposito(interaction: Interaction):
     view.add_item(select)
     await interaction.followup.send("🕵️ Ispezione Staff: Quale deposito vuoi controllare?", view=view)
 
+@bot.tree.command(name="inventario", description="Mostra gli oggetti nel tuo zaino")
+async def inventario(interaction: Interaction):
+    await interaction.response.defer(ephemeral=True)
+    
+    conn = get_db_connection()
+    if not conn:
+        return await interaction.followup.send("❌ Errore di connessione al database.")
+    
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    # Recupera gli oggetti solo per l'utente che ha lanciato il comando
+    cur.execute("SELECT item_name, quantity FROM inventory WHERE user_id = %s", (str(interaction.user.id),))
+    items = cur.fetchall()
+    cur.close()
+    conn.close()
+
+    embed = discord.Embed(
+        title="🎒 Il Tuo Inventario", 
+        color=discord.Color.blue(),
+        description=f"Lista degli oggetti di {interaction.user.display_name}"
+    )
+    
+    if items:
+        # Formatta la lista degli oggetti (es: 📦 Ferro x5)
+        lista_oggetti = "\n".join([f"📦 **{i['item_name']}** x{i['quantity']}" for i in items])
+        embed.description = lista_oggetti
+    else:
+        embed.description = "*Il tuo zaino è attualmente vuoto.*"
+    
+    embed.set_footer(text="Solo tu puoi vedere questo messaggio")
+    await interaction.followup.send(embed=embed)
+
+
 # ================= WEB SERVER & START =================
 @bot.event
 async def on_ready():
