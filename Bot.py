@@ -49,7 +49,147 @@ CREATE TABLE IF NOT EXISTS depositi (
 """)
 
 conn.commit()
+@bot.tree.command(name="aggiungisoldi", description="ADMIN - Aggiungi soldi a un utente")
+@app_commands.describe(utente="Utente da premiare", importo="Quantità di soldi")
+async def aggiungisoldi(interaction: discord.Interaction, utente: discord.Member, importo: int):
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("Non sei admin.", ephemeral=True)
+        return
+    cursor.execute("UPDATE users SET wallet = wallet + ? WHERE user_id = ?", (importo, str(utente.id)))
+    conn.commit()
+    await interaction.response.send_message(f"Aggiunti {importo}$ a {utente.mention}")
+    @bot.tree.command(name="rimuovisoldi", description="ADMIN - Rimuovi soldi a un utente")
+@app_commands.describe(utente="Utente target", importo="Quantità di soldi")
+async def rimuovisoldi(interaction: discord.Interaction, utente: discord.Member, importo: int):
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("Non sei admin.", ephemeral=True)
+        return
+    cursor.execute("UPDATE users SET wallet = wallet - ? WHERE user_id = ?", (importo, str(utente.id)))
+    conn.commit()
+    await interaction.response.send_message(f"Rimossi {importo}$ a {utente.mention}")
+    @bot.tree.command(name="aggiungiitem", description="ADMIN - Aggiungi item a un utente")
+@app_commands.describe(utente="Utente target", item="Nome item", quantita="Quantità")
+async def aggiungiitem(interaction: discord.Interaction, utente: discord.Member, item: str, quantita: int):
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("Non sei admin.", ephemeral=True)
+        return
+    cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (str(utente.id), item))
+    res = cursor.fetchone()
+    if res:
+        cursor.execute("UPDATE inventory SET quantity = quantity + ? WHERE user_id = ? AND item_name = ?", (quantita, str(utente.id), item))
+    else:
+        cursor.execute("INSERT INTO inventory (user_id, item_name, quantity) VALUES (?, ?, ?)", (str(utente.id), item, quantita))
+    conn.commit()
+    await interaction.response.send_message(f"Aggiunti {quantita}x {item} a {utente.mention}")
+    @bot.tree.command(name="rimuoviitem", description="ADMIN - Rimuovi item da un utente")
+@app_commands.describe(utente="Utente target", item="Nome item", quantita="Quantità")
+async def rimuoviitem(interaction: discord.Interaction, utente: discord.Member, item: str, quantita: int):
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("Non sei admin.", ephemeral=True)
+        return
+    cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (str(utente.id), item))
+    res = cursor.fetchone()
+    if not res:
+        await interaction.response.send_message(f"{utente.mention} non possiede {item}.", ephemeral=True)
+        return
+    nuova_qta = res[0] - quantita
+    if nuova_qta > 0:
+        cursor.execute("UPDATE inventory SET quantity = ? WHERE user_id = ? AND item_name = ?", (nuova_qta, str(utente.id), item))
+    else:
+        cursor.execute("DELETE FROM inventory WHERE user_id = ? AND item_name = ?", (str(utente.id), item))
+    conn.commit()
+    await interaction.response.send_message(f"Rimossi {quantita}x {item} a {utente.mention}")
+    @bot.tree.command(name="depositacassa", description="Deposita soldi nel deposito del tuo ruolo")
+@app_commands.describe(importo="Quantità di soldi da depositare")
+async def depositasoldi(interaction: Interaction, importo: int):
+    user = get_user(interaction.user.id)
+    if user[1] < importo:
+        await interaction.response.send_message("Non hai abbastanza soldi.", ephemeral=True)
+        return
+@bot.tree.command(name="prelevacassa", description="Preleva soldi dal deposito del tuo ruolo")
+@app_commands.describe(importo="Quantità di soldi da prelevare")
+async def prelevasoldi(interaction: Interaction, importo: int):
+    # Trova deposito dell'utente
+    ruoli_user = [r.id for r in interaction.user.roles]
+    cursor.execute("SELECT role_id, money FROM depositi")
+    depositi = cursor.fetchall()
+    deposito_possibile = next((d for d in depositi if int(d[0]) in ruoli_user), None)
+    if not deposito_possibile:
+        await interaction.response.send_message("Non hai accesso a nessun deposito.", ephemeral=True)
+        return
 
+    role_id, soldi = deposito_possibile
+    if soldi < importo:
+        await interaction.response.send_message("Il deposito non ha abbastanza soldi.", ephemeral=True)
+        return
+
+    cursor.execute("UPDATE depositi SET money = money - ? WHERE role_id = ?", (importo, role_id))
+    cursor.execute("UPDATE users SET wallet = wallet + ? WHERE user_id = ?", (importo, str(interaction.user.id)))
+    conn.commit()
+    await interaction.response.send_message(f"Hai prelevato {importo}$ dal deposito del ruolo.", ephemeral=True)
+    # Trova deposito dell'utente
+    ruoli_user = [r.id for r in interaction.user.roles]
+    cursor.execute("SELECT role_id, money FROM depositi")
+    depositi = cursor.fetchall()
+    deposito_possibile = next((d for d in depositi if int(d[0]) in ruoli_user), None)
+    if not deposito_possibile:
+        await interaction.response.send_message("Non hai accesso a nessun deposito.", ephemeral=True)
+        return
+
+    role_id, soldi = deposito_possibile
+    cursor.execute("UPDATE users SET wallet = wallet - ? WHERE user_id = ?", (importo, str(interaction.user.id)))
+    cursor.execute("UPDATE depositi SET money = money + ? WHERE role_id = ?", (importo, role_id))
+    conn.commit()
+    await interaction.response.send_message(f"Hai depositato {importo}$ nel deposito del ruolo.", ephemeral=True)
+@bot.tree.command(name="depositaitemdep", description="Deposita un item nel deposito del tuo ruolo")
+@app_commands.describe(item="Nome item", quantita="Quantità da depositare")
+async def depositaitem(inter: Interaction, item: str, quantita: int):
+    user_id = str(inter.user.id)
+    cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, item))
+    res = cursor.fetchone()
+    if not res or res[0] < quantita:
+        await interaction.response.send_message("Non hai abbastanza di questo item.", ephemeral=True)
+        return
+@bot.tree.command(name="prelevaitemdep", description="Preleva un item dal deposito del tuo ruolo")
+@app_commands.describe(item="Nome item", quantita="Quantità da prelevare")
+async def prelevaitem(inter: Interaction, item: str, quantita: int):
+    table_name = f"deposit_items_{inter.user.guild.id}_{inter.user.id}"
+    cursor.execute(f"SELECT quantity FROM {table_name} WHERE item_name = ?", (item,))
+    res = cursor.fetchone()
+    if not res or res[0] < quantita:
+        await interaction.response.send_message("Non ci sono abbastanza item nel deposito.", ephemeral=True)
+        return
+
+    # Riduci dal deposito
+    nuova_qta = res[0] - quantita
+    if nuova_qta > 0:
+        cursor.execute(f"UPDATE {table_name} SET quantity = ? WHERE item_name = ?", (nuova_qta, item))
+    else:
+        cursor.execute(f"DELETE FROM {table_name} WHERE item_name = ?", (item,))
+
+    # Aggiungi all'inventario utente
+    cursor.execute("SELECT quantity FROM inventory WHERE user_id = ? AND item_name = ?", (str(inter.user.id), item))
+    res_inv = cursor.fetchone()
+    if res_inv:
+        cursor.execute("UPDATE inventory SET quantity = quantity + ? WHERE user_id = ? AND item_name = ?", (quantita, str(inter.user.id), item))
+    else:
+        cursor.execute("INSERT INTO inventory (user_id, item_name, quantity) VALUES (?, ?, ?)", (str(inter.user.id), item, quantita))
+    conn.commit()
+    await interaction.response.send_message(f"Hai prelevato {quantita}x {item} dal deposito.", ephemeral=True)
+    # Riduci dall'inventario
+    nuova_qta = res[0] - quantita
+    if nuova_qta > 0:
+        cursor.execute("UPDATE inventory SET quantity = ? WHERE user_id = ? AND item_name = ?", (nuova_qta, user_id, item))
+    else:
+        cursor.execute("DELETE FROM inventory WHERE user_id = ? AND item_name = ?", (user_id, item))
+
+    # Aggiungi al deposito
+    table_name = f"deposit_items_{inter.user.guild.id}_{inter.user.id}"  # tabella unica per deposito utente/ruolo
+    cursor.execute(f"CREATE TABLE IF NOT EXISTS {table_name} (item_name TEXT PRIMARY KEY, quantity INTEGER)")
+    cursor.execute(f"INSERT INTO {table_name} (item_name, quantity) VALUES (?, ?) ON CONFLICT(item_name) DO UPDATE SET quantity = quantity + ?",
+                   (item, quantita, quantita))
+    conn.commit()
+    await interaction.response.send_message(f"Hai depositato {quantita}x {item} nel deposito.", ephemeral=True)
 # ================= FUNZIONI =================
 def get_user(user_id):
     cursor.execute("SELECT * FROM users WHERE user_id = ?", (str(user_id),))
