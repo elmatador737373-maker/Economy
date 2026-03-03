@@ -249,6 +249,85 @@ async def preleva_item_fazione(interaction: Interaction, nome: str, quantita: in
         async def call(i): await i.response.defer(ephemeral=True); await procedi(i, sel.values[0])
         sel.callback = call; view.add_item(sel)
         await interaction.followup.send(f"Da quale magazzino prelevi?", view=view)
+
+# ================= COMANDI SCAMBIO E USO (SUPABASE) =================
+
+@bot.tree.command(name="dai_soldi", description="Dai dei soldi dal tuo portafoglio a un altro utente")
+async def dai_soldi(interaction: Interaction, utente: discord.Member, importo: int):
+    if utente.id == interaction.user.id:
+        return await interaction.response.send_message("❌ Non puoi dare soldi a te stesso.", ephemeral=True)
+    if importo <= 0:
+        return await interaction.response.send_message("❌ Importo non valido.", ephemeral=True)
+
+    u_da = get_user_data(interaction.user.id)
+    if u_da['wallet'] < importo:
+        return await interaction.response.send_message("❌ Non hai abbastanza contanti nel portafoglio.", ephemeral=True)
+
+    conn = get_db_connection(); cur = conn.cursor()
+    # Togli a chi dà
+    cur.execute("UPDATE users SET wallet = wallet - %s WHERE user_id = %s", (importo, str(interaction.user.id)))
+    # Dai a chi riceve
+    cur.execute("UPDATE users SET wallet = wallet + %s WHERE user_id = %s", (importo, str(utente.id)))
+    
+    conn.commit(); cur.close(); conn.close()
+    await interaction.response.send_message(f"💸 Hai dato **{importo}$** a {utente.mention}.")
+
+@bot.tree.command(name="dai_item", description="Passa un oggetto del tuo inventario a un altro utente")
+async def dai_item(interaction: Interaction, utente: discord.Member, nome: str, quantita: int = 1):
+    if utente.id == interaction.user.id:
+        return await interaction.response.send_message("❌ Non puoi darti oggetti da solo.", ephemeral=True)
+    if quantita <= 0:
+        return await interaction.response.send_message("❌ Quantità non valida.", ephemeral=True)
+
+    await interaction.response.defer(ephemeral=True)
+    # Ricerca intelligente nell'inventario di chi lancia il comando
+    nome_e = await cerca_item_smart(interaction, nome, "inventory")
+    if not nome_e: return
+
+    conn = get_db_connection(); cur = conn.cursor()
+    # Controlla se ne ha abbastanza
+    cur.execute("SELECT quantity FROM inventory WHERE user_id = %s AND item_name = %s", (str(interaction.user.id), nome_e))
+    res = cur.fetchone()
+    if not res or res[0] < quantita:
+        return await interaction.followup.send(f"❌ Non hai abbastanza {nome_e}.")
+
+    # Sposta l'oggetto
+    cur.execute("UPDATE inventory SET quantity = quantity - %s WHERE user_id = %s AND item_name = %s", (quantita, str(interaction.user.id), nome_e))
+    cur.execute("""
+        INSERT INTO inventory (user_id, item_name, quantity) VALUES (%s, %s, %s)
+        ON CONFLICT (user_id, item_name) DO UPDATE SET quantity = inventory.quantity + %s
+    """, (str(utente.id), nome_e, quantita, quantita))
+    
+    # Pulizia inventario vuoto
+    cur.execute("DELETE FROM inventory WHERE quantity <= 0")
+    
+    conn.commit(); cur.close(); conn.close()
+    await interaction.followup.send(f"📦 Hai consegnato {quantita}x **{nome_e}** a {utente.mention}.")
+
+@bot.tree.command(name="usa", description="Usa un oggetto dal tuo inventario")
+async def usa(interaction: Interaction, nome: str):
+    await interaction.response.defer(ephemeral=True)
+    # Ricerca intelligente nell'inventario
+    nome_e = await cerca_item_smart(interaction, nome, "inventory")
+    if not nome_e: return
+
+    conn = get_db_connection(); cur = conn.cursor()
+    # Verifica possesso
+    cur.execute("SELECT quantity FROM inventory WHERE user_id = %s AND item_name = %s", (str(interaction.user.id), nome_e))
+    res = cur.fetchone()
+    
+    if not res or res[0] <= 0:
+        return await interaction.followup.send(f"❌ Non possiedi più questo oggetto.")
+
+    # Logica di utilizzo (Sottrazione di 1 unità)
+    cur.execute("UPDATE inventory SET quantity = quantity - 1 WHERE user_id = %s AND item_name = %s", (str(interaction.user.id), nome_e))
+    cur.execute("DELETE FROM inventory WHERE quantity <= 0")
+    
+    conn.commit(); cur.close(); conn.close()
+    
+    # Risposta estetica
+    await interaction.followup.send(f"✨ Hai usato **{nome_e}**!")
+
 # ================= COMANDI ADMIN & SHOP (SUPABASE) =================
 
 @bot.tree.command(name="rimuovisoldi", description="ADMIN - Togli soldi a un utente")
