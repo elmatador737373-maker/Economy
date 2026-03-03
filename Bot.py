@@ -214,25 +214,22 @@ async def on_ready():
     await bot.tree.sync()
     print(f"Bot online come {bot.user}!")
 
-# ================= RUN =================
-
+# import os
 from flask import Flask
-from threading import Thread
-import os
+import threading
 
-# -------------------- Flask Keep-Alive --------------------
-app = Flask("")
+# ---------- Flask ----------
+app = Flask("Horizon Economy Bot")
 
 @app.route("/")
 def home():
-    return "Bot online e funzionante! 🚀"
+    return "Bot online e funzionante!"
 
-def run():
-    port = int(os.environ.get("PORT", 10000))  # usa la porta di Render
+# Funzione per far partire Flask in un thread separato
+def run_flask():
+    port = int(os.environ.get("PORT", 5000))  # prende la porta da Render, default 5000
     app.run(host="0.0.0.0", port=port)
 
-def keep_alive():
-    t = Thread(target=run)
-    t.start()
-    
+# Avvia Flask in background così Discord non viene bloccato
+threading.Thread(target=run_flask).start()
 bot.run(TOKEN)
