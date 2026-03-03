@@ -1,2 +1,5 @@
-discord.py==2.6.0
-flask==2.3.3
+discord.py
+pymongo
+dnspython
+flask
+
