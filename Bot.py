@@ -74,6 +74,74 @@ async def cerca_item_smart(interaction: Interaction, nome_input: str, tabella="i
     await interaction.followup.send(f"🤔 Ho trovato più oggetti per '{nome_input}'. Quale intendevi?", view=view, ephemeral=True)
     await view.wait()
     return view.value
+# ================= SISTEMA NEGOZIO (SHOP) =================
+
+@bot.tree.command(name="shop", description="Mostra la lista degli oggetti in vendita")
+async def shop(interaction: discord.Interaction):
+    # Usiamo defer perché se lo shop ha molti item il caricamento dell'embed può richiedere tempo
+    await interaction.response.defer()
+
+    cursor.execute("SELECT name, description, price, role_required FROM items")
+    rows = cursor.fetchall()
+
+    if not rows:
+        return await interaction.followup.send("🏪 Il negozio è attualmente vuoto. Torna più tardi!")
+
+    embed = discord.Embed(
+        title="🏪 Emporio della Città", 
+        description="Usa `/compra [nome]` per acquistare un oggetto.",
+        color=discord.Color.gold()
+    )
+
+    for nome, descrizione, prezzo, ruolo_id in rows:
+        # Controlla se l'oggetto ha un requisito di ruolo
+        requisito = f"\n⚠️ **Richiede:** <@&{ruolo_id}>" if ruolo_id != "None" else ""
+        
+        embed.add_field(
+            name=f"{nome} — {prezzo}$",
+            value=f"*{descrizione}*{requisito}",
+            inline=False
+        )
+
+    embed.set_footer(text="I prezzi sono IVA inclusa")
+    await interaction.followup.send(embed=embed)
+
+@bot.tree.command(name="compra", description="Acquista un oggetto dal negozio (usa la ricerca intelligente)")
+async def compra(interaction: discord.Interaction, nome: str):
+    await interaction.response.defer(ephemeral=True)
+    
+    # Utilizza la funzione cerca_item_smart che abbiamo messo sopra nel codice
+    nome_esatto = await cerca_item_smart(interaction, nome, "items")
+    if not nome_esatto:
+        return # Errore gestito dalla funzione smart
+
+    # Recupera i dati dell'utente e dell'item
+    user = get_user_data(interaction.user.id)
+    cursor.execute("SELECT price, role_required FROM items WHERE name = ?", (nome_esatto,))
+    item_data = cursor.fetchone()
+    
+    prezzo, ruolo_id = item_data
+
+    # 1. Controllo Soldi
+    if user[1] < prezzo:
+        return await interaction.followup.send(f"❌ Non hai abbastanza soldi! Ti mancano {prezzo - user[1]}$.")
+
+    # 2. Controllo Ruolo (se presente)
+    if ruolo_id != "None":
+        role_obj = interaction.guild.get_role(int(ruolo_id))
+        if role_obj not in interaction.user.roles:
+            return await interaction.followup.send(f"⚠️ Questo oggetto è riservato ai membri con il ruolo {role_obj.mention}.")
+
+    # 3. Transazione
+    cursor.execute("UPDATE users SET wallet = wallet - ? WHERE user_id = ?", (prezzo, str(interaction.user.id)))
+    cursor.execute("""
+        INSERT INTO inventory (user_id, item_name, quantity) VALUES (?, ?, 1)
+        ON CONFLICT(user_id, item_name) DO UPDATE SET quantity = quantity + 1
+    """, (str(interaction.user.id), nome_esatto))
+    
+    conn.commit()
+    
+    await interaction.followup.send(f"🛍️ Hai acquistato **{nome_esatto}** per **{prezzo}$**! L'oggetto è ora nel tuo `/inventario`.")
 
 # ================= COMANDI DEPOSITO FAZIONE (SOLDI E OGGETTI) =================
 
