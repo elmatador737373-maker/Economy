@@ -127,57 +127,70 @@ async def crea_item_shop(interaction: discord.Interaction, nome: str, descrizion
     except Exception as e:
         if conn: conn.close()
         await interaction.followup.send(f"❌ Errore durante la creazione: {e}")
-@bot.tree.command(name="deposito_fazione", description="Apri il deposito della tua fazione (Solo se hai il ruolo)")
+@bot.tree.command(name="deposito_fazione", description="Scegli quale deposito fazione aprire")
 async def deposito_fazione(interaction: Interaction):
     await interaction.response.defer(ephemeral=True)
 
-    # 1. Recupera tutti i ruoli fazione registrati nel DB
     conn = get_db_connection()
     if not conn:
-        return await interaction.followup.send("❌ Errore di connessione al database.")
+        return await interaction.followup.send("❌ Errore database.")
     
     cur = conn.cursor(cursor_factory=RealDictCursor)
     cur.execute("SELECT role_id FROM depositi")
     fazioni_registrate = [row['role_id'] for row in cur.fetchall()]
 
-    # 2. Controlla se l'utente ha uno di questi ruoli
-    # Cerchiamo il primo ruolo dell'utente che compare nella lista delle fazioni registrate
-    my_role_id = next((str(ruolo.id) for ruolo in interaction.user.roles if str(ruolo.id) in fazioni_registrate), None)
+    # Trova tutti i ruoli dell'utente che sono registrati come fazioni
+    miei_ruoli_fazione = [r for r in interaction.user.roles if str(r.id) in fazioni_registrate]
 
-    if not my_role_id:
+    if not miei_ruoli_fazione:
         cur.close()
         conn.close()
-        return await interaction.followup.send("❌ Non hai il permesso di accedere a nessun deposito fazione. Non possiedi un ruolo fazione registrato.")
+        return await interaction.followup.send("❌ Non appartieni a nessuna fazione registrata.")
 
-    # 3. Se l'utente ha il ruolo, recuperiamo i dati del deposito (soldi e item)
-    cur.execute("SELECT money FROM depositi WHERE role_id = %s", (my_role_id,))
-    fazione_info = cur.fetchone()
-    
-    cur.execute("SELECT item_name, quantity FROM depositi_items WHERE role_id = %s", (my_role_id,))
-    items_fazione = cur.fetchall()
-    
-    cur.close()
-    conn.close()
+    # Funzione interna per mostrare il deposito scelto
+    async def mostra_deposito(inter: Interaction, role_id: str):
+        conn_int = get_db_connection()
+        cur_int = conn_int.cursor(cursor_factory=RealDictCursor)
+        
+        cur_int.execute("SELECT money FROM depositi WHERE role_id = %s", (role_id,))
+        f_info = cur_int.fetchone()
+        cur_int.execute("SELECT item_name, quantity FROM depositi_items WHERE role_id = %s", (role_id,))
+        f_items = cur_int.fetchall()
+        
+        role_obj = inter.guild.get_role(int(role_id))
+        embed = discord.Embed(title=f"🏦 Deposito: {role_obj.name}", color=discord.Color.blue())
+        embed.add_field(name="💰 Soldi", value=f"**{f_info['money']}$**", inline=False)
+        
+        lista = "\n".join([f"📦 **{i['item_name']}** x{i['quantity']}" for i in f_items]) if f_items else "*Vuoto*"
+        embed.add_field(name="📦 Inventario", value=lista, inline=False)
+        
+        await inter.followup.send(embed=embed, ephemeral=True)
+        cur_int.close()
+        conn_int.close()
 
-    # 4. Creazione dell'Embed per mostrare il deposito
-    ruolo_obj = interaction.guild.get_role(int(my_role_id))
-    nome_fazione = ruolo_obj.name if ruolo_obj else "Fazione Sconosciuta"
+    # CASO 1: L'utente ha una sola fazione
+    if len(miei_ruoli_fazione) == 1:
+        cur.close()
+        conn.close()
+        await mostra_deposito(interaction, str(miei_ruoli_fazione[0].id))
 
-    embed = discord.Embed(
-        title=f"🏦 Deposito Fazione: {nome_fazione}",
-        color=discord.Color.blue(),
-        description="Ecco il contenuto della cassa comune e del magazzino."
-    )
-    
-    embed.add_field(name="💰 Fondi comuni", value=f"**{fazione_info['money']}$**", inline=False)
-
-    if items_fazione:
-        lista_item = "\n".join([f"📦 **{i['item_name']}** x{i['quantity']}" for i in items_fazione])
-        embed.add_field(name="📦 Oggetti in deposito", value=lista_item, inline=False)
+    # CASO 2: L'utente ha più fazioni (Mostra Menu)
     else:
-        embed.add_field(name="📦 Oggetti in deposito", value="*Il magazzino è vuoto.*", inline=False)
+        class FazioneSelect(discord.ui.Select):
+            def __init__(self, opzioni):
+                super().__init__(placeholder="Seleziona la fazione...", options=opzioni)
+            async def callback(self, inter: Interaction):
+                await inter.response.defer(ephemeral=True)
+                await mostra_deposito(inter, self.values[0])
 
-    await interaction.followup.send(embed=embed)
+        view = discord.ui.View()
+        options = [discord.SelectOption(label=r.name, value=str(r.id)) for r in miei_ruoli_fazione]
+        view.add_item(FazioneSelect(options))
+        
+        cur.close()
+        conn.close()
+        await interaction.followup.send("🤔 Fai parte di più fazioni. Quale deposito vuoi aprire?", view=view, ephemeral=True)
+
 
 # ================= GESTIONE CATALOGO SHOP (ADMIN) =================
 
