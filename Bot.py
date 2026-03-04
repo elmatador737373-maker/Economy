@@ -295,10 +295,68 @@ async def usa(interaction: Interaction, nome: str):
     conn.commit(); cur.close(); conn.close()
     await interaction.followup.send(f"✨ **{interaction.user.display_name}** ha usato **{nome_e}**!")
 
+class PagaFatturaView(discord.ui.View):
+    def __init__(self, user_id, fatture_list):
+        super().__init__(timeout=180)
+        self.user_id = user_id
+        
+        # Crea le opzioni per il menù a tendina
+        options = []
+        for f in fatture_list:
+            options.append(discord.SelectOption(
+                label=f"Fattura {f['id_fattura']}",
+                description=f"Prezzo: {f['prezzo']}$ | Azienda: {f['id_azienda']}",
+                value=f['id_fattura']
+            ))
+        
+        self.select = discord.ui.Select(placeholder="Scegli la fattura da pagare...", options=options)
+        self.select.callback = self.callback
+        self.add_item(self.select)
+
+    async def callback(self, interaction: discord.Interaction):
+        # Usiamo defer per gestire l'operazione sul DB
+        await interaction.response.defer(ephemeral=True)
+        
+        id_f = self.select.values[0]
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # 1. Recupera dettagli fattura
+        cur.execute("SELECT * FROM fatture WHERE id_fattura = %s", (id_f,))
+        f = cur.fetchone()
+        
+        # 2. Recupera soldi utente
+        u = get_user_data(interaction.user.id)
+
+        if not f:
+            conn.close()
+            return await interaction.followup.send("❌ Fattura non trovata.", ephemeral=True)
+
+        if u['wallet'] < f['prezzo']:
+            conn.close()
+            return await interaction.followup.send(f"❌ Non hai abbastanza contanti! Ti servono **{f['prezzo']}$** (Hai: {u['wallet']}$)", ephemeral=True)
+
+        try:
+            # 3. Esegui il pagamento: togli soldi e segna come pagata (o elimina)
+            cur.execute("UPDATE users SET wallet = wallet - %s WHERE user_id = %s", (f['prezzo'], str(interaction.user.id)))
+            cur.execute("UPDATE fatture SET stato = 'Pagata' WHERE id_fattura = %s", (id_f,))
+            
+            conn.commit()
+            cur.close(); conn.close()
+            
+            # Disabilita il menù dopo il pagamento
+            for item in self.children:
+                item.disabled = True
+                
+            await interaction.edit_original_response(content=f"✅ Pagamento completato! Hai pagato **{f['prezzo']}$** a **{f['id_azienda']}**.", view=self)
+        
+        except Exception as e:
+            print(f"Errore durante il pagamento: {e}")
+            await interaction.followup.send("❌ Errore durante l'elaborazione del pagamento.", ephemeral=True)
 @bot.tree.command(name="fattura", description="Emetti una fattura a un cittadino")
+@app_commands.describe(azienda="Seleziona il ruolo della tua azienda", prezzo="Importo da pagare")
 async def fattura(interaction: discord.Interaction, cliente: discord.Member, azienda: discord.Role, descrizione: str, prezzo: int):
-    # Rimuove il limite dei 3 secondi
-    await interaction.response.defer()
+    await interaction.response.defer() # Toglie il limite 3s
     
     id_f = ''.join(random.choices(string.ascii_letters + string.digits, k=10))
     data_attuale = datetime.datetime.now().strftime("%d/%m/%Y")
@@ -306,40 +364,111 @@ async def fattura(interaction: discord.Interaction, cliente: discord.Member, azi
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        # Usiamo azienda.name per salvare il testo nel DB invece dell'oggetto
-        cur.execute("INSERT INTO fatture (id_fattura, id_cliente, id_azienda, descrizione, prezzo, data) VALUES (%s, %s, %s, %s, %s, %s)",
-                    (id_f, str(cliente.id), azienda.name, descrizione, prezzo, data_attuale))
+        # Salviamo il nome del ruolo (azienda.name)
+        cur.execute("""
+            INSERT INTO fatture (id_fattura, id_cliente, id_azienda, descrizione, prezzo, data, stato) 
+            VALUES (%s, %s, %s, %s, %s, %s, 'Pendente')
+        """, (id_f, str(cliente.id), azienda.name, descrizione, prezzo, data_attuale))
         conn.commit()
         cur.close(); conn.close()
 
-        embed = discord.Embed(title="📑 Nuova Fattura", color=discord.Color.blue())
-        embed.add_field(name="CLIENTE:", value=cliente.mention, inline=False)
-        embed.add_field(name="AZIENDA:", value=azienda.mention, inline=False)
-        embed.add_field(name="DESCRIZIONE:", value=descrizione, inline=False)
-        embed.add_field(name="PREZZO:", value=f"**{prezzo}$**", inline=True)
-        embed.add_field(name="DATA:", value=data_attuale, inline=True)
-        embed.set_footer(text=f"ID Fattura: {id_f}")
+        embed = discord.Embed(title="📑 Nuova Fattura Emessa", color=discord.Color.blue())
+        embed.add_field(name="👤 CLIENTE:", value=cliente.mention, inline=True)
+        embed.add_field(name="🏛️ AZIENDA:", value=azienda.mention, inline=True)
+        embed.add_field(name="📝 DESCRIZIONE:", value=descrizione, inline=False)
+        embed.add_field(name="💰 PREZZO:", value=f"**{prezzo}$**", inline=True)
+        embed.add_field(name="📅 DATA:", value=data_attuale, inline=True)
+        embed.set_footer(text=f"ID Unico Fattura: {id_f}")
         
-        await interaction.followup.send(content=f"{cliente.mention}, hai ricevuto una nuova fattura da {azienda.mention}!", embed=embed)
+        await interaction.followup.send(content=f"{cliente.mention}, controlla le tue fatture con `/pagafattura`!", embed=embed)
     except Exception as e:
-        print(f"Errore DB: {e}")
-        await interaction.followup.send("❌ Errore critico nel database. Controlla i log.")
+        print(f"Errore fattura: {e}")
+        await interaction.followup.send("❌ Errore database durante l'invio della fattura.")
+
 @bot.tree.command(name="pagafattura", description="Visualizza e paga le tue fatture pendenti")
 async def pagafattura(interaction: discord.Interaction):
-    # Aspetta senza far scadere il comando (ephemeral così lo vede solo l'utente)
-    await interaction.response.defer(ephemeral=True) 
+    await interaction.response.defer(ephemeral=True) # Toglie il limite 3s
     
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
+    # Cerchiamo solo le fatture pendenti per quell'utente
     cur.execute("SELECT * FROM fatture WHERE id_cliente = %s AND stato = 'Pendente'", (str(interaction.user.id),))
     mie_fatture = cur.fetchall()
     cur.close(); conn.close()
 
     if not mie_fatture:
-        return await interaction.followup.send("✅ Non hai fatture da pagare!", ephemeral=True)
+        return await interaction.followup.send("✅ Non hai fatture in sospeso!", ephemeral=True)
 
     view = PagaFatturaView(interaction.user.id, mie_fatture)
-    await interaction.followup.send("Seleziona la fattura che desideri saldare:", view=view, ephemeral=True)
+    await interaction.followup.send("Seleziona la fattura che vuoi saldare (i soldi verranno detratti dal portafoglio):", view=view, ephemeral=True)
+
+ID_RUOLO_CONCESSIONARIO = 1414902990275612753
+
+@bot.tree.command(name="registra_veicolo", description="Registra la vendita e consegna le chiavi con targa")
+@app_commands.checks.has_any_role(ID_RUOLO_CONCESSIONARIO)
+@app_commands.describe(
+    acquirente="Il cittadino che compra l'auto",
+    marca_modello="Es: Ferrari 488",
+    targa="Es: AB123CD",
+    concessionaria="Tagga il ruolo della concessionaria"
+)
+async def registra_veicolo(
+    interaction: discord.Interaction, 
+    acquirente: discord.Member, 
+    marca_modello: str, 
+    targa: str, 
+    concessionaria: discord.Role
+):
+    # Rimuove il limite dei 3 secondi
+    await interaction.response.defer()
+
+    # Dati automatici
+    data_ora = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
+    operatore = interaction.user.display_name
+    targa_maiuscola = targa.upper()
+    
+    # Nome dell'item che apparirà nell'inventario
+    nome_item_chiavi = f"<:emoji_2:1464729413651534029> | Chiavi {marca_modello} [{targa_maiuscola}]"
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        # 1. Aggiungiamo le chiavi con targa nell'inventario dell'acquirente
+        cur.execute("""
+            INSERT INTO inventory (user_id, item_name, quantity) 
+            VALUES (%s, %s, 1) 
+            ON CONFLICT (user_id, item_name) 
+            DO UPDATE SET quantity = inventory.quantity + 1
+        """, (str(acquirente.id), nome_item_chiavi))
+        
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        # 2. Creazione dell'Embed Modulo
+        embed = discord.Embed(
+            title="📝 CONTRATTO DI VENDITA VEICOLO",
+            color=discord.Color.green(),
+            timestamp=datetime.datetime.now()
+        )
+        
+        embed.add_field(name="🏛️ CONCESSIONARIA", value=f"**Nome:** {concessionaria.mention}\n**Operatore:** {operatore}", inline=False)
+        embed.add_field(name="👤 ACQUIRENTE", value=f"**Cittadino:** {acquirente.mention}\n**ID:** {acquirente.id}", inline=False)
+        embed.add_field(name="🚘 VEICOLO", value=f"**Modello:** {marca_modello}\n**Targa:** `{targa_maiuscola}`", inline=False)
+        
+        embed.set_footer(text=f"Registrato il {data_ora}")
+        
+        # Risposta finale
+        await interaction.followup.send(
+            content=f"✅ Vendita completata! Chiavi consegnate a {acquirente.mention}.",
+            embed=embed
+        )
+
+    except Exception as e:
+        print(f"Errore registrazione veicolo: {e}")
+        await interaction.followup.send("❌ Errore durante l'aggiornamento dell'inventario.", ephemeral=True)
+
 
 
 # ================= COMANDI FAZIONE =================
