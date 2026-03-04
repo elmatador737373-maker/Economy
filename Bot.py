@@ -374,47 +374,49 @@ class PagaFatturaView(discord.ui.View):
         except Exception as e:
             print(f"ERRORE UPDATE PAGAMENTO: {e}")
             await interaction.followup.send("❌ Errore durante il salvataggio del pagamento.", ephemeral=True)
+
 @bot.tree.command(name="fattura", description="Emetti una fattura")
 async def fattura(interaction: discord.Interaction, cliente: discord.Member, azienda: discord.Role, descrizione: str, prezzo: int):
-    # Prova a spostare il defer() come PRIMISSIMA istruzione
-    try:
-        await interaction.response.defer(thinking=True) 
-    except Exception as e:
-        print(f"Errore durante il defer: {e}")
-        return
-
-    # Generazione ID e Data
-    id_f = ''.join(random.choices(string.ascii_letters + string.digits, k=10))
-    data_attuale = datetime.datetime.now().strftime("%d/%m/%Y")
+    start_time = time.time()
+    print(f"--- INIZIO COMANDO FATTURA ---")
     
     try:
-        # Esegui la connessione e la query
+        # Tentativo di risposta immediata a Discord
+        await interaction.response.defer()
+        print(f"DEBUG: Defer eseguito in {time.time() - start_time:.2f}s")
+    except Exception as e:
+        print(f"ERRORE CRITICO DEFER: {e}")
+        return
+
+    try:
+        # Generazione dati
+        id_f = ''.join(random.choices(string.ascii_letters + string.digits, k=10))
+        
+        # Connessione al DB (Probabile punto di blocco)
+        db_start = time.time()
         conn = get_db_connection()
         cur = conn.cursor()
+        print(f"DEBUG: Connessione DB stabilita in {time.time() - db_start:.2f}s")
         
         cur.execute("""
             INSERT INTO fatture (id_fattura, id_cliente, id_azienda, descrizione, prezzo, data, stato) 
             VALUES (%s, %s, %s, %s, %s, %s, %s)
-        """, (str(id_f), str(cliente.id), str(azienda.name), str(descrizione), int(prezzo), str(data_attuale), 'Pendente'))
+        """, (str(id_f), str(cliente.id), str(azienda.name), descrizione, int(prezzo), datetime.datetime.now().strftime("%d/%m/%Y"), 'Pendente'))
         
         conn.commit()
         cur.close()
         conn.close()
+        print(f"DEBUG: Query completata in {time.time() - db_start:.2f}s")
 
-        # Usiamo un embed per confermare
-        embed = discord.Embed(title="📑 Fattura Inviata", color=discord.Color.green())
-        embed.add_field(name="Utente", value=cliente.mention)
-        embed.add_field(name="Importo", value=f"{prezzo}$")
-        embed.set_footer(text=f"ID: {id_f}")
-
-        # USA SEMPRE followup dopo il defer
-        await interaction.followup.send(embed=embed)
+        await interaction.followup.send(f"✅ Fattura `{id_f}` inviata a {cliente.mention} per {prezzo}$")
 
     except Exception as e:
-        print(f"Errore database: {e}")
-        # Se il defer è andato a buon fine, dobbiamo usare followup anche per l'errore
-        await interaction.followup.send("❌ Errore durante il salvataggio. Riprova tra poco.", ephemeral=True)
-
+        print(f"ERRORE DURANTE ESECUZIONE: {e}")
+        # Se il defer è passato, usiamo followup
+        try:
+            await interaction.followup.send("❌ Errore interno al database.")
+        except:
+            pass
 @bot.tree.command(name="pagafattura", description="Paga le tue fatture pendenti")
 async def pagafattura(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
