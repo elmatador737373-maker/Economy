@@ -324,7 +324,76 @@ async def preleva_item_fazione(interaction: Interaction, nome: str, quantita: in
         await interaction.followup.send("Da quale magazzino prelevi?", view=view, ephemeral=True)
 
 # ================= SHOP & LAVORO =================
+class LeaderboardPagination(discord.ui.View):
+    def __init__(self, data, per_page=10):
+        super().__init__(timeout=60)
+        self.data = data
+        self.per_page = per_page
+        self.current_page = 0
+        self.total_pages = (len(data) - 1) // per_page + 1
 
+    def create_embed(self, bot):
+        start = self.current_page * self.per_page
+        end = start + self.per_page
+        page_data = self.data[start:end]
+
+        embed = discord.Embed(
+            title="🏆 Classifica Ricchezza Globale",
+            color=discord.Color.gold()
+        )
+        
+        description = ""
+        for i, row in enumerate(page_data, start=start + 1):
+            user_id = int(row['user_id'])
+            user = bot.get_user(user_id)
+            user_name = user.display_name if user else f"Cittadino ({user_id})"
+            
+            if i == 1: medal = "🥇"
+            elif i == 2: medal = "🥈"
+            elif i == 3: medal = "🥉"
+            else: medal = f"**{i}.**"
+
+            description += f"{medal} **{user_name}**: {row['totale']:,}$\n"
+            description += f"└─ *Wallet: {row['wallet']:,}$ | Banca: {row['bank']:,}$*\n\n"
+
+        embed.description = description
+        embed.set_footer(text=f"Pagina {self.current_page + 1} di {self.total_pages} • Totale utenti: {len(self.data)}")
+        return embed
+
+    @discord.ui.button(label="⬅️ Indietro", style=discord.ButtonStyle.gray)
+    async def previous_page(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.current_page > 0:
+            self.current_page -= 1
+            await interaction.response.edit_message(embed=self.create_embed(interaction.client), view=self)
+        else:
+            await interaction.response.send_message("Sei già sulla prima pagina!", ephemeral=True)
+
+    @discord.ui.button(label="Avanti ➡️", style=discord.ButtonStyle.gray)
+    async def next_page(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.current_page < self.total_pages - 1:
+            self.current_page += 1
+            await interaction.response.edit_message(embed=self.create_embed(interaction.client), view=self)
+        else:
+            await interaction.response.send_message("Sei già sull'ultima pagina!", ephemeral=True)
+
+@bot.tree.command(name="leaderboard", description="Mostra la classifica completa sfogliabile")
+async def leaderboard(interaction: discord.Interaction):
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    
+    # Prendiamo tutti i dati ordinati per ricchezza totale
+    cur.execute("SELECT user_id, wallet, bank, (wallet + bank) AS totale FROM users ORDER BY totale DESC")
+    all_users = cur.fetchall()
+    cur.close(); conn.close()
+
+    if not all_users:
+        return await interaction.response.send_message("📭 Database vuoto.")
+
+    view = LeaderboardPagination(all_users)
+    # Passiamo bot (client) per recuperare i nomi degli utenti
+    embed = view.create_embed(interaction.client)
+    
+    await interaction.response.send_message(embed=embed, view=view)
 @bot.tree.command(name="shop", description="Mostra il catalogo")
 async def shop(interaction: Interaction):
     conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
