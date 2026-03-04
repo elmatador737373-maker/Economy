@@ -422,56 +422,6 @@ async def pagafattura(interaction: discord.Interaction):
         # Se c'è un errore qui, il bot lo scriverà nei log di Render
         await interaction.followup.send("❌ Errore nel recupero delle fatture. Riprova più tardi.", ephemeral=True)
 
-@bot.tree.command(name="pagafattura", description="Visualizza e paga le tue fatture pendenti")
-async def pagafattura(interaction: discord.Interaction):
-    await interaction.response.defer(ephemeral=True)
-    
-    try:
-        conn = get_db_connection()
-        from psycopg2.extras import RealDictCursor
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        
-        # Cerchiamo solo le fatture NON pagate di questo utente
-        cur.execute("SELECT * FROM fatture WHERE id_cliente = %s AND stato = 'Pendente'", (str(interaction.user.id),))
-        mie_fatture = cur.fetchall()
-        
-        cur.close()
-        conn.close()
-
-        if not mie_fatture:
-            return await interaction.followup.send("✅ Non hai fatture da pagare al momento.", ephemeral=True)
-
-        view = PagaFatturaView(interaction.user.id, mie_fatture)
-        await interaction.followup.send("Ecco le tue fatture in sospeso. Selezionane una per pagarla con il tuo wallet:", view=view, ephemeral=True)
-    
-    except Exception as e:
-        print(f"ERRORE CARICAMENTO: {e}")
-        await interaction.followup.send("❌ Errore nel recupero delle fatture.")
-@bot.tree.command(name="pagafattura", description="Visualizza e paga le tue fatture pendenti")
-async def pagafattura(interaction: discord.Interaction):
-    await interaction.response.defer(ephemeral=True)
-    
-    try:
-        conn = get_db_connection()
-        from psycopg2.extras import RealDictCursor
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        
-        # Cerchiamo solo le fatture NON pagate di questo utente
-        cur.execute("SELECT * FROM fatture WHERE id_cliente = %s AND stato = 'Pendente'", (str(interaction.user.id),))
-        mie_fatture = cur.fetchall()
-        
-        cur.close()
-        conn.close()
-
-        if not mie_fatture:
-            return await interaction.followup.send("✅ Non hai fatture da pagare al momento.", ephemeral=True)
-
-        view = PagaFatturaView(interaction.user.id, mie_fatture)
-        await interaction.followup.send("Ecco le tue fatture in sospeso. Selezionane una per pagarla con il tuo wallet:", view=view, ephemeral=True)
-    
-    except Exception as e:
-        print(f"ERRORE CARICAMENTO: {e}")
-        await interaction.followup.send("❌ Errore nel recupero delle fatture.")
 
 @bot.tree.command(name="fattura", description="Emetti una fattura")
 async def fattura(interaction: discord.Interaction, cliente: discord.Member, azienda: discord.Role, descrizione: str, prezzo: int):
