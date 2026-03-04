@@ -41,7 +41,14 @@ def init_db():
     cur.execute("CREATE TABLE IF NOT EXISTS depositi (role_id TEXT PRIMARY KEY, money INTEGER DEFAULT 0)")
     cur.execute("CREATE TABLE IF NOT EXISTS depositi_items (role_id TEXT, item_name TEXT, quantity INTEGER, PRIMARY KEY (role_id, item_name))")
     cur.execute("CREATE TABLE IF NOT EXISTS turni (user_id TEXT PRIMARY KEY, inizio TIMESTAMP)")
-    cur.execute("ALTER TABLE users ADD COLUMN ore_lavorate REAL DEFAULT 0") 
+    try:
+    cur.execute("ALTER TABLE users ADD COLUMN ore_lavorate REAL DEFAULT 0")
+except psycopg2.errors.DuplicateColumn:
+    # Se la colonna esiste già, ignoriamo l'errore e continuiamo
+    conn.rollback() 
+except Exception as e:
+    print(f"Errore durante l'aggiornamento della tabella: {e}")
+    conn.rollback()
     cur.execute("""
     CREATE TABLE IF NOT EXISTS fatture (
         id_fattura TEXT PRIMARY KEY,
