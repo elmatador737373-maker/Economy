@@ -52,7 +52,7 @@ def get_user_data(user_id):
     cur.execute("SELECT * FROM users WHERE user_id = %s", (str(user_id),))
     user = cur.fetchone()
     if not user:
-        cur.execute("INSERT INTO users (user_id, wallet, bank) VALUES (%s, 500, 0) RETURNING *", (str(user_id),))
+        cur.execute("INSERT INTO users (user_id, wallet, bank) VALUES (%s, 3500, 0) RETURNING *", (str(user_id),))
         user = cur.fetchone()
         conn.commit()
     cur.close(); conn.close()
