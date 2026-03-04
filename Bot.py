@@ -73,12 +73,11 @@ def init_db():
     except Exception:
         conn.rollback() # Ignora se la colonna esiste già
 
-    def inizializza_tabella_fatture():
-    try:
+  def inizializza_tabella_fatture():
+    try: # <--- Ora è allineato correttamente (4 spazi)
         conn = get_db_connection()
         cur = conn.cursor()
-
-        # 1. Crea la tabella se non esiste con le colonne corrette
+        # ... tutto il resto del codice dentro il try deve avere 8 spazi ...
         cur.execute("""
             CREATE TABLE IF NOT EXISTS fatture (
                 id_fattura TEXT PRIMARY KEY,
@@ -90,27 +89,11 @@ def init_db():
                 stato TEXT DEFAULT 'Pendente'
             );
         """)
-
-        # 2. Aggiunge la colonna 'stato' se la tabella esisteva già ma ne era priva
-        # Usiamo un blocco SQL che evita errori se la colonna esiste già
-        cur.execute("""
-            DO $$ 
-            BEGIN 
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
-                               WHERE table_name='fatture' AND column_name='stato') THEN 
-                    ALTER TABLE fatture ADD COLUMN stato TEXT DEFAULT 'Pendente';
-                END IF;
-            END $$;
-        """)
-
         conn.commit()
         cur.close()
         conn.close()
-        print("✅ Tabella fatture aggiornata/creata correttamente su Supabase!")
-        
-    except Exception as e:
-        print(f"❌ Errore durante l'aggiornamento della tabella: {e}")
-
+    except Exception as e: # <--- Anche except deve essere allineato al try
+        print(f"Errore: {e}")
 # Ricorda di chiamare questa funzione all'avvio del bot!
 
 
