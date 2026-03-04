@@ -33,40 +33,54 @@ def get_db_connection():
 
 def init_db():
     conn = get_db_connection()
-    if not conn: return
+    if not conn: 
+        return
     cur = conn.cursor()
+
+    # 1. Creazione Tabelle Base (Usa sempre IF NOT EXISTS)
     cur.execute("CREATE TABLE IF NOT EXISTS users (user_id TEXT PRIMARY KEY, wallet INTEGER DEFAULT 3500, bank INTEGER DEFAULT 0)")
     cur.execute("CREATE TABLE IF NOT EXISTS items (name TEXT PRIMARY KEY, description TEXT, price INTEGER, role_required TEXT)")
     cur.execute("CREATE TABLE IF NOT EXISTS inventory (user_id TEXT, item_name TEXT, quantity INTEGER, PRIMARY KEY (user_id, item_name))")
     cur.execute("CREATE TABLE IF NOT EXISTS depositi (role_id TEXT PRIMARY KEY, money INTEGER DEFAULT 0)")
     cur.execute("CREATE TABLE IF NOT EXISTS depositi_items (role_id TEXT, item_name TEXT, quantity INTEGER, PRIMARY KEY (role_id, item_name))")
     cur.execute("CREATE TABLE IF NOT EXISTS turni (user_id TEXT PRIMARY KEY, inizio TIMESTAMP)")
-    try:
-    cur.execute("ALTER TABLE users ADD COLUMN ore_lavorate REAL DEFAULT 0")
-except psycopg2.errors.DuplicateColumn:
-    # Se la colonna esiste già, ignoriamo l'errore e continuiamo
-    conn.rollback() 
-except Exception as e:
-    print(f"Errore durante l'aggiornamento della tabella: {e}")
-    conn.rollback()
     cur.execute("""
-    CREATE TABLE IF NOT EXISTS fatture (
-        id_fattura TEXT PRIMARY KEY,
-        id_cliente TEXT,
-        id_azienda TEXT,
-        descrizione TEXT,
-        prezzo INTEGER,
-        data TEXT,
-        stato TEXT DEFAULT 'Pendente'
-    )
-""")
+        CREATE TABLE IF NOT EXISTS fatture (
+            id_fattura TEXT PRIMARY KEY,
+            id_cliente TEXT,
+            id_azienda TEXT,
+            descrizione TEXT,
+            prezzo INTEGER,
+            data TEXT,
+            stato TEXT DEFAULT 'Pendente'
+        )
+    """)
 
-    cur.execute("ALTER TABLE turni ADD COLUMN ruolo TEXT ")
+    # 2. Aggiornamento tabelle esistenti (ALTER TABLE)
+    # Usiamo blocchi try/except separati per ogni colonna così se una esiste già non blocca l'altra
+    
+    # Aggiunta ore_lavorate a users
+    try:
+        cur.execute("ALTER TABLE users ADD COLUMN ore_lavorate REAL DEFAULT 0")
+        conn.commit()
+    except Exception:
+        conn.rollback() # Ignora se la colonna esiste già
 
-    conn.commit()
-    cur.close();
+    # Aggiunta ruolo a turni
+    try:
+        cur.execute("ALTER TABLE turni ADD COLUMN ruolo TEXT")
+        conn.commit()
+    except Exception:
+        conn.rollback() # Ignora se la colonna esiste già
 
+    # Chiudiamo tutto correttamente
+    cur.close()
+    conn.close()
+    print("✅ Database inizializzato correttamente!")
+
+# Chiama la funzione
 init_db()
+
 # ================= HELPER FUNCTIONS =================
 
 def get_user_data(user_id):
