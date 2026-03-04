@@ -336,27 +336,28 @@ async def usa(interaction: Interaction, nome: str):
     conn.commit(); cur.close(); conn.close()
     await interaction.followup.send(f"✨ **{interaction.user.display_name}** ha usato **{nome_e}**!")
 class PagaFatturaView(discord.ui.View):
+class PagaFatturaView(discord.ui.View):
     def __init__(self, user_id, fatture):
         super().__init__(timeout=180)
         self.user_id = user_id
         
         options = []
         for f in fatture:
-            # Salviamo ID, Prezzo e Azienda nel valore dell'opzione separati da "|"
+            # Salviamo: ID Fattura | Prezzo | Nome Azienda
             options.append(discord.SelectOption(
                 label=f"Fattura {f['id_fattura']}",
                 description=f"Prezzo: {f['prezzo']}$ | Azienda: {f['id_azienda']}",
                 value=f"{f['id_fattura']}|{f['prezzo']}|{f['id_azienda']}"
             ))
             
-        self.select = discord.ui.Select(placeholder="Scegli la fattura da pagare...", options=options)
+        self.select = discord.ui.Select(placeholder="Seleziona la fattura da saldare...", options=options)
         self.select.callback = self.select_callback
         self.add_item(self.select)
 
     async def select_callback(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         
-        # Recuperiamo i dati separati dal carattere "|"
+        # Estraiamo i dati dal valore selezionato
         data = self.select.values[0].split('|')
         id_f = data[0]
         prezzo = int(data[1])
@@ -364,26 +365,25 @@ class PagaFatturaView(discord.ui.View):
 
         try:
             conn = get_db_connection()
-            # Usiamo RealDictCursor per sicurezza nella lettura
             from psycopg2.extras import RealDictCursor
             cur = conn.cursor(cursor_factory=RealDictCursor)
             
-            # 1. Verifichiamo se l'utente ha i soldi
+            # 1. Controlliamo se l'utente esiste e ha i soldi nel wallet (tabella users)
             cur.execute("SELECT wallet FROM users WHERE user_id = %s", (str(interaction.user.id),))
             user_data = cur.fetchone()
             
             if not user_data or user_data['wallet'] < prezzo:
                 cur.close()
                 conn.close()
-                return await interaction.followup.send(f"❌ Non hai abbastanza soldi nel wallet! Ti mancano {prezzo - user_data['wallet'] if user_data else prezzo}$.", ephemeral=True)
+                return await interaction.followup.send("❌ Non hai abbastanza contanti nel wallet per pagare questa fattura!", ephemeral=True)
 
-            # --- INIZIO TRANSAZIONE ---
+            # --- TRANSAZIONE ---
             
-            # 2. Sottraiamo i soldi al cittadino
+            # 2. Togliamo i soldi all'utente (Tabella users)
             cur.execute("UPDATE users SET wallet = wallet - %s WHERE user_id = %s", (prezzo, str(interaction.user.id)))
             
-            # 3. Aggiungiamo i soldi al deposito dell'azienda
-            # Se l'azienda non esiste ancora nella tabella depositi, la crea con ON CONFLICT
+            # 3. Aggiungiamo i soldi al deposito fazione (Tabella depositi)
+            # ON CONFLICT gestisce il caso in cui l'azienda non sia ancora nel database
             cur.execute("""
                 INSERT INTO depositi (role_id, money) 
                 VALUES (%s, %s) 
@@ -391,7 +391,7 @@ class PagaFatturaView(discord.ui.View):
                 DO UPDATE SET money = depositi.money + EXCLUDED.money
             """, (nome_azienda, prezzo))
             
-            # 4. Aggiorniamo lo stato della fattura
+            # 4. Chiudiamo la fattura (Tabella fatture)
             cur.execute("UPDATE fatture SET stato = 'Pagata' WHERE id_fattura = %s", (id_f,))
             
             conn.commit()
@@ -400,14 +400,14 @@ class PagaFatturaView(discord.ui.View):
 
             self.select.disabled = True
             await interaction.edit_original_response(
-                content=f"✅ Pagamento di **{prezzo}$** effettuato!\n💰 I soldi sono stati accreditati sul deposito fazione di: **{nome_azienda}**.", 
+                content=f"✅ Pagamento di **{prezzo}$** completato!\n🏦 I soldi sono stati accreditati nel deposito di: **{nome_azienda}**.", 
                 view=self
             )
 
         except Exception as e:
-            print(f"ERRORE PAGAMENTO: {e}")
-            await interaction.followup.send("❌ Si è verificato un errore durante il trasferimento bancario.", ephemeral=True)
-@bot.tree.command(name="pagafattura", description="Paga le tue fatture e finanzia le aziende")
+            print(f"ERRORE SQL PAGAMENTO: {e}")
+            await interaction.followup.send("❌ Errore tecnico durante il trasferimento dei soldi.", ephemeral=True)
+@bot.tree.command(name="pagafattura", description="Visualizza e paga le tue fatture pendenti")
 async def pagafattura(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     
@@ -416,6 +416,7 @@ async def pagafattura(interaction: discord.Interaction):
         from psycopg2.extras import RealDictCursor
         cur = conn.cursor(cursor_factory=RealDictCursor)
         
+        # Cerchiamo solo le fatture NON pagate di questo utente
         cur.execute("SELECT * FROM fatture WHERE id_cliente = %s AND stato = 'Pendente'", (str(interaction.user.id),))
         mie_fatture = cur.fetchall()
         
@@ -423,14 +424,39 @@ async def pagafattura(interaction: discord.Interaction):
         conn.close()
 
         if not mie_fatture:
-            return await interaction.followup.send("✅ Non hai fatture in sospeso da pagare.", ephemeral=True)
+            return await interaction.followup.send("✅ Non hai fatture da pagare al momento.", ephemeral=True)
 
         view = PagaFatturaView(interaction.user.id, mie_fatture)
-        await interaction.followup.send("Seleziona quale fattura vuoi saldare (i soldi andranno alla fazione):", view=view, ephemeral=True)
-        
+        await interaction.followup.send("Ecco le tue fatture in sospeso. Selezionane una per pagarla con il tuo wallet:", view=view, ephemeral=True)
+    
     except Exception as e:
-        print(f"ERRORE CARICAMENTO FATTURE: {e}")
-        await interaction.followup.send("❌ Errore nel caricamento del tuo estratto conto.", ephemeral=True)
+        print(f"ERRORE CARICAMENTO: {e}")
+        await interaction.followup.send("❌ Errore nel recupero delle fatture.")
+@bot.tree.command(name="pagafattura", description="Visualizza e paga le tue fatture pendenti")
+async def pagafattura(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    
+    try:
+        conn = get_db_connection()
+        from psycopg2.extras import RealDictCursor
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Cerchiamo solo le fatture NON pagate di questo utente
+        cur.execute("SELECT * FROM fatture WHERE id_cliente = %s AND stato = 'Pendente'", (str(interaction.user.id),))
+        mie_fatture = cur.fetchall()
+        
+        cur.close()
+        conn.close()
+
+        if not mie_fatture:
+            return await interaction.followup.send("✅ Non hai fatture da pagare al momento.", ephemeral=True)
+
+        view = PagaFatturaView(interaction.user.id, mie_fatture)
+        await interaction.followup.send("Ecco le tue fatture in sospeso. Selezionane una per pagarla con il tuo wallet:", view=view, ephemeral=True)
+    
+    except Exception as e:
+        print(f"ERRORE CARICAMENTO: {e}")
+        await interaction.followup.send("❌ Errore nel recupero delle fatture.")
 
 @bot.tree.command(name="fattura", description="Emetti una fattura")
 async def fattura(interaction: discord.Interaction, cliente: discord.Member, azienda: discord.Role, descrizione: str, prezzo: int):
