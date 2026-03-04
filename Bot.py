@@ -8,7 +8,7 @@ import os
 import threading
 import asyncio
 from flask import Flask
-
+import datetime 
 # ================= CONFIGURAZIONE =================
 TOKEN = os.environ.get("TOKEN")
 DATABASE_URL = os.environ.get("DATABASE_URL")
@@ -38,11 +38,12 @@ def init_db():
     cur.execute("CREATE TABLE IF NOT EXISTS inventory (user_id TEXT, item_name TEXT, quantity INTEGER, PRIMARY KEY (user_id, item_name))")
     cur.execute("CREATE TABLE IF NOT EXISTS depositi (role_id TEXT PRIMARY KEY, money INTEGER DEFAULT 0)")
     cur.execute("CREATE TABLE IF NOT EXISTS depositi_items (role_id TEXT, item_name TEXT, quantity INTEGER, PRIMARY KEY (role_id, item_name))")
+    cur.execute("CREATE TABLE IF NOT EXISTS turni (user_id TEXT PRIMARY KEY, inizio TIMESTAMP)")
+    cur.execute("ALTER TABLE users ADD COLUMN ore_lavorate REAL DEFAULT 0") 
     conn.commit()
-    cur.close(); conn.close()
+    cur.close();
 
 init_db()
-
 # ================= HELPER FUNCTIONS =================
 
 def get_user_data(user_id):
@@ -141,6 +142,76 @@ async def dai_soldi(interaction: Interaction, utente: discord.Member, importo: i
     cur.execute("UPDATE users SET wallet = wallet + %s WHERE user_id = %s", (importo, str(utente.id)))
     conn.commit(); cur.close(); conn.close()
     await interaction.response.send_message(f"🤝 **{interaction.user.display_name}** ha dato **{importo}$** a **{utente.mention}**.")
+@bot.tree.command(name="inizio_turno", description="Inizia il tuo turno di lavoro")
+async def inizio_turno(interaction: discord.Interaction):
+    user_id = str(interaction.user.id)
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    # Controlla se è già in turno
+    cur.execute("SELECT inizio FROM turni WHERE user_id = %s", (user_id,))
+    if cur.fetchone():
+        conn.close()
+        return await interaction.response.send_message("⚠️ Sei già in turno!", ephemeral=True)
+    
+    ora_inizio = datetime.datetime.now()
+    cur.execute("INSERT INTO turni (user_id, inizio) VALUES (%s, %s)", (user_id, ora_inizio))
+    conn.commit()
+    conn.close()
+    
+    embed = discord.Embed(
+        title="💼 Turno Iniziato",
+        description=f"Buon lavoro, **{interaction.user.display_name}**!",
+        color=discord.Color.green(),
+        timestamp=ora_inizio
+    )
+    embed.add_field(name="Orario di inizio", value=ora_inizio.strftime("%H:%M:%S"))
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="fine_turno", description="Termina il tuo turno e calcola le ore")
+async def fine_turno(interaction: discord.Interaction):
+    user_id = str(interaction.user.id)
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    
+    # Recupera l'orario di inizio
+    cur.execute("SELECT inizio FROM turni WHERE user_id = %s", (user_id,))
+    row = cur.fetchone()
+    
+    if not row:
+        conn.close()
+        return await interaction.response.send_message("❌ Non sei attualmente in turno!", ephemeral=True)
+    
+    ora_fine = datetime.datetime.now()
+    ora_inizio = row['inizio']
+    
+    # Calcolo differenza
+    durata = ora_fine - ora_inizio
+    secondi_totali = durata.total_seconds()
+    ore_frazione = secondi_totali / 3600  # Converte in ore decimali (es: 1.5 ore)
+    
+    # Formattazione per il messaggio (Ore:Minuti:Secondi)
+    ore, resto = divmod(int(secondi_totali), 3600)
+    minuti, secondi = divmod(resto, 60)
+    durata_str = f"{ore}h {minuti}m {secondi}s"
+
+    # Aggiorna il database: cancella turno attivo e aggiunge ore totali all'utente
+    cur.execute("DELETE FROM turni WHERE user_id = %s", (user_id,))
+    cur.execute("UPDATE users SET ore_lavorate = ore_lavorate + %s WHERE user_id = %s", (ore_frazione, user_id))
+    
+    conn.commit()
+    conn.close()
+    
+    embed = discord.Embed(
+        title="🏁 Turno Terminato",
+        color=discord.Color.red(),
+        timestamp=ora_fine
+    )
+    embed.add_field(name="Durata sessione", value=f"⏳ {durata_str}", inline=False)
+    embed.add_field(name="Totale ore accumulate", value=f"📈 +{ore_frazione:.2f} ore", inline=False)
+    embed.set_footer(text=f"Lavoratore: {interaction.user.display_name}")
+    
+    await interaction.response.send_message(embed=embed)
 
 # ================= COMANDI INVENTARIO =================
 
