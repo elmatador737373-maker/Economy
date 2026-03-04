@@ -73,6 +73,47 @@ def init_db():
     except Exception:
         conn.rollback() # Ignora se la colonna esiste già
 
+    def inizializza_tabella_fatture():
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        # 1. Crea la tabella se non esiste con le colonne corrette
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS fatture (
+                id_fattura TEXT PRIMARY KEY,
+                id_cliente TEXT NOT NULL,
+                id_azienda TEXT NOT NULL,
+                descrizione TEXT,
+                prezzo BIGINT,
+                data TEXT,
+                stato TEXT DEFAULT 'Pendente'
+            );
+        """)
+
+        # 2. Aggiunge la colonna 'stato' se la tabella esisteva già ma ne era priva
+        # Usiamo un blocco SQL che evita errori se la colonna esiste già
+        cur.execute("""
+            DO $$ 
+            BEGIN 
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                               WHERE table_name='fatture' AND column_name='stato') THEN 
+                    ALTER TABLE fatture ADD COLUMN stato TEXT DEFAULT 'Pendente';
+                END IF;
+            END $$;
+        """)
+
+        conn.commit()
+        cur.close()
+        conn.close()
+        print("✅ Tabella fatture aggiornata/creata correttamente su Supabase!")
+        
+    except Exception as e:
+        print(f"❌ Errore durante l'aggiornamento della tabella: {e}")
+
+# Ricorda di chiamare questa funzione all'avvio del bot!
+
+
     # Chiudiamo tutto correttamente
     cur.close()
     conn.close()
@@ -296,67 +337,48 @@ async def usa(interaction: Interaction, nome: str):
     await interaction.followup.send(f"✨ **{interaction.user.display_name}** ha usato **{nome_e}**!")
 
 class PagaFatturaView(discord.ui.View):
-    def __init__(self, user_id, fatture_list):
-        super().__init__(timeout=180)
-        self.user_id = user_id
+    def __init__(self, user_id, fatture):
+        super().__init__(timeout=120)
         
-        # Crea le opzioni per il menù a tendina
         options = []
-        for f in fatture_list:
+        for f in fatture:
             options.append(discord.SelectOption(
                 label=f"Fattura {f['id_fattura']}",
-                description=f"Prezzo: {f['prezzo']}$ | Azienda: {f['id_azienda']}",
+                description=f"{f['prezzo']}$ - {f['id_azienda']}",
                 value=f['id_fattura']
             ))
-        
-        self.select = discord.ui.Select(placeholder="Scegli la fattura da pagare...", options=options)
-        self.select.callback = self.callback
+            
+        self.select = discord.ui.Select(placeholder="Scegli una fattura...", options=options)
+        self.select.callback = self.select_callback
         self.add_item(self.select)
 
-    async def callback(self, interaction: discord.Interaction):
-        # Usiamo defer per gestire l'operazione sul DB
-        await interaction.response.defer(ephemeral=True)
-        
+    async def select_callback(self, interaction: discord.Interaction):
         id_f = self.select.values[0]
-        conn = get_db_connection()
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        
-        # 1. Recupera dettagli fattura
-        cur.execute("SELECT * FROM fatture WHERE id_fattura = %s", (id_f,))
-        f = cur.fetchone()
-        
-        # 2. Recupera soldi utente
-        u = get_user_data(interaction.user.id)
-
-        if not f:
-            conn.close()
-            return await interaction.followup.send("❌ Fattura non trovata.", ephemeral=True)
-
-        if u['wallet'] < f['prezzo']:
-            conn.close()
-            return await interaction.followup.send(f"❌ Non hai abbastanza contanti! Ti servono **{f['prezzo']}$** (Hai: {u['wallet']}$)", ephemeral=True)
+        await interaction.response.defer(ephemeral=True)
 
         try:
-            # 3. Esegui il pagamento: togli soldi e segna come pagata (o elimina)
-            cur.execute("UPDATE users SET wallet = wallet - %s WHERE user_id = %s", (f['prezzo'], str(interaction.user.id)))
+            conn = get_db_connection()
+            cur = conn.cursor()
+            
+            # Aggiorniamo lo stato su Supabase
             cur.execute("UPDATE fatture SET stato = 'Pagata' WHERE id_fattura = %s", (id_f,))
             
             conn.commit()
-            cur.close(); conn.close()
+            cur.close()
+            conn.close()
+
+            await interaction.followup.send(f"✅ Fattura `{id_f}` pagata con successo!", ephemeral=True)
             
-            # Disabilita il menù dopo il pagamento
-            for item in self.children:
-                item.disabled = True
-                
-            await interaction.edit_original_response(content=f"✅ Pagamento completato! Hai pagato **{f['prezzo']}$** a **{f['id_azienda']}**.", view=self)
-        
+            # Rimuove il menù per evitare doppi pagamenti
+            self.stop()
+            await interaction.edit_original_response(view=None)
+            
         except Exception as e:
-            print(f"Errore durante il pagamento: {e}")
-            await interaction.followup.send("❌ Errore durante l'elaborazione del pagamento.", ephemeral=True)
+            print(f"Errore Supabase Update: {e}")
+            await interaction.followup.send("❌ Errore durante il pagamento.", ephemeral=True)
 @bot.tree.command(name="fattura", description="Emetti una fattura a un cittadino")
-@app_commands.describe(azienda="Seleziona il ruolo della tua azienda", prezzo="Importo da pagare")
 async def fattura(interaction: discord.Interaction, cliente: discord.Member, azienda: discord.Role, descrizione: str, prezzo: int):
-    await interaction.response.defer() # Toglie il limite 3s
+    await interaction.response.defer()
     
     id_f = ''.join(random.choices(string.ascii_letters + string.digits, k=10))
     data_attuale = datetime.datetime.now().strftime("%d/%m/%Y")
@@ -364,43 +386,55 @@ async def fattura(interaction: discord.Interaction, cliente: discord.Member, azi
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        # Salviamo il nome del ruolo (azienda.name)
-        cur.execute("""
-            INSERT INTO fatture (id_fattura, id_cliente, id_azienda, descrizione, prezzo, data, stato) 
-            VALUES (%s, %s, %s, %s, %s, %s, 'Pendente')
-        """, (id_f, str(cliente.id), azienda.name, descrizione, prezzo, data_attuale))
-        conn.commit()
-        cur.close(); conn.close()
-
-        embed = discord.Embed(title="📑 Nuova Fattura Emessa", color=discord.Color.blue())
-        embed.add_field(name="👤 CLIENTE:", value=cliente.mention, inline=True)
-        embed.add_field(name="🏛️ AZIENDA:", value=azienda.mention, inline=True)
-        embed.add_field(name="📝 DESCRIZIONE:", value=descrizione, inline=False)
-        embed.add_field(name="💰 PREZZO:", value=f"**{prezzo}$**", inline=True)
-        embed.add_field(name="📅 DATA:", value=data_attuale, inline=True)
-        embed.set_footer(text=f"ID Unico Fattura: {id_f}")
         
-        await interaction.followup.send(content=f"{cliente.mention}, controlla le tue fatture con `/pagafattura`!", embed=embed)
+        # Query SQL per Supabase
+        query = """
+            INSERT INTO fatture (id_fattura, id_cliente, id_azienda, descrizione, prezzo, data, stato) 
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """
+        # Passiamo i parametri: azienda.name estrae il testo dal ruolo
+        cur.execute(query, (id_f, str(cliente.id), azienda.name, descrizione, prezzo, data_attuale, 'Pendente'))
+        
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        embed = discord.Embed(title="📑 Nuova Fattura", color=discord.Color.blue())
+        embed.add_field(name="CLIENTE:", value=cliente.mention, inline=False)
+        embed.add_field(name="AZIENDA:", value=azienda.mention, inline=False)
+        embed.add_field(name="PREZZO:", value=f"**{prezzo}$**", inline=True)
+        embed.set_footer(text=f"ID: {id_f}")
+        
+        await interaction.followup.send(content=f"✅ Fattura emessa per {cliente.mention}", embed=embed)
+        
     except Exception as e:
-        print(f"Errore fattura: {e}")
-        await interaction.followup.send("❌ Errore database durante l'invio della fattura.")
-
-@bot.tree.command(name="pagafattura", description="Visualizza e paga le tue fatture pendenti")
+        print(f"Errore Supabase Fattura: {e}")
+        await interaction.followup.send("❌ Errore nel salvataggio della fattura su Supabase.", ephemeral=True)
+@bot.tree.command(name="pagafattura", description="Paga le tue fatture")
 async def pagafattura(interaction: discord.Interaction):
-    await interaction.response.defer(ephemeral=True) # Toglie il limite 3s
+    await interaction.response.defer(ephemeral=True)
     
-    conn = get_db_connection()
-    cur = conn.cursor(cursor_factory=RealDictCursor)
-    # Cerchiamo solo le fatture pendenti per quell'utente
-    cur.execute("SELECT * FROM fatture WHERE id_cliente = %s AND stato = 'Pendente'", (str(interaction.user.id),))
-    mie_fatture = cur.fetchall()
-    cur.close(); conn.close()
+    try:
+        conn = get_db_connection()
+        # RealDictCursor è fondamentale per mappare i nomi delle colonne
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Cerchiamo solo le fatture 'Pendente' per l'utente che esegue il comando
+        cur.execute("SELECT * FROM fatture WHERE id_cliente = %s AND stato = 'Pendente'", (str(interaction.user.id),))
+        mie_fatture = cur.fetchall()
+        
+        cur.close()
+        conn.close()
 
-    if not mie_fatture:
-        return await interaction.followup.send("✅ Non hai fatture in sospeso!", ephemeral=True)
+        if not mie_fatture:
+            return await interaction.followup.send("✅ Non hai fatture da pagare!", ephemeral=True)
 
-    view = PagaFatturaView(interaction.user.id, mie_fatture)
-    await interaction.followup.send("Seleziona la fattura che vuoi saldare (i soldi verranno detratti dal portafoglio):", view=view, ephemeral=True)
+        view = PagaFatturaView(interaction.user.id, mie_fatture)
+        await interaction.followup.send("Seleziona la fattura da saldare:", view=view, ephemeral=True)
+        
+    except Exception as e:
+        print(f"Errore Supabase Lettura: {e}")
+        await interaction.followup.send("❌ Errore nel caricamento delle fatture.", ephemeral=True)
 
 ID_RUOLO_CONCESSIONARIO = 1414902990275612753
 
