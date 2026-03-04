@@ -365,69 +365,145 @@ async def cerca(interaction: Interaction):
     conn.commit(); cur.close(); conn.close()
     await interaction.channel.send(f"✅ **{interaction.user.mention}** ha trovato: **{mat}**!")
 
-# ================= GIOCHI AZZARDO =================
+# --- CLASSE VIEW PER I BOTTONI ---
+class BlackjackView(discord.ui.View):
+    def __init__(self, interaction, somma, mano_p, mano_b):
+        super().__init__(timeout=60)
+        self.interaction = interaction
+        self.somma = somma
+        self.mano_p = mano_p
+        self.mano_b = mano_b
 
-@bot.tree.command(name="blackjack", description="Gioca a Blackjack")
-async def blackjack(interaction: Interaction, scommessa: int):
-    u = get_user_data(interaction.user.id)
-    if scommessa <= 0 or u['wallet'] < scommessa: return await interaction.response.send_message("❌ Fondi insufficienti.")
-    deck = [2,3,4,5,6,7,8,9,10,10,10,10,11]*4
-    random.shuffle(deck)
-    p_cards, d_cards = [deck.pop(), deck.pop()], [deck.pop(), deck.pop()]
-    
-    async def create_emb(ended=False):
-        emb = discord.Embed(title="🃏 Blackjack", color=discord.Color.blue())
-        emb.add_field(name=interaction.user.name, value=f"{p_cards} (Tot: {sum(p_cards)})")
-        emb.add_field(name="Banco", value=f"{d_cards if ended else [d_cards[0], '?']}")
-        return emb
+    def get_tot(self, mano):
+        tot = sum(mano)
+        as_count = mano.count(11)
+        while tot > 21 and as_count > 0:
+            tot -= 10
+            as_count -= 1
+        return tot
 
-    view = discord.ui.View()
-    hit = discord.ui.Button(label="Carta", style=discord.ButtonStyle.green)
-    stand = discord.ui.Button(label="Stai", style=discord.ButtonStyle.red)
-    view.add_item(hit); view.add_item(stand)
+    @discord.ui.button(label="Carta 🃏", style=discord.ButtonStyle.green)
+    async def carta(self, inter: discord.Interaction, button: discord.ui.Button):
+        if inter.user.id != self.interaction.user.id:
+            return await inter.response.send_message("❌ Questa non è la tua partita!", ephemeral=True)
+        
+        self.mano_p.append(random.randint(2, 11))
+        if self.get_tot(self.mano_p) > 21:
+            await self.concludi(inter, "sballato")
+        else:
+            await self.update_msg(inter)
 
-    async def end(inter, res):
-        for it in view.children: it.disabled = True
+    @discord.ui.button(label="Stai ✋", style=discord.ButtonStyle.red)
+    async def stai(self, inter: discord.Interaction, button: discord.ui.Button):
+        if inter.user.id != self.interaction.user.id:
+            return await inter.response.send_message("❌ Questa non è la tua partita!", ephemeral=True)
+        
+        while self.get_tot(self.mano_b) < 17:
+            self.mano_b.append(random.randint(2, 11))
+        
+        tot_p = self.get_tot(self.mano_p)
+        tot_b = self.get_tot(self.mano_b)
+        
+        if tot_b > 21 or tot_p > tot_b: esito = "vinto"
+        elif tot_p < tot_b: esito = "perso"
+        else: esito = "pareggio"
+        
+        await self.concludi(inter, esito)
+
+    async def update_msg(self, inter):
+        emb = discord.Embed(title="🃏 Blackjack", color=discord.Color.gold())
+        emb.add_field(name="La tua mano 👤", value=f"{self.mano_p}\n**Totale: {self.get_tot(self.mano_p)}**", inline=True)
+        emb.add_field(name="Banco 🏛️", value=f"[{self.mano_b[0]}, ?]", inline=True)
+        await inter.response.edit_message(embed=emb, view=self)
+
+    async def concludi(self, inter, esito):
+        self.stop()
+        tot_p = self.get_tot(self.mano_p)
+        tot_b = self.get_tot(self.mano_b)
         conn = get_db_connection(); cur = conn.cursor()
-        if res == "win": cur.execute("UPDATE users SET wallet = wallet + %s WHERE user_id = %s", (scommessa, str(interaction.user.id)))
-        elif res == "lose": cur.execute("UPDATE users SET wallet = wallet - %s WHERE user_id = %s", (scommessa, str(interaction.user.id)))
+        
+        if esito == "vinto":
+            cur.execute("UPDATE users SET wallet = wallet + %s WHERE user_id = %s", (self.somma, str(self.interaction.user.id)))
+            txt = f"🏆 Hai vinto **{self.somma}$**!"
+            colore = discord.Color.green()
+        elif esito == "pareggio":
+            txt = "🤝 Pareggio! Soldi restituiti."
+            colore = discord.Color.light_gray()
+        else:
+            cur.execute("UPDATE users SET wallet = wallet - %s WHERE user_id = %s", (self.somma, str(self.interaction.user.id)))
+            txt = f"💀 Hai perso **{self.somma}$**."
+            colore = discord.Color.red()
+            
         conn.commit(); cur.close(); conn.close()
-        await inter.response.edit_message(embed=await create_emb(True), view=view)
+        emb = discord.Embed(title="🃏 Risultato Finale", color=colore)
+        emb.add_field(name="Tu", value=f"{tot_p}", inline=True)
+        emb.add_field(name="Banco", value=f"{tot_b}", inline=True)
+        emb.add_field(name="Esito", value=txt, inline=False)
+        await inter.response.edit_message(embed=emb, view=None)
 
-    async def h_call(i):
-        if i.user.id != interaction.user.id: return
-        p_cards.append(deck.pop())
-        if sum(p_cards) > 21: await end(i, "lose")
-        else: await i.response.edit_message(embed=await create_emb())
-    
-    async def s_call(i):
-        if i.user.id != interaction.user.id: return
-        while sum(d_cards) < 17: d_cards.append(deck.pop())
-        pt, dt = sum(p_cards), sum(d_cards)
-        if dt > 21 or pt > dt: res = "win"
-        elif pt < dt: res = "lose"
-        else: res = "draw"
-        await end(i, res)
-
-    hit.callback = h_call; stand.callback = s_call
-    await interaction.response.send_message(embed=await create_emb(), view=view)
-
-@bot.tree.command(name="roulette", description="Scommetti Rosso/Nero o Numero")
-async def roulette(interaction: Interaction, scommessa: int, scelta: str):
+# --- COMANDO SLASH ---
+@bot.tree.command(name="blackjack", description="Sfida il banco a Blackjack")
+async def blackjack(interaction: discord.Interaction, somma: int):
     u = get_user_data(interaction.user.id)
-    if scommessa <= 0 or u['wallet'] < scommessa: return await interaction.response.send_message("❌ Fondi insufficienti.")
-    n = random.randint(0, 36)
-    rossi = [1,3,5,7,9,12,14,16,18,19,21,23,25,27,30,32,34,36]
-    col = "verde" if n == 0 else "rosso" if n in rossi else "nero"
-    vinto = False; molt = 0
-    if scelta.lower() == col: vinto, molt = True, 1
-    elif scelta.isdigit() and int(scelta) == n: vinto, molt = True, 35
+    if somma <= 0 or u['wallet'] < somma:
+        return await interaction.response.send_message("❌ Fondi insufficienti o somma non valida!", ephemeral=True)
+
+    mano_p = [random.randint(2, 11), random.randint(2, 11)]
+    mano_b = [random.randint(2, 11)]
+    view = BlackjackView(interaction, somma, mano_p, mano_b)
     
-    conn = get_db_connection(); cur = conn.cursor()
-    if vinto: cur.execute("UPDATE users SET wallet = wallet + %s WHERE user_id = %s", (scommessa*molt, str(interaction.user.id)))
-    else: cur.execute("UPDATE users SET wallet = wallet - %s WHERE user_id = %s", (scommessa, str(interaction.user.id)))
-    conn.commit(); cur.close(); conn.close()
-    await interaction.response.send_message(f"🎡 **{interaction.user.display_name}** ha puntato su **{scelta}**...\nUscito: **{n} {col}**. {'✅ Hai vinto!' if vinto else '❌ Hai perso.'}")
+    emb = discord.Embed(title="🃏 Blackjack", color=discord.Color.gold())
+    emb.add_field(name="La tua mano 👤", value=f"{mano_p}\n**Totale: {view.get_tot(mano_p)}**", inline=True)
+    emb.add_field(name="Banco 🏛️", value=f"[{mano_b[0]}, ?]", inline=True)
+    
+    await interaction.response.send_message(embed=emb, view=view)
+
+@bot.tree.command(name="roulette", description="Punta i tuoi soldi alla roulette (Attesa 10s)")
+@app_commands.choices(puntata=[
+    app_commands.Choice(name="🔴 Rosso (x2)", value="rosso"),
+    app_commands.Choice(name="⚫ Nero (x2)", value="nero"),
+    app_commands.Choice(name="🟢 Numero Singolo (x36)", value="numero")
+])
+async def roulette(interaction: discord.Interaction, puntata: str, somma: int, numero_scelto: int = None):
+    u = get_user_data(interaction.user.id)
+    if somma > u['wallet'] or somma <= 0:
+        return await interaction.response.send_message("❌ Non hai abbastanza contanti nel portafoglio!", ephemeral=True)
+
+    if puntata == "numero" and (numero_scelto is None or numero_scelto < 0 or numero_scelto > 36):
+        return await interaction.response.send_message("❌ Se punti su un numero, devi sceglierne uno tra 0 e 36!", ephemeral=True)
+
+    await interaction.response.send_message(f"🎰 **{interaction.user.display_name}** ha puntato **{somma}$** su **{puntata.upper()}**...\n*La pallina sta girando...* 🎡")
+    
+    # Attesa realistica di 10 secondi
+    await asyncio.sleep(10)
+    
+    risultato = random.randint(0, 36)
+    rossi = [1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36]
+    colore_uscito = "rosso" if risultato in rossi else "nero" if risultato != 0 else "verde"
+    emoji = "🔴" if colore_uscito == "rosso" else "⚫" if colore_uscito == "nero" else "🟢"
+
+    vinto = False
+    moltiplicatore = 2
+    if puntata == "rosso" and colore_uscito == "rosso": vinto = True
+    elif puntata == "nero" and colore_uscito == "nero": vinto = True
+    elif puntata == "numero" and numero_scelto == risultato: 
+        vinto = True
+        moltiplicatore = 36
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+    if vinto:
+        vincita_netta = somma * (moltiplicatore - 1)
+        cur.execute("UPDATE users SET wallet = wallet + %s WHERE user_id = %s", (vincita_netta, str(interaction.user.id)))
+        testo = f"✅ RISULTATO: **{risultato} {emoji}**. Hai vinto **{somma * moltiplicatore}$**! 🎉"
+    else:
+        cur.execute("UPDATE users SET wallet = wallet - %s WHERE user_id = %s", (somma, str(interaction.user.id)))
+        testo = f"💀 RISULTATO: **{risultato} {emoji}**. Hai perso **{somma}$**. La casa vince! 🏛️"
+    
+    conn.commit()
+    cur.close()
+    conn.close()
+    await interaction.channel.send(f"🎰 **{interaction.user.mention}**\n{testo}")
 
 # ================= COMANDI STAFF =================
 
