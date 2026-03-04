@@ -491,84 +491,120 @@ async def arresto(interaction: discord.Interaction, utente: discord.Member, temp
     except Exception as e:
         print(f"Errore arresto: {e}")
         await interaction.followup.send("❌ Errore nel salvataggio dell'arresto.")
-@bot.tree.command(name="ricerca_cittadino", description="Visualizza il fascicolo completo di un cittadino (Documenti, Veicoli, Fedina)")
-async def ricerca(interaction: discord.Interaction, cittadino: discord.Member):
+@bot.tree.command(name="ricerca_cittadino", description="Ricerca avanzata: usa il TAG o NOME e COGNOME")
+@app_commands.describe(
+    cittadino="Tagga l'utente (opzionale)",
+    nome="Nome nel documento (opzionale)",
+    cognome="Cognome nel documento (opzionale)"
+)
+async def ricerca(interaction: discord.Interaction, cittadino: discord.Member = None, nome: str = None, cognome: str = None):
     if not is_polizia(interaction):
-        return await interaction.response.send_message("❌ Accesso negato al database centrale della Polizia.", ephemeral=True)
+        return await interaction.response.send_message("❌ Accesso negato.", ephemeral=True)
     
     await interaction.response.defer()
+
+    target_id = None
+    target_member = None
 
     try:
         conn = get_db_connection()
         from psycopg2.extras import RealDictCursor
         cur = conn.cursor(cursor_factory=RealDictCursor)
-        
-        # 1. Recupera i Dati del Documento
-        cur.execute("SELECT * FROM documenti WHERE user_id = %s", (str(cittadino.id),))
+
+        # --- LOGICA DI RICERCA INTELLIGENTE ---
+        if cittadino:
+            # Caso 1: Ricerca per TAG
+            target_id = str(cittadino.id)
+            target_member = cittadino
+        elif nome and cognome:
+            # Caso 2: Ricerca per Nome e Cognome
+            cur.execute("""
+                SELECT user_id FROM documenti 
+                WHERE LOWER(nome) = LOWER(%s) AND LOWER(cognome) = LOWER(%s)
+            """, (nome, cognome))
+            res_doc = cur.fetchone()
+            if res_doc:
+                target_id = res_doc['user_id']
+                # Proviamo a recuperare il membro dal server per l'avatar, se c'è
+                target_member = interaction.guild.get_member(int(target_id))
+            else:
+                cur.close()
+                conn.close()
+                return await interaction.followup.send(f"❌ Nessun cittadino trovato con il nome: **{nome} {cognome}**.")
+        else:
+            cur.close()
+            conn.close()
+            return await interaction.followup.send("⚠️ Devi taggare qualcuno o inserire sia Nome che Cognome!")
+
+        # --- RECUPERO DATI DAL FASCICOLO ---
+        # 1. Dati Documento
+        cur.execute("SELECT * FROM documenti WHERE user_id = %s", (target_id,))
         doc = cur.fetchone()
         
-        # 2. Recupera i Veicoli Registrati
-        cur.execute("SELECT targa, modello FROM veicoli WHERE owner_id = %s", (str(cittadino.id),))
+        # 2. Veicoli (Recupera TUTTI i veicoli)
+        cur.execute("SELECT targa, modello FROM veicoli WHERE owner_id = %s", (target_id,))
         veicoli = cur.fetchall()
         
-        # 3. Recupera le Multe Pendenti
-        cur.execute("SELECT * FROM multe WHERE user_id = %s", (str(cittadino.id),))
-        multe_pendenti = cur.fetchall()
+        # 3. Multe Pendenti
+        cur.execute("SELECT * FROM multe WHERE user_id = %s", (target_id,))
+        multe = cur.fetchall()
         
-        # 4. Recupera lo Storico Arresti (ultimi 5)
-        cur.execute("SELECT * FROM arresti WHERE user_id = %s ORDER BY id_arresto DESC LIMIT 5", (str(cittadino.id),))
-        storico_arresti = cur.fetchall()
+        # 4. Storico Arresti (ultimi 5)
+        cur.execute("SELECT * FROM arresti WHERE user_id = %s ORDER BY id_arresto DESC LIMIT 5", (target_id,))
+        arresti = cur.fetchall()
         
         cur.close()
         conn.close()
 
-        # Creazione dell'Embed Fascicolo
+        # --- COSTRUZIONE EMBED ---
         embed = discord.Embed(
-            title=f"📁 FASCICOLO FEDERALE: {cittadino.display_name}",
+            title=f"📁 FASCICOLO FEDERALE",
             color=discord.Color.dark_blue(),
             timestamp=datetime.datetime.now()
         )
-        embed.set_thumbnail(url=cittadino.display_avatar.url)
+        
+        # Gestione Avatar e Titolo
+        nome_display = f"{doc['nome']} {doc['cognome']}" if doc else (target_member.display_name if target_member else "Sconosciuto")
+        embed.description = f"**Soggetto:** {nome_display}\n**ID Discord:** `{target_id}`"
+        
+        if target_member:
+            embed.set_thumbnail(url=target_member.display_avatar.url)
 
-        # SEZIONE ANAGRAFICA (Dalla tabella documenti)
+        # Sezione Anagrafica
         if doc:
-            info_personali = (
-                f"**Nome/Cognome:** {doc['nome']} {doc['cognome']}\n"
-                f"**Nascita:** {doc['data_nascita']} ({doc['luogo_nascita']})\n"
-                f"**Sesso:** {doc['genere']} | **Altezza:** {doc['altezza']}cm"
-            )
-            embed.add_field(name="🪪 Dati Anagrafici", value=info_personali, inline=False)
+            embed.add_field(name="🪪 Dati Anagrafici", 
+                value=f"**Nascita:** {doc['data_nascita']} ({doc['luogo_nascita']})\n**Sesso:** {doc['genere']} | **H:** {doc['altezza']}cm", 
+                inline=False)
         else:
-            embed.add_field(name="🪪 Dati Anagrafici", value="⚠️ Nessun documento registrato.", inline=False)
+            embed.add_field(name="🪪 Dati Anagrafici", value="⚠️ Documento non registrato.", inline=False)
 
-        # SEZIONE VEICOLI (Dalla tabella veicoli)
+        # Sezione Veicoli
         if veicoli:
-            lista_veicoli = "\n".join([f"• `{v['targa']}` - {v['modello']}" for v in veicoli])
-            embed.add_field(name="🚘 Veicoli Intestati", value=lista_veicoli, inline=False)
+            lista_v = "\n".join([f"• `{v['targa']}` - {v['modello']}" for v in veicoli])
+            embed.add_field(name="🚘 Veicoli Intestati", value=lista_v, inline=False)
         else:
             embed.add_field(name="🚘 Veicoli Intestati", value="Nessun veicolo registrato.", inline=False)
 
-        # SEZIONE MULTE (Dalla tabella multe)
-        if multe_pendenti:
-            lista_multe = "\n".join([f"• **{m['ammontare']}$** - {m['motivo']} ({m['data']})" for m in multe_pendenti])
-            embed.add_field(name="⚠️ Multe in Sospeso", value=lista_multe, inline=False)
+        # Sezione Multe
+        if multe:
+            lista_m = "\n".join([f"• **{m['ammontare']}$** - {m['motivo']} ({m['data']})" for m in multe])
+            embed.add_field(name="⚠️ Multe Pendenti", value=lista_m, inline=False)
         else:
-            embed.add_field(name="⚠️ Multe in Sospeso", value="Nessuna multa pendente.", inline=False)
+            embed.add_field(name="⚠️ Multe Pendenti", value="Nessuna multa.", inline=False)
 
-        # SEZIONE ARRESTI (Dalla tabella arresti)
-        if storico_arresti:
-            lista_arresti = "\n".join([f"• {a['data']}: {a['motivo']} ({a['tempo']} min)" for a in storico_arresti])
-            embed.add_field(name="🚔 Cronologia Arresti", value=lista_arresti, inline=False)
+        # Sezione Arresti
+        if arresti:
+            lista_a = "\n".join([f"• {a['data']}: {a['motivo']} ({a['tempo']} min)" for a in arresti])
+            embed.add_field(name="🚔 Cronologia Arresti", value=lista_a, inline=False)
         else:
-            embed.add_field(name="🚔 Cronologia Arresti", value="Cittadino incensurato.", inline=False)
+            embed.add_field(name="🚔 Cronologia Arresti", value="Incensurato.", inline=False)
 
-        embed.set_footer(text=f"Sistema Centrale di Ricerca | ID: {cittadino.id}")
-        
         await interaction.followup.send(embed=embed)
 
     except Exception as e:
-        print(f"Errore ricerca completa: {e}")
-        await interaction.followup.send("❌ Errore durante l'interrogazione del fascicolo completo.")
+        print(f"Errore ricerca intelligente: {e}")
+        await interaction.followup.send("❌ Errore durante l'interrogazione del database.")
+
 
 
 # --- COMANDO FINE TURNO ---
