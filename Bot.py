@@ -221,7 +221,94 @@ async def dai_soldi(interaction: Interaction, utente: discord.Member, importo: i
     cur.execute("UPDATE users SET wallet = wallet + %s WHERE user_id = %s", (importo, str(utente.id)))
     conn.commit(); cur.close(); conn.close()
     await interaction.response.send_message(f"🤝 **{interaction.user.display_name}** ha dato **{importo}$** a **{utente.mention}**.")
+# --- COMANDO PER CREARE IL DOCUMENTO ---
+@bot.tree.command(name="crea_documento", description="Registra il tuo documento d'identità")
+@app_commands.choices(genere=[
+    app_commands.Choice(name="Maschio", value="Maschio"),
+    app_commands.Choice(name="Femmina", value="Femmina")
+])
+async def crea_documento(
+    interaction: discord.Interaction, 
+    nome: str, 
+    cognome: str, 
+    data_di_nascita: str, 
+    luogo_di_nascita: str, 
+    altezza: int, 
+    genere: app_commands.Choice[str]
+):
+    await interaction.response.defer(ephemeral=True)
+    
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        # Inserisce o aggiorna se esiste già (così uno può rifarsi il documento)
+        cur.execute("""
+            INSERT INTO documenti (user_id, nome, cognome, data_nascita, luogo_nascita, altezza, genere)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (user_id) DO UPDATE SET
+                nome = EXCLUDED.nome,
+                cognome = EXCLUDED.cognome,
+                data_nascita = EXCLUDED.data_nascita,
+                luogo_nascita = EXCLUDED.luogo_nascita,
+                altezza = EXCLUDED.altezza,
+                genere = EXCLUDED.genere
+        """, (str(interaction.user.id), nome, cognome, data_di_nascita, luogo_di_nascita, altezza, genere.value))
+        
+        conn.commit()
+        cur.close()
+        conn.close()
+        
+        await interaction.followup.send("✅ Documento creato con successo! Usa `/mostra_documento` per vederlo.", ephemeral=True)
+        
+    except Exception as e:
+        print(f"ERRORE CREAZIONE DOCUMENTO: {e}")
+        await interaction.followup.send("❌ Errore durante la creazione del documento.", ephemeral=True)
 
+# --- COMANDO PER MOSTRARE IL DOCUMENTO ---
+@bot.tree.command(name="mostra_documento", description="Mostra il tuo documento o quello di un altro cittadino")
+async def mostra_documento(interaction: discord.Interaction, cittadino: discord.Member = None):
+    await interaction.response.defer()
+    
+    # Se non specifichi un utente, mostra il tuo
+    target = cittadino if cittadino else interaction.user
+    
+    try:
+        conn = get_db_connection()
+        from psycopg2.extras import RealDictCursor
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        
+        cur.execute("SELECT * FROM documenti WHERE user_id = %s", (str(target.id),))
+        doc = cur.fetchone()
+        
+        cur.close()
+        conn.close()
+        
+        if not doc:
+            msg = "Non hai ancora un documento. Crealo con `/crea_documento`!" if target == interaction.user else f"{target.display_name} non ha ancora un documento."
+            return await interaction.followup.send(msg)
+
+        # Creazione dell'Embed stile Carta d'Identità
+        embed = discord.Embed(
+            title="🪪 CARTA D'IDENTITÀ",
+            color=discord.Color.dark_red() if doc['genere'] == "Maschio" else discord.Color.magenta()
+        )
+        embed.set_thumbnail(url=target.display_avatar.url)
+        embed.add_field(name="Nome", value=doc['nome'], inline=True)
+        embed.add_field(name="Cognome", value=doc['cognome'], inline=True)
+        embed.add_field(name="Sesso", value=doc['genere'], inline=True)
+        embed.add_field(name="Data di Nascita", value=doc['data_nascita'], inline=True)
+        embed.add_field(name="Luogo di Nascita", value=doc['luogo_nascita'], inline=True)
+        embed.add_field(name="Altezza", value=f"{doc['altezza']} cm", inline=True)
+        embed.set_footer(text=f"ID Cittadino: {target.id}")
+        
+        # Messaggio di Roleplay
+        testo_rp = f"***{interaction.user.display_name}** estrae il documento e lo mostra.*"
+        await interaction.followup.send(content=testo_rp, embed=embed)
+        
+    except Exception as e:
+        print(f"ERRORE MOSTRA DOCUMENTO: {e}")
+        await interaction.followup.send("❌ Errore nel recupero del documento.")
     # --- COMANDO INIZIO TURNO (Ruolo Libero) ---
 @bot.tree.command(name="inizio_turno", description="Inizia il turno specificando il tuo ruolo")
 @app_commands.describe(ruolo="Scrivi il tuo ruolo (es. Polizia, Medico, Staff...)")
