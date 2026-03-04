@@ -317,7 +317,7 @@ async def usa(interaction: Interaction, nome: str):
     conn.commit(); cur.close(); conn.close()
     await interaction.followup.send(f"✨ **{interaction.user.display_name}** ha usato **{nome_e}**!")
 
-class PagaFatturaView(discord.ui.View):
+
 # --- CLASSE VIEW PER IL PAGAMENTO (Da mettere prima dei comandi) ---
 
 class PagaFatturaView(discord.ui.View):
