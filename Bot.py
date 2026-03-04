@@ -233,11 +233,7 @@ async def dai_soldi(interaction: Interaction, utente: discord.Member, importo: i
     cur.execute("UPDATE users SET wallet = wallet + %s WHERE user_id = %s", (importo, str(utente.id)))
     conn.commit(); cur.close(); conn.close()
     await interaction.response.send_message(f"🤝 **{interaction.user.display_name}** ha dato **{importo}$** a **{utente.mention}**.")
-@bot.tree.command(name="inizio_turno", description="Inizia il tuo turno di lavoro")
-async def inizio_turno(interaction: discord.Interaction):
-    user_id = str(interaction.user.id)
-    conn = get_db_connection()
-    cur = conn.cursor()
+
     # --- COMANDO INIZIO TURNO (Ruolo Libero) ---
 @bot.tree.command(name="inizio_turno", description="Inizia il turno specificando il tuo ruolo")
 @app_commands.describe(ruolo="Scrivi il tuo ruolo (es. Polizia, Medico, Staff...)")
@@ -630,53 +626,7 @@ async def cerca(interaction: Interaction):
     await interaction.channel.send(f"✅ **{interaction.user.mention}** ha trovato: **{mat}**!")
 
 # --- CLASSE VIEW PER I BOTTONI ---
-class BlackjackView(discord.ui.View):
-    def __init__(self, interaction, somma, mano_p, mano_b):
-        super().__init__(timeout=60)
-        self.interaction = interaction
-        self.somma = somma
-        self.mano_p = mano_p
-        self.mano_b = mano_b
 
-    def get_tot(self, mano):
-        tot = sum(mano)
-        as_count = mano.count(11)
-        while tot > 21 and as_count > 0:
-            tot -= 10
-            as_count -= 1
-        return tot
-
-    @discord.ui.button(label="Carta 🃏", style=discord.ButtonStyle.green)
-    async def carta(self, inter: discord.Interaction, button: discord.ui.Button):
-        if inter.user.id != self.interaction.user.id:
-            return await inter.response.send_message("❌ Questa non è la tua partita!", ephemeral=True)
-        
-        self.mano_p.append(random.randint(2, 11))
-        if self.get_tot(self.mano_p) > 21:
-            await self.concludi(inter, "sballato")
-        else:
-            await self.update_msg(inter)
-
-    @discord.ui.button(label="Stai ✋", style=discord.ButtonStyle.red)
-    async def stai(self, inter: discord.Interaction, button: discord.ui.Button):
-        if inter.user.id != self.interaction.user.id:
-            return await inter.response.send_message("❌ Questa non è la tua partita!", ephemeral=True)
-        
-        while self.get_tot(self.mano_b) < 17:
-            self.mano_b.append(random.randint(2, 11))
-        
-        tot_p = self.get_tot(self.mano_p)
-        tot_b = self.get_tot(self.mano_b)
-        
-        if tot_b > 21 or tot_p > tot_b: esito = "vinto"
-        elif tot_p < tot_b: esito = "perso"
-        else: esito = "pareggio"
-        
-        await self.concludi(inter, esito)
-
-    async def update_msg(self, inter):
-        emb = discord.Embed(title="🃏 Blackjack", color=discord.Color.gold())
-        emb.add_field(name="La tua mano 👤", value=f"{self.mano_p}\n**Totale: {self.get_tot(self.mano_p)}**", inline=True)
 # --- CLASSE VIEW PER I BOTTONI (Corretta e Reattiva) ---
 class BlackjackView(discord.ui.View):
     def __init__(self, interaction, somma, mano_p, mano_b):
