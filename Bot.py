@@ -297,7 +297,7 @@ async def usa(interaction: Interaction, nome: str):
 
 @bot.tree.command(name="fattura", description="Emetti una fattura a un cittadino")
 async def fattura(interaction: discord.Interaction, cliente: discord.Member, azienda: discord.Role, descrizione: str, prezzo: int):
-    # Diciamo a Discord di aspettare (toglie il limite dei 3 secondi)
+    # Rimuove il limite dei 3 secondi
     await interaction.response.defer()
     
     id_f = ''.join(random.choices(string.ascii_letters + string.digits, k=10))
@@ -306,7 +306,7 @@ async def fattura(interaction: discord.Interaction, cliente: discord.Member, azi
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        # Salviamo il nome del ruolo come nome azienda
+        # Usiamo azienda.name per salvare il testo nel DB invece dell'oggetto
         cur.execute("INSERT INTO fatture (id_fattura, id_cliente, id_azienda, descrizione, prezzo, data) VALUES (%s, %s, %s, %s, %s, %s)",
                     (id_f, str(cliente.id), azienda.name, descrizione, prezzo, data_attuale))
         conn.commit()
@@ -314,20 +314,20 @@ async def fattura(interaction: discord.Interaction, cliente: discord.Member, azi
 
         embed = discord.Embed(title="📑 Nuova Fattura", color=discord.Color.blue())
         embed.add_field(name="CLIENTE:", value=cliente.mention, inline=False)
-        embed.add_field(name="AZIENDA:", value=azienda.mention, inline=False) # Mostra il ruolo taggato
+        embed.add_field(name="AZIENDA:", value=azienda.mention, inline=False)
         embed.add_field(name="DESCRIZIONE:", value=descrizione, inline=False)
         embed.add_field(name="PREZZO:", value=f"**{prezzo}$**", inline=True)
         embed.add_field(name="DATA:", value=data_attuale, inline=True)
         embed.set_footer(text=f"ID Fattura: {id_f}")
         
-        # Usiamo followup perché abbiamo usato defer()
         await interaction.followup.send(content=f"{cliente.mention}, hai ricevuto una nuova fattura da {azienda.mention}!", embed=embed)
     except Exception as e:
-        print(f"Errore fattura: {e}")
-        await interaction.followup.send("❌ Errore durante il salvataggio della fattura.")
+        print(f"Errore DB: {e}")
+        await interaction.followup.send("❌ Errore critico nel database. Controlla i log.")
 @bot.tree.command(name="pagafattura", description="Visualizza e paga le tue fatture pendenti")
 async def pagafattura(interaction: discord.Interaction):
-    await interaction.response.defer(ephemeral=True) # Aspetta senza far scadere il comando
+    # Aspetta senza far scadere il comando (ephemeral così lo vede solo l'utente)
+    await interaction.response.defer(ephemeral=True) 
     
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -339,7 +339,8 @@ async def pagafattura(interaction: discord.Interaction):
         return await interaction.followup.send("✅ Non hai fatture da pagare!", ephemeral=True)
 
     view = PagaFatturaView(interaction.user.id, mie_fatture)
-    await interaction.followup.send("Seleziona la fattura che desideri saldare dal menù qui sotto:", view=view, ephemeral=True)
+    await interaction.followup.send("Seleziona la fattura che desideri saldare:", view=view, ephemeral=True)
+
 
 # ================= COMANDI FAZIONE =================
 
