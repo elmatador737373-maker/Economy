@@ -185,7 +185,7 @@ async def cerca_item_smart(interaction: Interaction, nome_input: str, modo="item
 @bot.tree.command(name="inizia_raccolta", description="Inizia la raccolta di qualcosa")
 @app_commands.describe(cosa="Cosa stai raccogliendo?")
 async def inizia_raccolta(interaction: discord.Interaction, cosa: str):
-    await interaction.response.defer(ephemeral=True)
+    await interaction.response.defer()
     
     try:
         conn = get_db_connection()
@@ -205,7 +205,7 @@ async def inizia_raccolta(interaction: discord.Interaction, cosa: str):
         conn.close()
         
         embed = discord.Embed(
-            title="<a:progresso:1334288992547635394> 𝐀𝐳𝐢𝐨𝐧𝐞  <a:progresso:1334288992547635394>",
+            title="INIZIO RACCOLTA",
             description=f"Hai iniziato la raccolta di: **{cosa}**\nUsa `/finisci_raccolta` per terminare.",
             color=discord.Color.blue()
         )
@@ -252,7 +252,7 @@ async def finisci_raccolta(interaction: discord.Interaction):
         
         # Embed di chiusura
         embed = discord.Embed(
-            title="<a:ciak:1334285912653434993> 𝐀𝐳𝐢𝐨𝐧𝐞  <a:progresso:1334288992547635394>",
+            title="FINE RACCOLTA",
             color=discord.Color.green(),
             timestamp=datetime.datetime.now()
         )
@@ -281,10 +281,43 @@ async def me(interaction: discord.Interaction, azione: str):
 
 # ================= COMANDI ECONOMIA BASE =================
 
-@bot.tree.command(name="portafoglio", description="Vedi i tuoi soldi")
-async def portafoglio(interaction: Interaction):
+@bot.tree.command(name="portafoglio", description="Visualizza il tuo saldo contanti e in banca")
+async def portafoglio(interaction: discord.Interaction):
     u = get_user_data(interaction.user.id)
-    await interaction.response.send_message(f"💰 **{interaction.user.display_name}** | Wallet: **{u['wallet']}$** | Banca: **{u['bank']}$**")
+    
+    # Creazione dell'Embed
+    embed = discord.Embed(
+        title="💰 ESTRATTO CONTO PERSONALE",
+        color=discord.Color.gold(), # Colore oro per il tema soldi
+        timestamp=datetime.datetime.now()
+    )
+    
+    # Imposta l'avatar dell'utente come miniatura a destra
+    embed.set_thumbnail(url=interaction.user.display_avatar.url)
+    
+    # Campi per i saldi (inline=True li mette uno di fianco all'altro)
+    embed.add_field(
+        name="💵 Contanti (Wallet)", 
+        value=f"**{u['wallet']:,}$**", 
+        inline=True
+    )
+    embed.add_field(
+        name="💳 Conto Bancario", 
+        value=f"**{u['bank']:,}$**", 
+        inline=True
+    )
+    
+    # Calcolo del patrimonio totale
+    totale = u['wallet'] + u['bank']
+    embed.add_field(
+        name="📊 Patrimonio Totale", 
+        value=f"**{totale:,}$**", 
+        inline=False
+    )
+
+    embed.set_footer(text=f"Richiesto da {interaction.user.display_name}")
+
+    await interaction.response.send_message(embed=embed)
 
 @bot.tree.command(name="deposita", description="Metti soldi in banca")
 async def deposita(interaction: Interaction, importo: int):
@@ -409,7 +442,7 @@ async def mostra_documento(interaction: discord.Interaction, cittadino: discord.
 @bot.tree.command(name="inizio_turno", description="Inizia il tuo turno di lavoro")
 @app_commands.describe(ruolo="Specifica il tuo ruolo (es. Polizia, Medico, Meccanico)")
 async def inizio_turno(interaction: discord.Interaction, ruolo: str):
-    await interaction.response.defer(ephemeral=True)
+    await interaction.response.defer()
     
     try:
         conn = get_db_connection()
@@ -429,7 +462,7 @@ async def inizio_turno(interaction: discord.Interaction, ruolo: str):
         conn.close()
         
         embed = discord.Embed(
-            title="<a:progresso:1334288992547635394> 𝐓𝐮𝐫𝐧𝐨 𝐀𝐯𝐯𝐢𝐚𝐭𝐨",
+            title="𝐓𝐮𝐫𝐧𝐨 𝐀𝐯𝐯𝐢𝐚𝐭𝐨",
             description=f"Hai iniziato il servizio come: **{ruolo}**\nOrario d'inizio registrato correttamente.",
             color=discord.Color.blue()
         )
