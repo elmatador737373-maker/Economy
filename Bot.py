@@ -40,6 +40,8 @@ def init_db():
     cur.execute("CREATE TABLE IF NOT EXISTS depositi_items (role_id TEXT, item_name TEXT, quantity INTEGER, PRIMARY KEY (role_id, item_name))")
     cur.execute("CREATE TABLE IF NOT EXISTS turni (user_id TEXT PRIMARY KEY, inizio TIMESTAMP)")
     cur.execute("ALTER TABLE users ADD COLUMN ore_lavorate REAL DEFAULT 0") 
+    cur.execute("ALTER TABLE turni ADD COLUMN ruolo TEXT ")
+
     conn.commit()
     cur.close();
 
@@ -148,70 +150,99 @@ async def inizio_turno(interaction: discord.Interaction):
     conn = get_db_connection()
     cur = conn.cursor()
     
-    # Controlla se è già in turno
-    cur.execute("SELECT inizio FROM turni WHERE user_id = %s", (user_id,))
+# --- VIEW PER LA SCELTA DEL RUOLO ---
+class RuoloTurnoView(discord.ui.View):
+    def __init__(self, user_id):
+        super().__init__(timeout=60)
+        self.user_id = user_id
+
+    @discord.ui.select(
+        placeholder="Seleziona il tuo ruolo per il turno...",
+        options=[
+            discord.SelectOption(label="Polizia", emoji="👮", value="Polizia"),
+            discord.SelectOption(label="EMS / Medico", emoji="🚑", value="EMS"),
+            discord.SelectOption(label="Meccanico", emoji="🔧", value="Meccanico"),
+            discord.SelectOption(label="Esercito", emoji="🎖️", value="Esercito"),
+            discord.SelectOption(label="Staff", emoji="🛡️", value="Staff")
+        ]
+    )
+    async def select_callback(self, interaction: discord.Interaction, select: discord.ui.Select):
+        if str(interaction.user.id) != self.user_id:
+            return await interaction.response.send_message("❌ Non puoi usare questo menu!", ephemeral=True)
+
+        ruolo_scelto = select.values[0]
+        ora_inizio = datetime.datetime.now()
+        
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        try:
+            # Salva inizio e ruolo
+            cur.execute("INSERT INTO turni (user_id, inizio, ruolo) VALUES (%s, %s, %s)", 
+                        (self.user_id, ora_inizio, ruolo_scelto))
+            conn.commit()
+            
+            emb = discord.Embed(title="💼 Turno Iniziato", color=discord.Color.green())
+            emb.add_field(name="Lavoratore", value=interaction.user.mention)
+            emb.add_field(name="Ruolo", value=f"**{ruolo_scelto}**")
+            emb.add_field(name="Ora Inizio", value=ora_inizio.strftime("%H:%M:%S"))
+            
+            await interaction.response.edit_message(content=None, embed=emb, view=None)
+        except Exception as e:
+            await interaction.response.edit_message(content=f"❌ Errore: Sei già in turno o errore DB.", view=None)
+        finally:
+            cur.close(); conn.close()
+
+# --- COMANDO INIZIO TURNO ---
+@bot.tree.command(name="inizio_turno", description="Scegli il ruolo e inizia il turno")
+async def inizio_turno(interaction: discord.Interaction):
+    user_id = str(interaction.user.id)
+    
+    # Controllo se è già in turno
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT ruolo FROM turni WHERE user_id = %s", (user_id,))
     if cur.fetchone():
         conn.close()
-        return await interaction.response.send_message("⚠️ Sei già in turno!", ephemeral=True)
-    
-    ora_inizio = datetime.datetime.now()
-    cur.execute("INSERT INTO turni (user_id, inizio) VALUES (%s, %s)", (user_id, ora_inizio))
-    conn.commit()
+        return await interaction.response.send_message("⚠️ Sei già in turno! Finiscilo prima di iniziarne un altro.", ephemeral=True)
     conn.close()
-    
-    embed = discord.Embed(
-        title="💼 Turno Iniziato",
-        description=f"Buon lavoro, **{interaction.user.display_name}**!",
-        color=discord.Color.green(),
-        timestamp=ora_inizio
-    )
-    embed.add_field(name="Orario di inizio", value=ora_inizio.strftime("%H:%M:%S"))
-    await interaction.response.send_message(embed=embed)
 
-@bot.tree.command(name="fine_turno", description="Termina il tuo turno e calcola le ore")
+    view = RuoloTurnoView(user_id)
+    await interaction.response.send_message("Seleziona il ruolo con cui vuoi entrare in servizio:", view=view, ephemeral=True)
+
+# --- COMANDO FINE TURNO ---
+@bot.tree.command(name="fine_turno", description="Termina il turno e salva le ore")
 async def fine_turno(interaction: discord.Interaction):
     user_id = str(interaction.user.id)
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
     
-    # Recupera l'orario di inizio
-    cur.execute("SELECT inizio FROM turni WHERE user_id = %s", (user_id,))
+    cur.execute("SELECT inizio, ruolo FROM turni WHERE user_id = %s", (user_id,))
     row = cur.fetchone()
     
     if not row:
         conn.close()
-        return await interaction.response.send_message("❌ Non sei attualmente in turno!", ephemeral=True)
+        return await interaction.response.send_message("❌ Non sei in turno!", ephemeral=True)
     
     ora_fine = datetime.datetime.now()
-    ora_inizio = row['inizio']
+    durata = ora_fine - row['inizio']
+    ore_decimali = durata.total_seconds() / 3600
     
-    # Calcolo differenza
-    durata = ora_fine - ora_inizio
-    secondi_totali = durata.total_seconds()
-    ore_frazione = secondi_totali / 3600  # Converte in ore decimali (es: 1.5 ore)
-    
-    # Formattazione per il messaggio (Ore:Minuti:Secondi)
-    ore, resto = divmod(int(secondi_totali), 3600)
+    # Formattazione durata
+    ore, resto = divmod(int(durata.total_seconds()), 3600)
     minuti, secondi = divmod(resto, 60)
-    durata_str = f"{ore}h {minuti}m {secondi}s"
-
-    # Aggiorna il database: cancella turno attivo e aggiunge ore totali all'utente
+    
     cur.execute("DELETE FROM turni WHERE user_id = %s", (user_id,))
-    cur.execute("UPDATE users SET ore_lavorate = ore_lavorate + %s WHERE user_id = %s", (ore_frazione, user_id))
-    
+    cur.execute("UPDATE users SET ore_lavorate = ore_lavorate + %s WHERE user_id = %s", (ore_decimali, user_id))
     conn.commit()
-    conn.close()
+    cur.close(); conn.close()
     
-    embed = discord.Embed(
-        title="🏁 Turno Terminato",
-        color=discord.Color.red(),
-        timestamp=ora_fine
-    )
-    embed.add_field(name="Durata sessione", value=f"⏳ {durata_str}", inline=False)
-    embed.add_field(name="Totale ore accumulate", value=f"📈 +{ore_frazione:.2f} ore", inline=False)
-    embed.set_footer(text=f"Lavoratore: {interaction.user.display_name}")
+    emb = discord.Embed(title="🏁 Turno Terminato", color=discord.Color.red())
+    emb.add_field(name="Ruolo", value=f"**{row['ruolo']}**")
+    emb.add_field(name="Durata", value=f"{ore}h {minuti}m {secondi}s")
+    emb.add_field(name="Ore Totali Accumulate", value=f"{ore_decimali:.2f}")
     
-    await interaction.response.send_message(embed=embed)
+    await interaction.response.send_message(embed=emb)
 
 # ================= COMANDI INVENTARIO =================
 
