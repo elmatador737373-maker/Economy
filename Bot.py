@@ -491,7 +491,7 @@ async def arresto(interaction: discord.Interaction, utente: discord.Member, temp
     except Exception as e:
         print(f"Errore arresto: {e}")
         await interaction.followup.send("❌ Errore nel salvataggio dell'arresto.")
-@bot.tree.command(name="ricerca_cittadino", description="Visualizza la fedina penale di un cittadino")
+@bot.tree.command(name="ricerca_cittadino", description="Visualizza il fascicolo completo di un cittadino (Documenti, Veicoli, Fedina)")
 async def ricerca(interaction: discord.Interaction, cittadino: discord.Member):
     if not is_polizia(interaction):
         return await interaction.response.send_message("❌ Accesso negato al database centrale della Polizia.", ephemeral=True)
@@ -503,49 +503,73 @@ async def ricerca(interaction: discord.Interaction, cittadino: discord.Member):
         from psycopg2.extras import RealDictCursor
         cur = conn.cursor(cursor_factory=RealDictCursor)
         
-        # 1. Recupera le Multe Pendenti
+        # 1. Recupera i Dati del Documento
+        cur.execute("SELECT * FROM documenti WHERE user_id = %s", (str(cittadino.id),))
+        doc = cur.fetchone()
+        
+        # 2. Recupera i Veicoli Registrati
+        cur.execute("SELECT targa, modello FROM veicoli WHERE owner_id = %s", (str(cittadino.id),))
+        veicoli = cur.fetchall()
+        
+        # 3. Recupera le Multe Pendenti
         cur.execute("SELECT * FROM multe WHERE user_id = %s", (str(cittadino.id),))
         multe_pendenti = cur.fetchall()
         
-        # 2. Recupera lo Storico Arresti
-        cur.execute("SELECT * FROM arresti WHERE user_id = %s ORDER BY id_arresto DESC", (str(cittadino.id),))
+        # 4. Recupera lo Storico Arresti (ultimi 5)
+        cur.execute("SELECT * FROM arresti WHERE user_id = %s ORDER BY id_arresto DESC LIMIT 5", (str(cittadino.id),))
         storico_arresti = cur.fetchall()
         
         cur.close()
         conn.close()
 
+        # Creazione dell'Embed Fascicolo
         embed = discord.Embed(
-            title=f"🔍 Fascicolo Penale: {cittadino.display_name}",
-            color=discord.Color.blue()
+            title=f"📁 FASCICOLO FEDERALE: {cittadino.display_name}",
+            color=discord.Color.dark_blue(),
+            timestamp=datetime.datetime.now()
         )
         embed.set_thumbnail(url=cittadino.display_avatar.url)
 
-        # Sezione Multe
+        # SEZIONE ANAGRAFICA (Dalla tabella documenti)
+        if doc:
+            info_personali = (
+                f"**Nome/Cognome:** {doc['nome']} {doc['cognome']}\n"
+                f"**Nascita:** {doc['data_nascita']} ({doc['luogo_nascita']})\n"
+                f"**Sesso:** {doc['genere']} | **Altezza:** {doc['altezza']}cm"
+            )
+            embed.add_field(name="🪪 Dati Anagrafici", value=info_personali, inline=False)
+        else:
+            embed.add_field(name="🪪 Dati Anagrafici", value="⚠️ Nessun documento registrato.", inline=False)
+
+        # SEZIONE VEICOLI (Dalla tabella veicoli)
+        if veicoli:
+            lista_veicoli = "\n".join([f"• `{v['targa']}` - {v['modello']}" for v in veicoli])
+            embed.add_field(name="🚘 Veicoli Intestati", value=lista_veicoli, inline=False)
+        else:
+            embed.add_field(name="🚘 Veicoli Intestati", value="Nessun veicolo registrato.", inline=False)
+
+        # SEZIONE MULTE (Dalla tabella multe)
         if multe_pendenti:
-            lista_multe = ""
-            for m in multe_pendenti:
-                lista_multe += f"• **{m['ammontare']}$** - *{m['motivo']}* ({m['data']})\n"
+            lista_multe = "\n".join([f"• **{m['ammontare']}$** - {m['motivo']} ({m['data']})" for m in multe_pendenti])
             embed.add_field(name="⚠️ Multe in Sospeso", value=lista_multe, inline=False)
         else:
             embed.add_field(name="⚠️ Multe in Sospeso", value="Nessuna multa pendente.", inline=False)
 
-        # Sezione Arresti
+        # SEZIONE ARRESTI (Dalla tabella arresti)
         if storico_arresti:
-            lista_arresti = ""
-            # Mostriamo solo gli ultimi 5 arresti per non rendere l'embed troppo lungo
-            for a in storico_arresti[:5]:
-                lista_arresti += f"• {a['data']}: {a['motivo']} ({a['tempo']} min)\n"
-            embed.add_field(name="🚔 Cronologia Arresti (Ultimi 5)", value=lista_arresti, inline=False)
+            lista_arresti = "\n".join([f"• {a['data']}: {a['motivo']} ({a['tempo']} min)" for a in storico_arresti])
+            embed.add_field(name="🚔 Cronologia Arresti", value=lista_arresti, inline=False)
         else:
             embed.add_field(name="🚔 Cronologia Arresti", value="Cittadino incensurato.", inline=False)
 
-        embed.set_footer(text=f"Database Centrale Polizia | ID: {cittadino.id}")
+        embed.set_footer(text=f"Sistema Centrale di Ricerca | ID: {cittadino.id}")
         
         await interaction.followup.send(embed=embed)
 
     except Exception as e:
-        print(f"Errore ricerca: {e}")
-        await interaction.followup.send("❌ Errore durante l'interrogazione del database.")
+        print(f"Errore ricerca completa: {e}")
+        await interaction.followup.send("❌ Errore durante l'interrogazione del fascicolo completo.")
+
 
 # --- COMANDO FINE TURNO ---
 @bot.tree.command(name="fine_turno", description="Termina il turno e calcola le ore lavorate")
@@ -769,14 +793,8 @@ async def pagafattura(interaction: discord.Interaction):
 
 ID_RUOLO_CONCESSIONARIO = 1414902990275612753
 
-@bot.tree.command(name="registra_veicolo", description="Registra la vendita e consegna le chiavi con targa")
+@bot.tree.command(name="registra_veicolo", description="Registra la vendita e salva i dati nel database motorizzazione")
 @app_commands.checks.has_any_role(ID_RUOLO_CONCESSIONARIO)
-@app_commands.describe(
-    acquirente="Il cittadino che compra l'auto",
-    marca_modello="Es: Ferrari 488",
-    targa="Es: AB123CD",
-    concessionaria="Tagga il ruolo della concessionaria"
-)
 async def registra_veicolo(
     interaction: discord.Interaction, 
     acquirente: discord.Member, 
@@ -784,22 +802,29 @@ async def registra_veicolo(
     targa: str, 
     concessionaria: discord.Role
 ):
-    # Rimuove il limite dei 3 secondi
     await interaction.response.defer()
 
-    # Dati automatici
     data_ora = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
-    operatore = interaction.user.display_name
-    targa_maiuscola = targa.upper()
-    
-    # Nome dell'item che apparirà nell'inventario
+    targa_maiuscola = targa.upper().replace(" ", "") # Puliamo la targa da spazi
     nome_item_chiavi = f"<:emoji_2:1464729413651534029> | Chiavi {marca_modello} [{targa_maiuscola}]"
 
     try:
         conn = get_db_connection()
         cur = conn.cursor()
 
-        # 1. Aggiungiamo le chiavi con targa nell'inventario dell'acquirente
+        # 1. SALVATAGGIO NELLA MOTORIZZAZIONE (Tabella veicoli)
+        # Usiamo ON CONFLICT così se la targa esiste già (es. auto usata rivenduta), aggiorna il proprietario
+        cur.execute("""
+            INSERT INTO veicoli (targa, modello, owner_id, data_vendita) 
+            VALUES (%s, %s, %s, %s) 
+            ON CONFLICT (targa) 
+            DO UPDATE SET 
+                owner_id = EXCLUDED.owner_id,
+                modello = EXCLUDED.modello,
+                data_vendita = EXCLUDED.data_vendita
+        """, (targa_maiuscola, marca_modello, str(acquirente.id), data_ora))
+
+        # 2. AGGIUNTA CHIAVI NELL'INVENTARIO (Tabella inventory)
         cur.execute("""
             INSERT INTO inventory (user_id, item_name, quantity) 
             VALUES (%s, %s, 1) 
@@ -811,28 +836,58 @@ async def registra_veicolo(
         cur.close()
         conn.close()
 
-        # 2. Creazione dell'Embed Modulo
-        embed = discord.Embed(
-            title="📝 CONTRATTO DI VENDITA VEICOLO",
-            color=discord.Color.green(),
-            timestamp=datetime.datetime.now()
-        )
-        
-        embed.add_field(name="🏛️ CONCESSIONARIA", value=f"**Nome:** {concessionaria.mention}\n**Operatore:** {operatore}", inline=False)
-        embed.add_field(name="👤 ACQUIRENTE", value=f"**Cittadino:** {acquirente.mention}\n**ID:** {acquirente.id}", inline=False)
+        # 3. Embed del Contratto
+        embed = discord.Embed(title="📝 CONTRATTO DI VENDITA", color=discord.Color.green())
+        embed.add_field(name="🏛️ CONCESSIONARIA", value=concessionaria.mention, inline=True)
+        embed.add_field(name="👤 ACQUIRENTE", value=f"{acquirente.mention}\nID: `{acquirente.id}`", inline=True)
         embed.add_field(name="🚘 VEICOLO", value=f"**Modello:** {marca_modello}\n**Targa:** `{targa_maiuscola}`", inline=False)
+        embed.set_footer(text=f"Registrato in Motorizzazione il {data_ora}")
         
-        embed.set_footer(text=f"Registrato il {data_ora}")
-        
-        # Risposta finale
-        await interaction.followup.send(
-            content=f"✅ Vendita completata! Chiavi consegnate a {acquirente.mention}.",
-            embed=embed
-        )
+        await interaction.followup.send(content=f"✅ Vendita completata! Veicolo registrato a nome di {acquirente.mention}.", embed=embed)
 
     except Exception as e:
         print(f"Errore registrazione veicolo: {e}")
-        await interaction.followup.send("❌ Errore durante l'aggiornamento dell'inventario.", ephemeral=True)
+        await interaction.followup.send("❌ Errore durante la registrazione nel database.", ephemeral=True)
+
+@bot.tree.command(name="ricerca_targa", description="Interroga il database motorizzazione tramite targa")
+async def ricerca_targa(interaction: discord.Interaction, targa: str):
+    if not is_polizia(interaction): # Usa la tua funzione di controllo polizia
+        return await interaction.response.send_message("❌ Accesso negato.", ephemeral=True)
+    
+    await interaction.response.defer()
+    targa_clean = targa.upper().replace(" ", "")
+
+    try:
+        conn = get_db_connection()
+        from psycopg2.extras import RealDictCursor
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Uniamo i dati di veicoli e documenti in una sola query
+        cur.execute("""
+            SELECT v.targa, v.modello, v.owner_id, d.nome, d.cognome 
+            FROM veicoli v
+            LEFT JOIN documenti d ON v.owner_id = d.user_id
+            WHERE v.targa = %s
+        """, (targa_clean,))
+        
+        res = cur.fetchone()
+        cur.close()
+        conn.close()
+
+        if not res:
+            return await interaction.followup.send(f"⚠️ La targa `{targa_clean}` non risulta nel database.")
+
+        embed = discord.Embed(title="🔍 Risultato Ricerca Targa", color=discord.Color.blue())
+        embed.add_field(name="🚘 Veicolo", value=f"**Modello:** {res['modello']}\n**Targa:** `{res['targa']}`", inline=False)
+        
+        proprietario = f"{res['nome']} {res['cognome']}" if res['nome'] else "Documento non registrato"
+        embed.add_field(name="👤 Proprietario", value=f"**Nome:** {proprietario}\n**Menzione:** <@{res['owner_id']}>", inline=False)
+        
+        await interaction.followup.send(embed=embed)
+
+    except Exception as e:
+        print(f"Errore: {e}")
+        await interaction.followup.send("❌ Errore nella ricerca.")
 
 
 
