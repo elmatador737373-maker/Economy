@@ -182,6 +182,102 @@ async def cerca_item_smart(interaction: Interaction, nome_input: str, modo="item
     await interaction.followup.send("🤔 Più risultati, seleziona quello corretto:", view=view, ephemeral=True)
     await view.wait()
     return view.value
+# --- COMANDO INIZIA RACCOLTA ---
+@bot.tree.command(name="inizia_raccolta", description="Inizia la raccolta di qualcosa")
+@app_commands.describe(cosa="Cosa stai raccogliendo?")
+async def inizia_raccolta(interaction: discord.Interaction, cosa: str):
+    await interaction.response.defer(ephemeral=True)
+    
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        # Registra l'inizio della raccolta (usa l'ora del DB già su Roma)
+        cur.execute("""
+            INSERT INTO sessioni_raccolta (user_id, cosa_raccoglie, inizio_timestamp)
+            VALUES (%s, %s, NOW())
+            ON CONFLICT (user_id) DO UPDATE SET
+                cosa_raccoglie = EXCLUDED.cosa_raccoglie,
+                inizio_timestamp = NOW()
+        """, (str(interaction.user.id), cosa))
+        
+        conn.commit()
+        cur.close()
+        conn.close()
+        
+        embed = discord.Embed(
+            title="<a:progresso:1334288992547635394> 𝐀𝐳𝐢𝐨𝐧𝐞  <a:progresso:1334288992547635394>",
+            description=f"Hai iniziato la raccolta di: **{cosa}**\nUsa `/finisci_raccolta` per terminare.",
+            color=discord.Color.blue()
+        )
+        await interaction.followup.send(embed=embed)
+        
+    except Exception as e:
+        print(f"Errore inizia_raccolta: {e}")
+        await interaction.followup.send("❌ Errore nel database.", ephemeral=True)
+
+# --- COMANDO FINISCI RACCOLTA ---
+@bot.tree.command(name="finisci_raccolta", description="Finisci la raccolta di qualcosa")
+async def finisci_raccolta(interaction: discord.Interaction):
+    await interaction.response.defer()
+    
+    try:
+        conn = get_db_connection()
+        from psycopg2.extras import RealDictCursor
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Recupera dati e calcola i minuti trascorsi
+        cur.execute("""
+            SELECT cosa_raccoglie, 
+            EXTRACT(EPOCH FROM (NOW() - inizio_timestamp)) / 60 AS minuti
+            FROM sessioni_raccolta 
+            WHERE user_id = %s
+        """, (str(interaction.user.id),))
+        
+        res = cur.fetchone()
+        
+        if not res:
+            cur.close()
+            conn.close()
+            return await interaction.followup.send("❌ Non hai nessuna raccolta attiva! Usa `/inizia_raccolta`.", ephemeral=True)
+
+        minuti_totali = int(res['minuti'])
+        oggetto = res['cosa_raccoglie']
+        
+        # Elimina la sessione finita
+        cur.execute("DELETE FROM sessioni_raccolta WHERE user_id = %s", (str(interaction.user.id),))
+        
+        conn.commit()
+        cur.close()
+        conn.close()
+        
+        # Embed di chiusura
+        embed = discord.Embed(
+            title="<a:ciak:1334285912653434993> 𝐀𝐳𝐢𝐨𝐧𝐞  <a:progresso:1334288992547635394>",
+            color=discord.Color.green(),
+            timestamp=datetime.datetime.now()
+        )
+        embed.add_field(name="👷 Cittadino", value=interaction.user.mention, inline=True)
+        embed.add_field(name="📦 Raccolto", value=f"**{oggetto}**", inline=True)
+        embed.add_field(name="⏱️ Tempo", value=f"**{minuti_totali} minuti**", inline=False)
+        
+        await interaction.followup.send(content=f"✅ {interaction.user.mention} ha terminato la raccolta.", embed=embed)
+        
+    except Exception as e:
+        print(f"Errore finisci_raccolta: {e}")
+        await interaction.followup.send("❌ Errore nel calcolo dei minuti.", ephemeral=True)
+@bot.tree.command(name="me", description="Esegui un'azione in gioco (Roleplay)")
+@app_commands.describe(azione="Descrivi l'azione che stai compiendo")
+async def me(interaction: discord.Interaction, azione: str):
+    # Creazione dell'Embed con i parametri richiesti
+    embed = discord.Embed(
+        title="<a:ciak:1334285912653434993> 𝐀𝐳𝐢𝐨𝐧𝐞  <a:progresso:1334288992547635394>",
+        description=f"{interaction.user.mention} : {azione}",
+        color=discord.Color.from_rgb(170, 142, 214) # Un viola elegante per le azioni RP
+    )
+    
+    # Invia il messaggio nel canale in cui è stato usato il comando
+    await interaction.response.send_message(embed=embed)
 
 
 # ================= COMANDI ECONOMIA BASE =================
