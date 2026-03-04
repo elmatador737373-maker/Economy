@@ -9,6 +9,8 @@ import threading
 import asyncio
 from flask import Flask
 import datetime 
+import string
+
 # ================= CONFIGURAZIONE =================
 TOKEN = os.environ.get("TOKEN")
 DATABASE_URL = os.environ.get("DATABASE_URL")
@@ -40,6 +42,18 @@ def init_db():
     cur.execute("CREATE TABLE IF NOT EXISTS depositi_items (role_id TEXT, item_name TEXT, quantity INTEGER, PRIMARY KEY (role_id, item_name))")
     cur.execute("CREATE TABLE IF NOT EXISTS turni (user_id TEXT PRIMARY KEY, inizio TIMESTAMP)")
     cur.execute("ALTER TABLE users ADD COLUMN ore_lavorate REAL DEFAULT 0") 
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS fatture (
+        id_fattura TEXT PRIMARY KEY,
+        id_cliente TEXT,
+        id_azienda TEXT,
+        descrizione TEXT,
+        prezzo INTEGER,
+        data TEXT,
+        stato TEXT DEFAULT 'Pendente'
+    )
+""")
+
     cur.execute("ALTER TABLE turni ADD COLUMN ruolo TEXT ")
 
     conn.commit()
@@ -107,6 +121,60 @@ async def cerca_item_smart(interaction: Interaction, nome_input: str, modo="item
     await view.wait()
     return view.value
 
+class PagaFatturaView(discord.ui.View):
+    def __init__(self, user_id, fatture_list):
+        super().__init__(timeout=60)
+        self.user_id = user_id
+        
+        options = []
+        for f in fatture_list:
+            options.append(discord.SelectOption(
+                label=f"Fattura {f['id_fattura']}",
+                description=f"{f['prezzo']}$ - {f['descrizione'][:30]}",
+                value=f['id_fattura']
+            ))
+        
+        self.select = discord.ui.Select(placeholder="Scegli la fattura da pagare...", options=options)
+        self.select.callback = self.callback
+        self.add_item(self.select)
+
+    async def callback(self, interaction: discord.Interaction):
+        id_f = self.select.values[0]
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Recupera dettagli fattura e dati utente
+        cur.execute("SELECT * FROM fatture WHERE id_fattura = %s", (id_f,))
+        f = cur.fetchone()
+        u = get_user_data(interaction.user.id)
+
+        if u['wallet'] < f['prezzo']:
+            conn.close()
+            return await interaction.response.send_message("❌ Non hai abbastanza contanti nel portafoglio per pagare questa fattura!", ephemeral=True)
+
+        # Esegui il pagamento
+        cur.execute("UPDATE users SET wallet = wallet - %s WHERE user_id = %s", (f['prezzo'], str(interaction.user.id)))
+        cur.execute("DELETE FROM fatture WHERE id_fattura = %s", (id_f,)) # Oppure UPDATE stato = 'Pagata'
+        
+        conn.commit()
+        cur.close(); conn.close()
+        
+        await interaction.response.edit_message(content=f"✅ Hai pagato correttamente la fattura **{id_f}** di **{f['prezzo']}$**!", embed=None, view=None)
+
+@bot.tree.command(name="pagafattura", description="Visualizza e paga le tue fatture pendenti")
+async def pagafattura(interaction: discord.Interaction):
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute("SELECT * FROM fatture WHERE id_cliente = %s AND stato = 'Pendente'", (str(interaction.user.id),))
+    mie_fatture = cur.fetchall()
+    cur.close(); conn.close()
+
+    if not mie_fatture:
+        return await interaction.response.send_message("✅ Non hai fatture da pagare!", ephemeral=True)
+
+    view = PagaFatturaView(interaction.user.id, mie_fatture)
+    await interaction.response.send_message("Seleziona la fattura che desideri saldare:", view=view, ephemeral=True)
+
 # ================= COMANDI ECONOMIA BASE =================
 
 @bot.tree.command(name="portafoglio", description="Vedi i tuoi soldi")
@@ -149,101 +217,79 @@ async def inizio_turno(interaction: discord.Interaction):
     user_id = str(interaction.user.id)
     conn = get_db_connection()
     cur = conn.cursor()
-    
-# --- VIEW PER LA SCELTA DEL RUOLO ---
-class RuoloTurnoView(discord.ui.View):
-    def __init__(self, user_id):
-        super().__init__(timeout=60)
-        self.user_id = user_id
-
-    @discord.ui.select(
-        placeholder="Seleziona il tuo ruolo per il turno...",
-        options=[
-            discord.SelectOption(label="Polizia", emoji="👮", value="Polizia"),
-            discord.SelectOption(label="EMS / Medico", emoji="🚑", value="EMS"),
-            discord.SelectOption(label="Meccanico", emoji="🔧", value="Meccanico"),
-            discord.SelectOption(label="Esercito", emoji="🎖️", value="Esercito"),
-            discord.SelectOption(label="Staff", emoji="🛡️", value="Staff")
-        ]
-    )
-    async def select_callback(self, interaction: discord.Interaction, select: discord.ui.Select):
-        if str(interaction.user.id) != self.user_id:
-            return await interaction.response.send_message("❌ Non puoi usare questo menu!", ephemeral=True)
-
-        ruolo_scelto = select.values[0]
-        ora_inizio = datetime.datetime.now()
-        
-        conn = get_db_connection()
-        cur = conn.cursor()
-        
-        try:
-            # Salva inizio e ruolo
-            cur.execute("INSERT INTO turni (user_id, inizio, ruolo) VALUES (%s, %s, %s)", 
-                        (self.user_id, ora_inizio, ruolo_scelto))
-            conn.commit()
-            
-            emb = discord.Embed(title="💼 Turno Iniziato", color=discord.Color.green())
-            emb.add_field(name="Lavoratore", value=interaction.user.mention)
-            emb.add_field(name="Ruolo", value=f"**{ruolo_scelto}**")
-            emb.add_field(name="Ora Inizio", value=ora_inizio.strftime("%H:%M:%S"))
-            
-            await interaction.response.edit_message(content=None, embed=emb, view=None)
-        except Exception as e:
-            await interaction.response.edit_message(content=f"❌ Errore: Sei già in turno o errore DB.", view=None)
-        finally:
-            cur.close(); conn.close()
-
-# --- COMANDO INIZIO TURNO ---
-@bot.tree.command(name="inizio_turno", description="Scegli il ruolo e inizia il turno")
-async def inizio_turno(interaction: discord.Interaction):
+    # --- COMANDO INIZIO TURNO (Ruolo Libero) ---
+@bot.tree.command(name="inizio_turno", description="Inizia il turno specificando il tuo ruolo")
+@app_commands.describe(ruolo="Scrivi il tuo ruolo (es. Polizia, Medico, Staff...)")
+async def inizio_turno(interaction: discord.Interaction, ruolo: str):
     user_id = str(interaction.user.id)
-    
-    # Controllo se è già in turno
     conn = get_db_connection()
     cur = conn.cursor()
+    
+    # Controllo se l'utente è già in turno
     cur.execute("SELECT ruolo FROM turni WHERE user_id = %s", (user_id,))
     if cur.fetchone():
         conn.close()
-        return await interaction.response.send_message("⚠️ Sei già in turno! Finiscilo prima di iniziarne un altro.", ephemeral=True)
-    conn.close()
-
-    view = RuoloTurnoView(user_id)
-    await interaction.response.send_message("Seleziona il ruolo con cui vuoi entrare in servizio:", view=view, ephemeral=True)
+        return await interaction.response.send_message("⚠️ Sei già in servizio! Usa `/fine_turno` prima di iniziarne uno nuovo.", ephemeral=True)
+    
+    ora_inizio = datetime.datetime.now()
+    
+    # Inserimento nel database con il ruolo scritto dall'utente
+    cur.execute("INSERT INTO turni (user_id, inizio, ruolo) VALUES (%s, %s, %s)", 
+                (user_id, ora_inizio, ruolo))
+    conn.commit()
+    cur.close(); conn.close()
+    
+    embed = discord.Embed(title="💼 Servizio Iniziato", color=discord.Color.green())
+    embed.add_field(name="Cittadino", value=interaction.user.mention, inline=True)
+    embed.add_field(name="Ruolo", value=f"**{ruolo}**", inline=True)
+    embed.add_field(name="Orario", value=ora_inizio.strftime("%H:%M:%S"), inline=False)
+    embed.set_footer(text="Buon lavoro in città!")
+    
+    await interaction.response.send_message(embed=embed)
 
 # --- COMANDO FINE TURNO ---
-@bot.tree.command(name="fine_turno", description="Termina il turno e salva le ore")
+@bot.tree.command(name="fine_turno", description="Termina il turno e calcola le ore lavorate")
 async def fine_turno(interaction: discord.Interaction):
     user_id = str(interaction.user.id)
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
     
+    # Recupero dati del turno attivo
     cur.execute("SELECT inizio, ruolo FROM turni WHERE user_id = %s", (user_id,))
     row = cur.fetchone()
     
     if not row:
         conn.close()
-        return await interaction.response.send_message("❌ Non sei in turno!", ephemeral=True)
+        return await interaction.response.send_message("❌ Non risulti essere in servizio al momento!", ephemeral=True)
     
     ora_fine = datetime.datetime.now()
-    durata = ora_fine - row['inizio']
-    ore_decimali = durata.total_seconds() / 3600
+    ora_inizio = row['inizio']
+    ruolo_svolto = row['ruolo']
     
-    # Formattazione durata
-    ore, resto = divmod(int(durata.total_seconds()), 3600)
+    # Calcolo durata
+    durata = ora_fine - ora_inizio
+    secondi_totali = durata.total_seconds()
+    ore_decimali = secondi_totali / 3600
+    
+    # Formattazione HH:MM:SS
+    ore, resto = divmod(int(secondi_totali), 3600)
     minuti, secondi = divmod(resto, 60)
-    
+    tempo_trascorso = f"{ore}h {minuti}m {secondi}s"
+
+    # Aggiornamento database (rimozione turno e aggiunta ore totali)
     cur.execute("DELETE FROM turni WHERE user_id = %s", (user_id,))
     cur.execute("UPDATE users SET ore_lavorate = ore_lavorate + %s WHERE user_id = %s", (ore_decimali, user_id))
+    
     conn.commit()
     cur.close(); conn.close()
     
-    emb = discord.Embed(title="🏁 Turno Terminato", color=discord.Color.red())
-    emb.add_field(name="Ruolo", value=f"**{row['ruolo']}**")
-    emb.add_field(name="Durata", value=f"{ore}h {minuti}m {secondi}s")
-    emb.add_field(name="Ore Totali Accumulate", value=f"{ore_decimali:.2f}")
+    embed = discord.Embed(title="🏁 Fine Servizio", color=discord.Color.red())
+    embed.add_field(name="Ruolo Svolto", value=f"**{ruolo_svolto}**", inline=True)
+    embed.add_field(name="Tempo in Servizio", value=f"⏳ {tempo_trascorso}", inline=True)
+    embed.add_field(name="Conto Ore Aggiornato", value=f"📈 +{ore_decimali:.2f} ore", inline=False)
+    embed.set_footer(text=f"Grazie per il tuo lavoro, {interaction.user.display_name}!")
     
-    await interaction.response.send_message(embed=emb)
-
+    await interaction.response.send_message(embed=embed)
 # ================= COMANDI INVENTARIO =================
 
 @bot.tree.command(name="inventario", description="Mostra i tuoi oggetti")
@@ -284,6 +330,32 @@ async def usa(interaction: Interaction, nome: str):
     cur.execute("DELETE FROM inventory WHERE quantity <= 0")
     conn.commit(); cur.close(); conn.close()
     await interaction.followup.send(f"✨ **{interaction.user.display_name}** ha usato **{nome_e}**!")
+
+
+def genera_id_fattura():
+    return ''.join(random.choices(string.ascii_letters + string.digits, k=10))
+
+@bot.tree.command(name="fattura", description="Emetti una fattura a un cittadino")
+async def fattura(interaction: discord.Interaction, cliente: discord.Member, azienda: str, descrizione: str, prezzo: int):
+    id_f = genera_id_fattura()
+    data_attuale = datetime.datetime.now().strftime("%d/%m/%Y")
+    
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("INSERT INTO fatture (id_fattura, id_cliente, id_azienda, descrizione, prezzo, data) VALUES (%s, %s, %s, %s, %s, %s)",
+                (id_f, str(cliente.id), azienda, descrizione, prezzo, data_attuale))
+    conn.commit()
+    cur.close(); conn.close()
+
+    embed = discord.Embed(title="📑 Nuova Fattura", color=discord.Color.blue())
+    embed.add_field(name="CLIENTE:", value=cliente.mention, inline=False)
+    embed.add_field(name="AZIENDA:", value=azienda, inline=False)
+    embed.add_field(name="DESCRIZIONE:", value=descrizione, inline=False)
+    embed.add_field(name="PREZZO:", value=f"{prezzo}$", inline=True)
+    embed.add_field(name="DATA:", value=data_attuale, inline=True)
+    embed.set_footer(text=f"ID Fattura: {id_f}")
+    
+    await interaction.response.send_message(content=f"{cliente.mention}, hai ricevuto una nuova fattura!", embed=embed)
 
 # ================= COMANDI FAZIONE =================
 
