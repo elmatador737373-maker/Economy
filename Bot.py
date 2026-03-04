@@ -340,16 +340,14 @@ class PagaFatturaView(discord.ui.View):
     def __init__(self, user_id, fatture):
         super().__init__(timeout=180)
         self.user_id = user_id
-        
         options = []
         for f in fatture:
-            # Assicurati che i nomi tra parentesi ['...'] siano uguali a quelli del tuo DB
+            # Passiamo ID | PREZZO | NOME AZIENDA
             options.append(discord.SelectOption(
                 label=f"Fattura {f['id_fattura']}",
-                description=f"Prezzo: {f['prezzo']}$ | Azienda: {f['id_azienda']}",
+                description=f"Prezzo: {f['prezzo']}$ - {f['id_azienda']}",
                 value=f"{f['id_fattura']}|{f['prezzo']}|{f['id_azienda']}"
             ))
-            
         self.select = discord.ui.Select(placeholder="Seleziona la fattura da pagare...", options=options)
         self.select.callback = self.select_callback
         self.add_item(self.select)
@@ -357,43 +355,52 @@ class PagaFatturaView(discord.ui.View):
     async def select_callback(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         
+        # Estraiamo i dati
         data = self.select.values[0].split('|')
         id_f, prezzo, nome_azienda = data[0], int(data[1]), data[2]
+
+        print(f"DEBUG: Tentativo pagamento fattura {id_f} per {nome_azienda}") # Controlla questo nei log
 
         try:
             conn = get_db_connection()
             from psycopg2.extras import RealDictCursor
             cur = conn.cursor(cursor_factory=RealDictCursor)
             
-            # Controllo wallet
+            # 1. Controllo Wallet
             cur.execute("SELECT wallet FROM users WHERE user_id = %s", (str(interaction.user.id),))
-            user_data = cur.fetchone()
-            
-            if not user_data or user_data['wallet'] < prezzo:
-                cur.close()
-                conn.close()
-                return await interaction.followup.send(f"❌ Non hai abbastanza soldi! Wallet: {user_data['wallet'] if user_data else 0}$", ephemeral=True)
+            res = cur.fetchone()
+            if not res or res['wallet'] < prezzo:
+                return await interaction.followup.send("❌ Non hai abbastanza soldi nel wallet!", ephemeral=True)
 
-            # Transazione: togli al cittadino, dai alla fazione, chiudi fattura
+            # --- INIZIO TRANSAZIONE ---
+            # A. Togliamo i soldi al cittadino
             cur.execute("UPDATE users SET wallet = wallet - %s WHERE user_id = %s", (prezzo, str(interaction.user.id)))
+            
+            # B. REGISTRAZIONE NEL DEPOSITO (PUNTO CRITICO)
+            # Usiamo INSERT ... ON CONFLICT per assicurarci che la riga venga creata se non esiste
             cur.execute("""
-                INSERT INTO depositi (role_id, money) VALUES (%s, %s)
-                ON CONFLICT (role_id) DO UPDATE SET money = depositi.money + EXCLUDED.money
-            """, (nome_azienda, prezzo))
+                INSERT INTO depositi (role_id, money) 
+                VALUES (%s, %s) 
+                ON CONFLICT (role_id) 
+                DO UPDATE SET money = depositi.money + EXCLUDED.money
+            """, (str(nome_azienda), prezzo))
+            
+            # C. Aggiorniamo la fattura
             cur.execute("UPDATE fatture SET stato = 'Pagata' WHERE id_fattura = %s", (id_f,))
             
             conn.commit()
+            print(f"DEBUG: Pagamento riuscito. Accreditati {prezzo}$ a {nome_azienda}")
+            
             cur.close()
             conn.close()
 
             self.select.disabled = True
-            await interaction.edit_original_response(content=f"✅ Pagata fattura `{id_f}` di {prezzo}$ a {nome_azienda}!", view=self)
+            await interaction.edit_original_response(content=f"✅ Pagamento di **{prezzo}$** inviato al deposito di **{nome_azienda}**!", view=self)
 
         except Exception as e:
-            print(f"ERRORE PAGAMENTO: {e}")
-            await interaction.followup.send("❌ Errore durante il pagamento.", ephemeral=True)
+            print(f"ERRORE SQL PAGAMENTO: {e}")
+            await interaction.followup.send(f"❌ Errore interno: {e}", ephemeral=True)
 
-# 2. IL COMANDO (Sotto la classe)
 @bot.tree.command(name="pagafattura", description="Visualizza e paga le tue fatture pendenti")
 async def pagafattura(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
