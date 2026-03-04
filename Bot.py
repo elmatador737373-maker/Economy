@@ -73,11 +73,10 @@ def init_db():
     except Exception:
         conn.rollback() # Ignora se la colonna esiste già
 
-  def inizializza_tabella_fatture():
-    try: # <--- Ora è allineato correttamente (4 spazi)
+def inizializza_tabella_fatture():
+    try:
         conn = get_db_connection()
         cur = conn.cursor()
-        # ... tutto il resto del codice dentro il try deve avere 8 spazi ...
         cur.execute("""
             CREATE TABLE IF NOT EXISTS fatture (
                 id_fattura TEXT PRIMARY KEY,
@@ -92,9 +91,8 @@ def init_db():
         conn.commit()
         cur.close()
         conn.close()
-    except Exception as e: # <--- Anche except deve essere allineato al try
-        print(f"Errore: {e}")
-# Ricorda di chiamare questa funzione all'avvio del bot!
+    except Exception as e:
+        print(f"Errore inizializzazione: {e}")
 
 
     # Chiudiamo tutto correttamente
