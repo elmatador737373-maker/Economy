@@ -44,7 +44,6 @@ def init_db():
     cur.execute("CREATE TABLE IF NOT EXISTS inventory (user_id TEXT, item_name TEXT, quantity INTEGER, PRIMARY KEY (user_id, item_name))")
     cur.execute("CREATE TABLE IF NOT EXISTS depositi (role_id TEXT PRIMARY KEY, money INTEGER DEFAULT 0)")
     cur.execute("CREATE TABLE IF NOT EXISTS depositi_items (role_id TEXT, item_name TEXT, quantity INTEGER, PRIMARY KEY (role_id, item_name))")
-    cur.execute("CREATE TABLE IF NOT EXISTS turni (user_id TEXT PRIMARY KEY, inizio TIMESTAMP)")
     cur.execute("""
         CREATE TABLE IF NOT EXISTS fatture (
             id_fattura TEXT PRIMARY KEY,
@@ -406,34 +405,90 @@ async def mostra_documento(interaction: discord.Interaction, cittadino: discord.
         print(f"ERRORE MOSTRA DOCUMENTO: {e}")
         await interaction.followup.send("❌ Errore nel recupero del documento.")
     # --- COMANDO INIZIO TURNO (Ruolo Libero) ---
-@bot.tree.command(name="inizio_turno", description="Inizia il turno specificando il tuo ruolo")
-@app_commands.describe(ruolo="Scrivi il tuo ruolo (es. Polizia, Medico, Staff...)")
+# --- COMANDO INIZIO TURNO ---
+@bot.tree.command(name="inizio_turno", description="Inizia il tuo turno di lavoro")
+@app_commands.describe(ruolo="Specifica il tuo ruolo (es. Polizia, Medico, Meccanico)")
 async def inizio_turno(interaction: discord.Interaction, ruolo: str):
-    user_id = str(interaction.user.id)
-    conn = get_db_connection()
-    cur = conn.cursor()
+    await interaction.response.defer(ephemeral=True)
     
-    # Controllo se l'utente è già in turno
-    cur.execute("SELECT ruolo FROM turni WHERE user_id = %s", (user_id,))
-    if cur.fetchone():
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        # Salviamo l'inizio e il ruolo scelto
+        cur.execute("""
+            INSERT INTO turni (user_id, inizio, ruolo)
+            VALUES (%s, NOW(), %s)
+            ON CONFLICT (user_id) DO UPDATE SET 
+                inizio = NOW(),
+                ruolo = EXCLUDED.ruolo
+        """, (str(interaction.user.id), ruolo))
+        
+        conn.commit()
+        cur.close()
         conn.close()
-        return await interaction.response.send_message("⚠️ Sei già in servizio! Usa `/fine_turno` prima di iniziarne uno nuovo.", ephemeral=True)
+        
+        embed = discord.Embed(
+            title="<a:progresso:1334288992547635394> 𝐓𝐮𝐫𝐧𝐨 𝐀𝐯𝐯𝐢𝐚𝐭𝐨",
+            description=f"Hai iniziato il servizio come: **{ruolo}**\nOrario d'inizio registrato correttamente.",
+            color=discord.Color.blue()
+        )
+        await interaction.followup.send(embed=embed)
+        
+    except Exception as e:
+        print(f"Errore inizio_turno: {e}")
+        await interaction.followup.send("❌ Errore nella registrazione del turno.", ephemeral=True)
+
+# --- COMANDO FINE TURNO ---
+@bot.tree.command(name="fine_turno", description="Concludi il tuo turno di lavoro")
+async def fine_turno(interaction: discord.Interaction):
+    await interaction.response.defer()
     
-    ora_inizio = datetime.datetime.now()
-    
-    # Inserimento nel database con il ruolo scritto dall'utente
-    cur.execute("INSERT INTO turni (user_id, inizio, ruolo) VALUES (%s, %s, %s)", 
-                (user_id, ora_inizio, ruolo))
-    conn.commit()
-    cur.close(); conn.close()
-    
-    embed = discord.Embed(title="💼 Servizio Iniziato", color=discord.Color.green())
-    embed.add_field(name="Cittadino", value=interaction.user.mention, inline=True)
-    embed.add_field(name="Ruolo", value=f"**{ruolo}**", inline=True)
-    embed.add_field(name="Orario", value=ora_inizio.strftime("%H:%M:%S"), inline=False)
-    embed.set_footer(text="Buon lavoro in città!")
-    
-    await interaction.response.send_message(embed=embed)
+    try:
+        conn = get_db_connection()
+        from psycopg2.extras import RealDictCursor
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Recuperiamo ruolo e calcoliamo i minuti (già sincronizzati su Roma)
+        cur.execute("""
+            SELECT ruolo, EXTRACT(EPOCH FROM (NOW() - inizio)) / 60 AS minuti
+            FROM turni 
+            WHERE user_id = %s
+        """, (str(interaction.user.id),))
+        
+        res = cur.fetchone()
+        
+        if not res:
+            cur.close()
+            conn.close()
+            return await interaction.followup.send("❌ Non hai nessun turno attivo! Usa `/inizio_turno`.", ephemeral=True)
+
+        minuti_totali = int(res['minuti'])
+        ruolo_svolto = res['ruolo']
+        
+        # Cancelliamo il turno dal database
+        cur.execute("DELETE FROM turni WHERE user_id = %s", (str(interaction.user.id),))
+        
+        conn.commit()
+        cur.close()
+        conn.close()
+        
+        # Embed finale con il riepilogo
+        embed = discord.Embed(
+            title="<a:ciak:1334285912653434993> 𝐅𝐢𝐧𝐞 𝐒𝐞𝐫𝐯𝐢𝐳𝐢𝐨",
+            color=discord.Color.green(),
+            timestamp=datetime.datetime.now()
+        )
+        embed.add_field(name="👷 Lavoratore", value=interaction.user.mention, inline=True)
+        embed.add_field(name="💼 Ruolo", value=f"**{ruolo_svolto}**", inline=True)
+        embed.add_field(name="⏱️ Durata", value=f"**{minuti_totali} minuti**", inline=False)
+        
+        await interaction.followup.send(content=f"✅ {interaction.user.mention} ha terminato il turno di lavoro.", embed=embed)
+        
+    except Exception as e:
+        print(f"Errore fine_turno: {e}")
+        await interaction.followup.send("❌ Errore nel calcolo del tempo del turno.", ephemeral=True)
+
 # --- COMANDO PER ELIMINARE IL DOCUMENTO (SOLO ADMIN) ---
 @bot.tree.command(name="elimina_documento", description="Elimina il documento di un cittadino (Solo Admin)")
 @app_commands.default_permissions(administrator=True) # Rende il comando visibile solo agli admin
@@ -756,49 +811,7 @@ async def ricerca(interaction: discord.Interaction, cittadino: discord.Member = 
 
 
 
-# --- COMANDO FINE TURNO ---
-@bot.tree.command(name="fine_turno", description="Termina il turno e calcola le ore lavorate")
-async def fine_turno(interaction: discord.Interaction):
-    user_id = str(interaction.user.id)
-    conn = get_db_connection()
-    cur = conn.cursor(cursor_factory=RealDictCursor)
-    
-    # Recupero dati del turno attivo
-    cur.execute("SELECT inizio, ruolo FROM turni WHERE user_id = %s", (user_id,))
-    row = cur.fetchone()
-    
-    if not row:
-        conn.close()
-        return await interaction.response.send_message("❌ Non risulti essere in servizio al momento!", ephemeral=True)
-    
-    ora_fine = datetime.datetime.now()
-    ora_inizio = row['inizio']
-    ruolo_svolto = row['ruolo']
-    
-    # Calcolo durata
-    durata = ora_fine - ora_inizio
-    secondi_totali = durata.total_seconds()
-    ore_decimali = secondi_totali / 3600
-    
-    # Formattazione HH:MM:SS
-    ore, resto = divmod(int(secondi_totali), 3600)
-    minuti, secondi = divmod(resto, 60)
-    tempo_trascorso = f"{ore}h {minuti}m {secondi}s"
 
-    # Aggiornamento database (rimozione turno e aggiunta ore totali)
-    cur.execute("DELETE FROM turni WHERE user_id = %s", (user_id,))
-    cur.execute("UPDATE users SET ore_lavorate = ore_lavorate + %s WHERE user_id = %s", (ore_decimali, user_id))
-    
-    conn.commit()
-    cur.close(); conn.close()
-    
-    embed = discord.Embed(title="🏁 Fine Servizio", color=discord.Color.red())
-    embed.add_field(name="Ruolo Svolto", value=f"**{ruolo_svolto}**", inline=True)
-    embed.add_field(name="Tempo in Servizio", value=f"⏳ {tempo_trascorso}", inline=True)
-    embed.add_field(name="Conto Ore Aggiornato", value=f"📈 +{ore_decimali:.2f} ore", inline=False)
-    embed.set_footer(text=f"Grazie per il tuo lavoro, {interaction.user.display_name}!")
-    
-    await interaction.response.send_message(embed=embed)
 # ================= COMANDI INVENTARIO =================
 
 @bot.tree.command(name="inventario", description="Mostra i tuoi oggetti")
