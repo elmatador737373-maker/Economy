@@ -33,7 +33,7 @@ def init_db():
     conn = get_db_connection()
     if not conn: return
     cur = conn.cursor()
-    cur.execute("CREATE TABLE IF NOT EXISTS users (user_id TEXT PRIMARY KEY, wallet INTEGER DEFAULT 500, bank INTEGER DEFAULT 0)")
+    cur.execute("CREATE TABLE IF NOT EXISTS users (user_id TEXT PRIMARY KEY, wallet INTEGER DEFAULT 3500, bank INTEGER DEFAULT 0)")
     cur.execute("CREATE TABLE IF NOT EXISTS items (name TEXT PRIMARY KEY, description TEXT, price INTEGER, role_required TEXT)")
     cur.execute("CREATE TABLE IF NOT EXISTS inventory (user_id TEXT, item_name TEXT, quantity INTEGER, PRIMARY KEY (user_id, item_name))")
     cur.execute("CREATE TABLE IF NOT EXISTS depositi (role_id TEXT PRIMARY KEY, money INTEGER DEFAULT 0)")
@@ -413,38 +413,10 @@ class BlackjackView(discord.ui.View):
     async def update_msg(self, inter):
         emb = discord.Embed(title="🃏 Blackjack", color=discord.Color.gold())
         emb.add_field(name="La tua mano 👤", value=f"{self.mano_p}\n**Totale: {self.get_tot(self.mano_p)}**", inline=True)
-        emb.add_field(name="Banco 🏛️", value=f"[{self.mano_b[0]}, ?]", inline=True)
-        await inter.response.edit_message(embed=emb, view=self)
-
-    async def concludi(self, inter, esito):
-        self.stop()
-        tot_p = self.get_tot(self.mano_p)
-        tot_b = self.get_tot(self.mano_b)
-        conn = get_db_connection(); cur = conn.cursor()
-        
-        if esito == "vinto":
-            cur.execute("UPDATE users SET wallet = wallet + %s WHERE user_id = %s", (self.somma, str(self.interaction.user.id)))
-            txt = f"🏆 Hai vinto **{self.somma}$**!"
-            colore = discord.Color.green()
-        elif esito == "pareggio":
-            txt = "🤝 Pareggio! Soldi restituiti."
-            colore = discord.Color.light_gray()
-        else:
-            cur.execute("UPDATE users SET wallet = wallet - %s WHERE user_id = %s", (self.somma, str(self.interaction.user.id)))
-            txt = f"💀 Hai perso **{self.somma}$**."
-            colore = discord.Color.red()
-            
-        conn.commit(); cur.close(); conn.close()
-        emb = discord.Embed(title="🃏 Risultato Finale", color=colore)
-        emb.add_field(name="Tu", value=f"{tot_p}", inline=True)
-        emb.add_field(name="Banco", value=f"{tot_b}", inline=True)
-        emb.add_field(name="Esito", value=txt, inline=False)
-        await inter.response.edit_message(embed=emb, view=None)
-
-# --- COMANDO SLASH ---
+# --- CLASSE VIEW PER I BOTTONI (Corretta e Reattiva) ---
 class BlackjackView(discord.ui.View):
     def __init__(self, interaction, somma, mano_p, mano_b):
-        super().__init__(timeout=60)
+        super().__init__(timeout=60) # Il gioco scade dopo 60 secondi di inattività
         self.interaction = interaction
         self.somma = somma
         self.mano_p = mano_p
@@ -460,8 +432,12 @@ class BlackjackView(discord.ui.View):
 
     @discord.ui.button(label="Carta 🃏", style=discord.ButtonStyle.green)
     async def carta(self, inter: discord.Interaction, button: discord.ui.Button):
-        if inter.user.id != self.interaction.user.id: return
+        # Controllo che solo chi ha iniziato la partita possa giocare
+        if inter.user.id != self.interaction.user.id:
+            return await inter.response.send_message("❌ Questa non è la tua partita!", ephemeral=True)
+        
         self.mano_p.append(random.randint(2, 11))
+        
         if self.get_tot(self.mano_p) > 21:
             await self.concludi(inter, "sballato")
         else:
@@ -469,59 +445,98 @@ class BlackjackView(discord.ui.View):
 
     @discord.ui.button(label="Stai ✋", style=discord.ButtonStyle.red)
     async def stai(self, inter: discord.Interaction, button: discord.ui.Button):
-        if inter.user.id != self.interaction.user.id: return
+        if inter.user.id != self.interaction.user.id:
+            return await inter.response.send_message("❌ Questa non è la tua partita!", ephemeral=True)
+        
+        # Logica del Banco
         while self.get_tot(self.mano_b) < 17:
             self.mano_b.append(random.randint(2, 11))
         
         tot_p = self.get_tot(self.mano_p)
         tot_b = self.get_tot(self.mano_b)
         
-        if tot_b > 21 or tot_p > tot_b: esito = "vinto"
-        elif tot_p < tot_b: esito = "perso"
-        else: esito = "pareggio"
+        if tot_b > 21 or tot_p > tot_b:
+            esito = "vinto"
+        elif tot_p < tot_b:
+            esito = "perso"
+        else:
+            esito = "pareggio"
+            
         await self.concludi(inter, esito)
 
     async def update_msg(self, inter):
-        emb = discord.Embed(title="🃏 Blackjack", color=discord.Color.gold())
-        emb.add_field(name="La tua mano 👤", value=f"{self.mano_p}\n**Totale: {self.get_tot(self.mano_p)}**")
-        emb.add_field(name="Banco 🏛️", value=f"[{self.mano_b[0]}, ?]")
+        # Usiamo edit_message per aggiornare l'interfaccia senza inviare nuovi messaggi
+        emb = discord.Embed(title="🃏 Blackjack - In Corso", color=discord.Color.gold())
+        emb.add_field(name="La tua mano 👤", value=f"{self.mano_p}\n**Totale: {self.get_tot(self.mano_p)}**", inline=True)
+        emb.add_field(name="Banco 🏛️", value=f"[{self.mano_b[0]}, ?]\n**Totale: ?**", inline=True)
+        emb.set_footer(text=f"Puntata: {self.somma}$")
         await inter.response.edit_message(embed=emb, view=self)
 
     async def concludi(self, inter, esito):
-        self.stop()
-        conn = get_db_connection(); cur = conn.cursor()
+        self.stop() # Disattiva i bottoni immediatamente
+        tot_p = self.get_tot(self.mano_p)
+        tot_b = self.get_tot(self.mano_b)
         
-        if esito == "vinto":
-            # Vince: riceve la somma scommessa come premio extra (Totale = Scommessa x 2)
-            cur.execute("UPDATE users SET wallet = wallet + %s WHERE user_id = %s", (self.somma, str(self.interaction.user.id)))
-            txt = f"🏆 Hai vinto! Ricevi un premio di **{self.somma}$**."
-            colore = discord.Color.green()
-        elif esito == "pareggio":
-            # Pareggio: saldo invariato
-            txt = "🤝 Pareggio! Non perdi nulla."
-            colore = discord.Color.light_gray()
-        else:
-            # Perde o Sballa: sottrazione della somma scommessa
-            cur.execute("UPDATE users SET wallet = wallet - %s WHERE user_id = %s", (self.somma, str(self.interaction.user.id)))
-            txt = f"💀 Hai perso **{self.somma}$**."
-            colore = discord.Color.red()
+        # Connessione al database per pagare/sottrarre
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        try:
+            if esito == "vinto":
+                # Paga il premio (raddoppio)
+                cur.execute("UPDATE users SET wallet = wallet + %s WHERE user_id = %s", (self.somma, str(self.interaction.user.id)))
+                txt = f"🏆 **Hai vinto!** Ti sono stati accreditati **{self.somma}$**."
+                colore = discord.Color.green()
+            elif esito == "pareggio":
+                txt = "🤝 **Pareggio!** Non hai perso nulla."
+                colore = discord.Color.light_gray()
+            else:
+                # Sottrae la scommessa
+                cur.execute("UPDATE users SET wallet = wallet - %s WHERE user_id = %s", (self.somma, str(self.interaction.user.id)))
+                txt = f"💀 **Hai perso {self.somma}$**. Il banco vince."
+                colore = discord.Color.red()
             
-        conn.commit(); cur.close(); conn.close()
-        emb = discord.Embed(title="🃏 Risultato Blackjack", color=colore)
-        emb.add_field(name="Tu 👤", value=f"Totale: {self.get_tot(self.mano_p)}", inline=True)
-        emb.add_field(name="Banco 🏛️", value=f"Totale: {self.get_tot(self.mano_b)}", inline=True)
+            conn.commit()
+        except Exception as e:
+            print(f"Errore DB Blackjack: {e}")
+        finally:
+            cur.close()
+            conn.close()
+
+        emb = discord.Embed(title="🃏 Blackjack - Risultato Finale", color=colore)
+        emb.add_field(name="Tu 👤", value=f"{self.mano_p} (Tot: {tot_p})", inline=True)
+        emb.add_field(name="Banco 🏛️", value=f"{self.mano_b} (Tot: {tot_b})", inline=True)
         emb.add_field(name="Esito", value=txt, inline=False)
+        
         await inter.response.edit_message(embed=emb, view=None)
 
-@bot.tree.command(name="blackjack", description="Sfida il banco a Blackjack")
+# --- COMANDO SLASH ---
+@bot.tree.command(name="blackjack", description="Gioca a Blackjack contro il banco")
 async def blackjack(interaction: discord.Interaction, somma: int):
+    # Recupero dati per controllo fondi
     u = get_user_data(interaction.user.id)
-    if somma <= 0 or u['wallet'] < somma:
-        return await interaction.response.send_message("❌ Fondi insufficienti!", ephemeral=True)
     
-    view = BlackjackView(interaction, somma, [random.randint(2, 11), random.randint(2, 11)], [random.randint(2, 11)])
+    if somma <= 0:
+        return await interaction.response.send_message("❌ Inserisci una somma valida!", ephemeral=True)
+    if u['wallet'] < somma:
+        return await interaction.response.send_message(f"❌ Non hai abbastanza contanti! Hai solo {u['wallet']}$.", ephemeral=True)
+
+    # Carte iniziali
+    mano_p = [random.randint(2, 11), random.randint(2, 11)]
+    mano_b = [random.randint(2, 11)]
+    
+    view = BlackjackView(interaction, somma, mano_p, mano_b)
+    
     emb = discord.Embed(title="🃏 Blackjack", color=discord.Color.gold())
-    emb.add_
+    emb.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
+    emb.add_field(name="La tua mano 👤", value=f"{mano_p}\n**Totale: {view.get_tot(mano_p)}**", inline=True)
+    emb.add_field(name="Banco 🏛️", value=f"[{mano_b[0]}, ?]\n**Totale: ?**", inline=True)
+    emb.set_footer(text=f"Puntata: {somma}$")
+
+    await interaction.response.send_message(embed=emb, view=view)
+
+
+
 @bot.tree.command(name="roulette", description="Punta i tuoi soldi alla roulette (Attesa 10s)")
 @app_commands.choices(puntata=[
     app_commands.Choice(name="🔴 Rosso (x2)", value="rosso"),
