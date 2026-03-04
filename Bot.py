@@ -450,6 +450,59 @@ async def pagamulta(interaction: discord.Interaction):
     except Exception as e:
         print(f"Errore pagamulta: {e}")
         await interaction.followup.send("❌ Errore nel pagamento.")
+@bot.tree.command(name="arresto", description="Registra un arresto nel database e annuncialo in chat")
+@app_commands.describe(
+    utente="Il cittadino da arrestare",
+    tempo_minuti="Durata della pena in minuti",
+    motivo="Il reato commesso"
+)
+async def arresto(interaction: discord.Interaction, utente: discord.Member, tempo_minuti: int, motivo: str):
+    # Controllo se l'utente è un poliziotto
+    if not any(role.id == 1414902965399195700 for role in interaction.user.roles):
+        return await interaction.response.send_message("❌ Non hai i permessi per effettuare un arresto.", ephemeral=True)
+
+    await interaction.response.defer()
+    
+    data_attuale = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        # 1. Salvataggio nel database per la futura /ricerca
+        cur.execute("""
+            INSERT INTO arresti (user_id, agente_id, motivo, tempo, data)
+            VALUES (%s, %s, %s, %s, %s)
+        """, (str(utente.id), str(interaction.user.id), motivo, tempo_minuti, data_attuale))
+        
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        # 2. Creazione dell'Embed per il Roleplay
+        embed = discord.Embed(
+            title="⚖️ VERBALE DI ARRESTO",
+            color=discord.Color.dark_blue(),
+            timestamp=datetime.datetime.now()
+        )
+        embed.set_thumbnail(url="https://i.imgur.com/8f6uT8R.png") # Opzionale: un'icona della polizia
+        
+        embed.add_field(name="👤 Detenuto", value=utente.mention, inline=True)
+        embed.add_field(name="⏳ Pena", value=f"{tempo_minuti} minuti", inline=True)
+        embed.add_field(name="👮 Agente", value=interaction.user.mention, inline=False)
+        embed.add_field(name="📝 Motivo", value=motivo, inline=False)
+        
+        embed.set_footer(text=f"ID Caso registrato nel sistema centrale")
+
+        # Invio del messaggio pubblico
+        await interaction.followup.send(
+            content=f"🚨 {utente.mention} è stato preso in custodia.",
+            embed=embed
+        )
+
+    except Exception as e:
+        print(f"ERRORE ARRESTO: {e}")
+        await interaction.followup.send("❌ Errore durante la registrazione dell'arresto su Supabase.", ephemeral=True)
 
 # --- COMANDI FISICI: AMMANETTA, SMANETTA, ARRESTO ---
 @bot.tree.command(name="ammanetta", description="Metti le manette a un cittadino")
