@@ -442,22 +442,86 @@ class BlackjackView(discord.ui.View):
         await inter.response.edit_message(embed=emb, view=None)
 
 # --- COMANDO SLASH ---
+class BlackjackView(discord.ui.View):
+    def __init__(self, interaction, somma, mano_p, mano_b):
+        super().__init__(timeout=60)
+        self.interaction = interaction
+        self.somma = somma
+        self.mano_p = mano_p
+        self.mano_b = mano_b
+
+    def get_tot(self, mano):
+        tot = sum(mano)
+        as_count = mano.count(11)
+        while tot > 21 and as_count > 0:
+            tot -= 10
+            as_count -= 1
+        return tot
+
+    @discord.ui.button(label="Carta 🃏", style=discord.ButtonStyle.green)
+    async def carta(self, inter: discord.Interaction, button: discord.ui.Button):
+        if inter.user.id != self.interaction.user.id: return
+        self.mano_p.append(random.randint(2, 11))
+        if self.get_tot(self.mano_p) > 21:
+            await self.concludi(inter, "sballato")
+        else:
+            await self.update_msg(inter)
+
+    @discord.ui.button(label="Stai ✋", style=discord.ButtonStyle.red)
+    async def stai(self, inter: discord.Interaction, button: discord.ui.Button):
+        if inter.user.id != self.interaction.user.id: return
+        while self.get_tot(self.mano_b) < 17:
+            self.mano_b.append(random.randint(2, 11))
+        
+        tot_p = self.get_tot(self.mano_p)
+        tot_b = self.get_tot(self.mano_b)
+        
+        if tot_b > 21 or tot_p > tot_b: esito = "vinto"
+        elif tot_p < tot_b: esito = "perso"
+        else: esito = "pareggio"
+        await self.concludi(inter, esito)
+
+    async def update_msg(self, inter):
+        emb = discord.Embed(title="🃏 Blackjack", color=discord.Color.gold())
+        emb.add_field(name="La tua mano 👤", value=f"{self.mano_p}\n**Totale: {self.get_tot(self.mano_p)}**")
+        emb.add_field(name="Banco 🏛️", value=f"[{self.mano_b[0]}, ?]")
+        await inter.response.edit_message(embed=emb, view=self)
+
+    async def concludi(self, inter, esito):
+        self.stop()
+        conn = get_db_connection(); cur = conn.cursor()
+        
+        if esito == "vinto":
+            # Vince: riceve la somma scommessa come premio extra (Totale = Scommessa x 2)
+            cur.execute("UPDATE users SET wallet = wallet + %s WHERE user_id = %s", (self.somma, str(self.interaction.user.id)))
+            txt = f"🏆 Hai vinto! Ricevi un premio di **{self.somma}$**."
+            colore = discord.Color.green()
+        elif esito == "pareggio":
+            # Pareggio: saldo invariato
+            txt = "🤝 Pareggio! Non perdi nulla."
+            colore = discord.Color.light_gray()
+        else:
+            # Perde o Sballa: sottrazione della somma scommessa
+            cur.execute("UPDATE users SET wallet = wallet - %s WHERE user_id = %s", (self.somma, str(self.interaction.user.id)))
+            txt = f"💀 Hai perso **{self.somma}$**."
+            colore = discord.Color.red()
+            
+        conn.commit(); cur.close(); conn.close()
+        emb = discord.Embed(title="🃏 Risultato Blackjack", color=colore)
+        emb.add_field(name="Tu 👤", value=f"Totale: {self.get_tot(self.mano_p)}", inline=True)
+        emb.add_field(name="Banco 🏛️", value=f"Totale: {self.get_tot(self.mano_b)}", inline=True)
+        emb.add_field(name="Esito", value=txt, inline=False)
+        await inter.response.edit_message(embed=emb, view=None)
+
 @bot.tree.command(name="blackjack", description="Sfida il banco a Blackjack")
 async def blackjack(interaction: discord.Interaction, somma: int):
     u = get_user_data(interaction.user.id)
     if somma <= 0 or u['wallet'] < somma:
-        return await interaction.response.send_message("❌ Fondi insufficienti o somma non valida!", ephemeral=True)
-
-    mano_p = [random.randint(2, 11), random.randint(2, 11)]
-    mano_b = [random.randint(2, 11)]
-    view = BlackjackView(interaction, somma, mano_p, mano_b)
+        return await interaction.response.send_message("❌ Fondi insufficienti!", ephemeral=True)
     
+    view = BlackjackView(interaction, somma, [random.randint(2, 11), random.randint(2, 11)], [random.randint(2, 11)])
     emb = discord.Embed(title="🃏 Blackjack", color=discord.Color.gold())
-    emb.add_field(name="La tua mano 👤", value=f"{mano_p}\n**Totale: {view.get_tot(mano_p)}**", inline=True)
-    emb.add_field(name="Banco 🏛️", value=f"[{mano_b[0]}, ?]", inline=True)
-    
-    await interaction.response.send_message(embed=emb, view=view)
-
+    emb.add_
 @bot.tree.command(name="roulette", description="Punta i tuoi soldi alla roulette (Attesa 10s)")
 @app_commands.choices(puntata=[
     app_commands.Choice(name="🔴 Rosso (x2)", value="rosso"),
@@ -466,16 +530,17 @@ async def blackjack(interaction: discord.Interaction, somma: int):
 ])
 async def roulette(interaction: discord.Interaction, puntata: str, somma: int, numero_scelto: int = None):
     u = get_user_data(interaction.user.id)
-    if somma > u['wallet'] or somma <= 0:
-        return await interaction.response.send_message("❌ Non hai abbastanza contanti nel portafoglio!", ephemeral=True)
+    if somma <= 0:
+        return await interaction.response.send_message("❌ Inserisci una cifra valida!", ephemeral=True)
+    if u['wallet'] < somma:
+        return await interaction.response.send_message(f"❌ Non hai abbastanza contanti! (Hai {u['wallet']}$)", ephemeral=True)
 
     if puntata == "numero" and (numero_scelto is None or numero_scelto < 0 or numero_scelto > 36):
-        return await interaction.response.send_message("❌ Se punti su un numero, devi sceglierne uno tra 0 e 36!", ephemeral=True)
+        return await interaction.response.send_message("❌ Se punti su un numero, scegline uno tra 0 e 36!", ephemeral=True)
 
     await interaction.response.send_message(f"🎰 **{interaction.user.display_name}** ha puntato **{somma}$** su **{puntata.upper()}**...\n*La pallina sta girando...* 🎡")
     
-    # Attesa realistica di 10 secondi
-    await asyncio.sleep(10)
+    await asyncio.sleep(10) # Attesa per creare suspense
     
     risultato = random.randint(0, 36)
     rossi = [1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36]
@@ -492,18 +557,21 @@ async def roulette(interaction: discord.Interaction, puntata: str, somma: int, n
 
     conn = get_db_connection()
     cur = conn.cursor()
+    
     if vinto:
+        # Guadagno Netto: se punti 100 e vinci x2, ricevi +100 (totale 200)
         vincita_netta = somma * (moltiplicatore - 1)
         cur.execute("UPDATE users SET wallet = wallet + %s WHERE user_id = %s", (vincita_netta, str(interaction.user.id)))
-        testo = f"✅ RISULTATO: **{risultato} {emoji}**. Hai vinto **{somma * moltiplicatore}$**! 🎉"
+        testo = f"✅ RISULTATO: **{risultato} {emoji}**. Hai vinto! Ti sono stati accreditati **{somma * moltiplicatore}$** 🎉"
     else:
+        # Perdita: ti vengono sottratti i soldi puntati
         cur.execute("UPDATE users SET wallet = wallet - %s WHERE user_id = %s", (somma, str(interaction.user.id)))
         testo = f"💀 RISULTATO: **{risultato} {emoji}**. Hai perso **{somma}$**. La casa vince! 🏛️"
     
     conn.commit()
-    cur.close()
-    conn.close()
+    cur.close(); conn.close()
     await interaction.channel.send(f"🎰 **{interaction.user.mention}**\n{testo}")
+
 
 # ================= COMANDI STAFF =================
 
