@@ -338,6 +338,214 @@ async def inizio_turno(interaction: discord.Interaction, ruolo: str):
     embed.set_footer(text="Buon lavoro in città!")
     
     await interaction.response.send_message(embed=embed)
+# --- COMANDO PER ELIMINARE IL DOCUMENTO (SOLO ADMIN) ---
+@bot.tree.command(name="elimina_documento", description="Elimina il documento di un cittadino (Solo Admin)")
+@app_commands.default_permissions(administrator=True) # Rende il comando visibile solo agli admin
+@app_commands.describe(cittadino="Il cittadino a cui vuoi cancellare il documento")
+async def elimina_documento(interaction: discord.Interaction, cittadino: discord.Member):
+    await interaction.response.defer(ephemeral=True)
+    
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        # Verifichiamo prima se il documento esiste
+        cur.execute("SELECT nome, cognome FROM documenti WHERE user_id = %s", (str(cittadino.id),))
+        result = cur.fetchone()
+        
+        if not result:
+            cur.close()
+            conn.close()
+            return await interaction.followup.send(f"❌ Nessun documento trovato per {cittadino.display_name}.", ephemeral=True)
+        
+        # Eliminazione fisica dalla tabella
+        cur.execute("DELETE FROM documenti WHERE user_id = %s", (str(cittadino.id),))
+        
+        conn.commit()
+        cur.close()
+        conn.close()
+        
+        await interaction.followup.send(f"✅ Documento di **{result[0]} {result[1]}** ({cittadino.display_name}) eliminato permanentemente dal database.", ephemeral=True)
+        
+    except Exception as e:
+        print(f"ERRORE ELIMINAZIONE DOCUMENTO: {e}")
+        await interaction.followup.send("❌ Errore tecnico durante l'eliminazione.", ephemeral=True)
+POLIZIA_ROLE_ID = 1414902965399195700
+
+# --- FUNZIONE DI CONTROLLO POLIZIA ---
+def is_polizia(interaction: discord.Interaction):
+    return any(role.id == POLIZIA_ROLE_ID for role in interaction.user.roles)
+
+# --- COMANDO /MULTA ---
+@bot.tree.command(name="multa", description="Emetti una sanzione a un cittadino")
+async def multa(interaction: discord.Interaction, utente: discord.Member, ammontare: int, motivo: str, dipartimento: discord.Role):
+    if not is_polizia(interaction):
+        return await interaction.response.send_message("❌ Solo i membri della Polizia possono multare!", ephemeral=True)
+    
+    await interaction.response.defer()
+    id_m = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
+    data_attuale = datetime.datetime.now().strftime("%d/%m/%Y")
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO multe (id_multa, user_id, ammontare, id_azienda, motivo, data)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """, (id_m, str(utente.id), ammontare, str(dipartimento.id), motivo, data_attuale))
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        embed = discord.Embed(title="🚨 Multa Emessa", color=discord.Color.red())
+        embed.add_field(name="Cittadino", value=utente.mention, inline=True)
+        embed.add_field(name="Importo", value=f"{ammontare}$", inline=True)
+        embed.add_field(name="Dipartimento", value=dipartimento.name, inline=True)
+        embed.add_field(name="Motivo", value=motivo, inline=False)
+        embed.set_footer(text=f"ID Multa: {id_m} | Usa /pagamulta")
+        
+        await interaction.followup.send(content=f"✅ Multa registrata per {utente.mention}", embed=embed)
+    except Exception as e:
+        print(f"Errore multa: {e}")
+        await interaction.followup.send("❌ Errore nel database.")
+
+# --- COMANDO /PAGAMULTA ---
+@bot.tree.command(name="pagamulta", description="Paga le tue sanzioni pendenti")
+async def pagamulta(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    try:
+        conn = get_db_connection()
+        from psycopg2.extras import RealDictCursor
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Cerchiamo l'ultima multa pendente dell'utente
+        cur.execute("SELECT * FROM multe WHERE user_id = %s LIMIT 1", (str(interaction.user.id),))
+        multa = cur.fetchone()
+        
+        if not multa:
+            return await interaction.followup.send("✅ Non hai multe da pagare.")
+
+        # Controllo se ha i soldi nel wallet (tabella users)
+        cur.execute("SELECT wallet FROM users WHERE user_id = %s", (str(interaction.user.id),))
+        user_wallet = cur.fetchone()
+
+        if not user_wallet or user_wallet['wallet'] < multa['ammontare']:
+            return await interaction.followup.send(f"❌ Non hai abbastanza contanti! Ti servono {multa['ammontare']}$.")
+
+        # TRANSAZIONE: Scala wallet -> Aggiungi a depositi fazione -> Elimina multa
+        cur.execute("UPDATE users SET wallet = wallet - %s WHERE user_id = %s", (multa['ammontare'], str(interaction.user.id)))
+        
+        cur.execute("""
+            INSERT INTO depositi (role_id, money) VALUES (%s, %s)
+            ON CONFLICT (role_id) DO UPDATE SET money = depositi.money + EXCLUDED.money
+        """, (multa['id_azienda'], multa['ammontare']))
+        
+        cur.execute("DELETE FROM multe WHERE id_multa = %s", (multa['id_multa'],))
+        
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        await interaction.followup.send(f"✅ Hai pagato la multa di {multa['ammontare']}$. I soldi sono andati al dipartimento.")
+    except Exception as e:
+        print(f"Errore pagamulta: {e}")
+        await interaction.followup.send("❌ Errore nel pagamento.")
+
+# --- COMANDI FISICI: AMMANETTA, SMANETTA, ARRESTO ---
+@bot.tree.command(name="ammanetta", description="Metti le manette a un cittadino")
+async def ammanetta(interaction: discord.Interaction, utente: discord.Member):
+    if not is_polizia(interaction):
+        return await interaction.response.send_message("❌ Solo la Polizia può usare le manette.", ephemeral=True)
+    await interaction.response.send_message(f"🔗 **{interaction.user.display_name}** ha ammanettato **{utente.display_name}**.")
+
+@bot.tree.command(name="smanetta", description="Togli le manette a un cittadino")
+async def smanetta(interaction: discord.Interaction, utente: discord.Member):
+    if not is_polizia(interaction):
+        return await interaction.response.send_message("❌ Non hai le chiavi delle manette.", ephemeral=True)
+    await interaction.response.send_message(f"🔓 **{interaction.user.display_name}** ha rimosso le manette a **{utente.display_name}**.")@bot.tree.command(name="arresto", description="Porta un cittadino in cella e registra l'arresto")
+async def arresto(interaction: discord.Interaction, utente: discord.Member, tempo_minuti: int, motivo: str):
+    if not is_polizia(interaction):
+        return await interaction.response.send_message("❌ Non sei un agente.", ephemeral=True)
+    
+    await interaction.response.defer()
+    data_attuale = datetime.datetime.now().strftime("%d/%m/%Y")
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO arresti (user_id, agente_id, motivo, tempo, data)
+            VALUES (%s, %s, %s, %s, %s)
+        """, (str(utente.id), str(interaction.user.id), motivo, tempo_minuti, data_attuale))
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        embed = discord.Embed(title="⚖️ Verbale di Arresto", color=discord.Color.dark_blue())
+        embed.add_field(name="Detenuto", value=utente.mention, inline=True)
+        embed.add_field(name="Tempo", value=f"{tempo_minuti} minuti", inline=True)
+        embed.add_field(name="Agente", value=interaction.user.mention, inline=False)
+        embed.add_field(name="Motivo", value=motivo, inline=False)
+        
+        await interaction.followup.send(embed=embed)
+    except Exception as e:
+        print(f"Errore arresto: {e}")
+        await interaction.followup.send("❌ Errore nel salvataggio dell'arresto.")
+@bot.tree.command(name="ricerca_cittadino", description="Visualizza la fedina penale di un cittadino")
+async def ricerca(interaction: discord.Interaction, cittadino: discord.Member):
+    if not is_polizia(interaction):
+        return await interaction.response.send_message("❌ Accesso negato al database centrale della Polizia.", ephemeral=True)
+    
+    await interaction.response.defer()
+
+    try:
+        conn = get_db_connection()
+        from psycopg2.extras import RealDictCursor
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # 1. Recupera le Multe Pendenti
+        cur.execute("SELECT * FROM multe WHERE user_id = %s", (str(cittadino.id),))
+        multe_pendenti = cur.fetchall()
+        
+        # 2. Recupera lo Storico Arresti
+        cur.execute("SELECT * FROM arresti WHERE user_id = %s ORDER BY id_arresto DESC", (str(cittadino.id),))
+        storico_arresti = cur.fetchall()
+        
+        cur.close()
+        conn.close()
+
+        embed = discord.Embed(
+            title=f"🔍 Fascicolo Penale: {cittadino.display_name}",
+            color=discord.Color.blue()
+        )
+        embed.set_thumbnail(url=cittadino.display_avatar.url)
+
+        # Sezione Multe
+        if multe_pendenti:
+            lista_multe = ""
+            for m in multe_pendenti:
+                lista_multe += f"• **{m['ammontare']}$** - *{m['motivo']}* ({m['data']})\n"
+            embed.add_field(name="⚠️ Multe in Sospeso", value=lista_multe, inline=False)
+        else:
+            embed.add_field(name="⚠️ Multe in Sospeso", value="Nessuna multa pendente.", inline=False)
+
+        # Sezione Arresti
+        if storico_arresti:
+            lista_arresti = ""
+            # Mostriamo solo gli ultimi 5 arresti per non rendere l'embed troppo lungo
+            for a in storico_arresti[:5]:
+                lista_arresti += f"• {a['data']}: {a['motivo']} ({a['tempo']} min)\n"
+            embed.add_field(name="🚔 Cronologia Arresti (Ultimi 5)", value=lista_arresti, inline=False)
+        else:
+            embed.add_field(name="🚔 Cronologia Arresti", value="Cittadino incensurato.", inline=False)
+
+        embed.set_footer(text=f"Database Centrale Polizia | ID: {cittadino.id}")
+        
+        await interaction.followup.send(embed=embed)
+
+    except Exception as e:
+        print(f"Errore ricerca: {e}")
+        await interaction.followup.send("❌ Errore durante l'interrogazione del database.")
 
 # --- COMANDO FINE TURNO ---
 @bot.tree.command(name="fine_turno", description="Termina il turno e calcola le ore lavorate")
