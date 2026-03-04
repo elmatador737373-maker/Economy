@@ -376,14 +376,19 @@ class PagaFatturaView(discord.ui.View):
             await interaction.followup.send("❌ Errore durante il salvataggio del pagamento.", ephemeral=True)
 @bot.tree.command(name="fattura", description="Emetti una fattura")
 async def fattura(interaction: discord.Interaction, cliente: discord.Member, azienda: discord.Role, descrizione: str, prezzo: int):
-    # 1. Diciamo subito a Discord di aspettare (estende a 15 minuti)
-    await interaction.response.defer() 
-    
+    # Prova a spostare il defer() come PRIMISSIMA istruzione
+    try:
+        await interaction.response.defer(thinking=True) 
+    except Exception as e:
+        print(f"Errore durante il defer: {e}")
+        return
+
+    # Generazione ID e Data
     id_f = ''.join(random.choices(string.ascii_letters + string.digits, k=10))
     data_attuale = datetime.datetime.now().strftime("%d/%m/%Y")
     
     try:
-        # 2. Operazione sul Database (Supabase)
+        # Esegui la connessione e la query
         conn = get_db_connection()
         cur = conn.cursor()
         
@@ -396,20 +401,19 @@ async def fattura(interaction: discord.Interaction, cliente: discord.Member, azi
         cur.close()
         conn.close()
 
-        # 3. CREAZIONE EMBED
-        embed = discord.Embed(title="📑 Nuova Fattura Emessa", color=discord.Color.blue())
-        embed.add_field(name="👤 Cliente", value=cliente.mention, inline=True)
-        embed.add_field(name="🏛️ Azienda", value=azienda.mention, inline=True)
-        embed.add_field(name="💰 Importo", value=f"**{prezzo}$**", inline=True)
+        # Usiamo un embed per confermare
+        embed = discord.Embed(title="📑 Fattura Inviata", color=discord.Color.green())
+        embed.add_field(name="Utente", value=cliente.mention)
+        embed.add_field(name="Importo", value=f"{prezzo}$")
         embed.set_footer(text=f"ID: {id_f}")
-        
-        # 4. RISPOSTA (Usiamo followup perché abbiamo fatto il defer)
-        await interaction.followup.send(content=f"✅ Fattura registrata con successo!", embed=embed)
+
+        # USA SEMPRE followup dopo il defer
+        await interaction.followup.send(embed=embed)
 
     except Exception as e:
-        print(f"ERRORE FATTURA: {e}")
-        # In caso di errore, usiamo followup.send
-        await interaction.followup.send("❌ Errore durante il salvataggio su Supabase. Riprova.")
+        print(f"Errore database: {e}")
+        # Se il defer è andato a buon fine, dobbiamo usare followup anche per l'errore
+        await interaction.followup.send("❌ Errore durante il salvataggio. Riprova tra poco.", ephemeral=True)
 
 @bot.tree.command(name="pagafattura", description="Paga le tue fatture pendenti")
 async def pagafattura(interaction: discord.Interaction):
