@@ -278,6 +278,47 @@ async def me(interaction: discord.Interaction, azione: str):
     # Invia il messaggio nel canale in cui è stato usato il comando
     await interaction.response.send_message(embed=embed)
 
+@bot.tree.command(name="clear", description="Elimina un numero specifico di messaggi da questo canale")
+@app_commands.describe(quantita="Numero di messaggi da eliminare (max 100)")
+async def clear(interaction: discord.Interaction, quantita: int):
+    # ID del ruolo autorizzato
+    ID_RUOLO_AUTORIZZATO = 1414902915679785031
+    
+    # Controllo se l'utente ha il ruolo richiesto
+    role = interaction.guild.get_role(ID_RUOLO_AUTORIZZATO)
+    if role not in interaction.user.roles:
+        return await interaction.response.send_message(
+            "❌ Non hai i permessi necessari (Staff) per usare questo comando.", 
+            ephemeral=True
+        )
+
+    # Controllo che la quantità sia valida
+    if quantita < 1 or quantita > 100:
+        return await interaction.response.send_message(
+            "⚠️ Puoi eliminare da 1 a 100 messaggi alla volta.", 
+            ephemeral=True
+        )
+
+    await interaction.response.defer(ephemeral=True)
+
+    try:
+        # Elimina i messaggi
+        deleted = await interaction.channel.purge(limit=quantita)
+        
+        # Crea un embed di conferma
+        embed = discord.Embed(
+            description=f"✅ Pulizia completata: eliminati **{len(deleted)}** messaggi.",
+            color=discord.Color.green()
+        )
+        
+        # Invia la conferma (visibile solo a chi ha usato il comando)
+        await interaction.followup.send(embed=embed)
+        
+    except discord.Forbidden:
+        await interaction.followup.send("❌ Il bot non ha i permessi di 'Gestire i messaggi' in questo canale.", ephemeral=True)
+    except Exception as e:
+        print(f"Errore comando clear: {e}")
+        await interaction.followup.send("❌ Si è verificato un errore durante la pulizia.", ephemeral=True)
 
 # ================= COMANDI ECONOMIA BASE =================
 
