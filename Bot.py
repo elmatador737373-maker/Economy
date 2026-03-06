@@ -325,32 +325,23 @@ async def clear(interaction: discord.Interaction, quantita: int):
     nickname="Il tuo alias segreto (obbligatorio solo la prima volta o per cambiarlo)"
 )
 async def anonimo(interaction: discord.Interaction, messaggio: str, nickname: str = None):
-    # Rispondiamo in modo effimero (invisibile agli altri) per non lasciare tracce del mittente
     await interaction.response.defer(ephemeral=True)
     
     try:
-        # Assicurati che la funzione get_db_connection() sia definita nel tuo file Bot.py
         conn = get_db_connection()
         from psycopg2.extras import RealDictCursor
         cur = conn.cursor(cursor_factory=RealDictCursor)
         
-        # 1. Controlliamo se l'utente ha già un alias salvato nel database
         cur.execute("SELECT nickname FROM utenti_anonimi WHERE user_id = %s", (str(interaction.user.id),))
         res = cur.fetchone()
         
-        # 2. Gestione primo utilizzo: se non ha un alias e non lo ha inserito ora, diamo errore
         if not res and not nickname:
             cur.close()
             conn.close()
-            return await interaction.followup.send(
-                "❌ Essendo la tua prima volta, devi specificare un `nickname` nel comando!", 
-                ephemeral=True
-            )
+            return await interaction.followup.send("❌ Essendo la tua prima volta, devi specificare un `nickname` nel comando!", ephemeral=True)
         
-        # 3. Determiniamo quale alias usare (nuovo o esistente)
         alias_da_usare = nickname if nickname else res['nickname']
         
-        # 4. Se l'utente ha inserito un nickname (nuovo o aggiornamento), salviamolo
         if nickname:
             cur.execute("""
                 INSERT INTO utenti_anonimi (user_id, nickname)
@@ -362,30 +353,27 @@ async def anonimo(interaction: discord.Interaction, messaggio: str, nickname: st
         cur.close()
         conn.close()
         
-        # 5. CREAZIONE EMBED CRIPTATO (Fix SyntaxError con triple virgolette)
+                # --- SOSTITUISCI DA QUI (Riga 357 circa) ---
+        desc_testo = (
+            f"```\n"
+            f"SISTEMA: Connessione Criptata\n"
+            f"MITTENTE: {alias_da_usare}\n"
+            f"```\n"
+            f"**MESSAGGIO RICEVUTO:**\n"
+            f"> {messaggio}"
+        )
+
         embed = discord.Embed(
             title="🔐 █▓▒░ ＥＮＣＲＹＰＴＥＤ ＮＥＴＷＯＲＫ ░▒▓█ 🔐",
-            description=f"""```
-Connessione sicura stabilita...
-Mittente: {alias_da_usare}
-
-> Messaggio:
-> {messaggio}""",
-> color=discord.Color.dark_theme(),
-> timestamp=datetime.datetime.now()
-> )
-> embed.set_footer(text="Tracciamento IP: Fallito • Rete Anonima")
-> 
-# 6. Invio del messaggio nel canale (senza riferimenti all'utente originale)
-await interaction.channel.send(embed=embed)
-# 7. Conferma privata all'utente
-messaggio_conferma = "✅ Messaggio inviato in totale anonimato."
-if nickname and res:
-messaggio_conferma = f"✅ Alias aggiornato in {alias_da_usare} e messaggio inviato."
-await interaction.followup.send(messaggio_conferma, ephemeral=True)
-except Exception as e:
-print(f"Errore comando anonimo: {e}")
-await interaction.followup.send("❌ Errore di connessione alla rete criptata. Riprova più tardi.", ephemeral=True)
+            description=desc_testo,
+            color=discord.Color.dark_theme(),
+            timestamp=datetime.datetime.now()
+        )
+        embed.set_footer(text="Tracciamento IP: Fallito • Rete Anonima")
+        
+        await interaction.channel.send(embed=embed)
+        await interaction.followup.send("✅ Messaggio inviato in totale anonimato.", ephemeral=True)
+        # --- FINO A QUI ---
 
 
 # ================= COMANDI ECONOMIA BASE =================
