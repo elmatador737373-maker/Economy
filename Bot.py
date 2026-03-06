@@ -319,6 +319,58 @@ async def clear(interaction: discord.Interaction, quantita: int):
     except Exception as e:
         print(f"Errore comando clear: {e}")
         await interaction.followup.send("❌ Si è verificato un errore durante la pulizia.", ephemeral=True)
+@bot.tree.command(name="anonimo", description="Invia un messaggio criptato sulla rete segreta")
+@app_commands.describe(
+    messaggio="Il testo del messaggio segreto",
+    nickname="Il tuo alias segreto (obbligatorio solo la prima volta o per cambiarlo)"
+)
+async def anonimo(interaction: discord.Interaction, messaggio: str, nickname: str = None):
+    # Rispondiamo in modo effimero per non lasciare tracce nella chat pubblica
+    await interaction.response.defer(ephemeral=True)
+    
+    try:
+        conn = get_db_connection()
+        from psycopg2.extras import RealDictCursor
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Cerca se l'utente ha già un alias salvato nel database
+        cur.execute("SELECT nickname FROM utenti_anonimi WHERE user_id = %s", (str(interaction.user.id),))
+        res = cur.fetchone()
+        
+        # LOGICA: È la prima volta e non ha inserito un nickname?
+        if not res and not nickname:
+            cur.close()
+            conn.close()
+            return await interaction.followup.send("❌ Essendo la tua prima volta, devi specificare un `nickname` nel comando!", ephemeral=True)
+        
+        # Determina quale alias usare: quello nuovo inserito ora, oppure quello vecchio dal DB
+        alias_da_usare = nickname if nickname else res['nickname']
+        
+        # Se ha inserito un nuovo nickname (prima volta o cambio nome), aggiorna il DB
+        if nickname:
+            cur.execute("""
+                INSERT INTO utenti_anonimi (user_id, nickname)
+                VALUES (%s, %s)
+                ON CONFLICT (user_id) DO UPDATE SET nickname = EXCLUDED.nickname
+            """, (str(interaction.user.id), nickname))
+            conn.commit()
+            
+        cur.close()
+        conn.close()
+        
+        # Creiamo l'Embed in stile "Criptato/Deep Web"
+        embed = discord.Embed(
+            title="🔐 █▓▒░ ＥＮＣＲＹＰＴＥＤ ＮＥＴＷＯＲＫ ░▒▓█ 🔐",
+            description=f"
+http://googleusercontent.com/immersive_entry_chip/0
+
+### Come lo vedranno i giocatori su Discord:
+Quando inizieranno a digitare `/anonimo`, Discord proporrà loro:
+* `messaggio` (obbligatorio)
+* `nickname` (opzionale)
+
+Se è un nuovo giocatore e scrive solo il messaggio, il bot gli risponderà in privato: *"❌ Essendo la tua prima volta, devi specificare un nickname..."*. Dal secondo messaggio in poi, potranno compilare solo il messaggio e premere invio velocemente!
+
 
 # ================= COMANDI ECONOMIA BASE =================
 
