@@ -338,7 +338,7 @@ async def anonimo(interaction: discord.Interaction, messaggio: str, nickname: st
         if not res and not nickname:
             cur.close()
             conn.close()
-            return await interaction.followup.send("❌ Essendo la tua prima volta, devi specificare un `nickname` nel comando!", ephemeral=True)
+            return await interaction.followup.send("❌ Devi specificare un `nickname` la prima volta!", ephemeral=True)
         
         alias_da_usare = nickname if nickname else res['nickname']
         
@@ -353,7 +353,6 @@ async def anonimo(interaction: discord.Interaction, messaggio: str, nickname: st
         cur.close()
         conn.close()
         
-                # --- SOSTITUISCI DA QUI (Riga 357 circa) ---
         desc_testo = (
             f"```\n"
             f"SISTEMA: Connessione Criptata\n"
@@ -373,7 +372,10 @@ async def anonimo(interaction: discord.Interaction, messaggio: str, nickname: st
         
         await interaction.channel.send(embed=embed)
         await interaction.followup.send("✅ Messaggio inviato in totale anonimato.", ephemeral=True)
-        # --- FINO A QUI ---
+
+    except Exception as e:
+        print(f"Errore anonimo: {e}")
+        await interaction.followup.send("❌ Errore critico nel sistema di criptazione.", ephemeral=True)
 
 
 # ================= COMANDI ECONOMIA BASE =================
