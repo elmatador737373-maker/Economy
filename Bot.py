@@ -15,7 +15,7 @@ import time
 # ================= CONFIGURAZIONE =================
 TOKEN = os.environ.get("TOKEN")
 DATABASE_URL = os.environ.get("DATABASE_URL")
-RUOLO_STAFF_ID = 1465412245264662734
+RUOLO_STAFF_ID = 1322352826667499591
 
 intents = discord.Intents.default()
 intents.members = True
@@ -653,7 +653,7 @@ async def elimina_documento(interaction: discord.Interaction, cittadino: discord
     except Exception as e:
         print(f"ERRORE ELIMINAZIONE DOCUMENTO: {e}")
         await interaction.followup.send("❌ Errore tecnico durante l'eliminazione.", ephemeral=True)
-POLIZIA_ROLE_ID = 1414902965399195700
+POLIZIA_ROLE_ID = 1331717194995732580
 
 # --- FUNZIONE DI CONTROLLO POLIZIA ---
 def is_polizia(interaction: discord.Interaction):
@@ -741,7 +741,7 @@ async def pagamulta(interaction: discord.Interaction):
 )
 async def arresto(interaction: discord.Interaction, utente: discord.Member, tempo_minuti: int, motivo: str):
     # Controllo se l'utente è un poliziotto
-    if not any(role.id == 1414902965399195700 for role in interaction.user.roles):
+    if not any(role.id == 1331717194995732580 role in interaction.user.roles):
         return await interaction.response.send_message("❌ Non hai i permessi per effettuare un arresto.", ephemeral=True)
 
     await interaction.response.defer()
