@@ -1121,7 +1121,7 @@ async def pagafattura(interaction: discord.Interaction):
 
 
 
-ID_RUOLO_CONCESSIONARIO = 1414902990275612753
+ID_RUOLO_CONCESSIONARIO = 1241534201916948551
 
 @bot.tree.command(name="registra_veicolo", description="Registra la vendita e salva i dati nel database motorizzazione")
 @app_commands.checks.has_any_role(ID_RUOLO_CONCESSIONARIO)
