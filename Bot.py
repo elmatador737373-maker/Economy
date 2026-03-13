@@ -741,7 +741,8 @@ async def pagamulta(interaction: discord.Interaction):
 )
 async def arresto(interaction: discord.Interaction, utente: discord.Member, tempo_minuti: int, motivo: str):
     # Controllo se l'utente è un poliziotto
-    if not any(role.id == 1331717194995732580 role in interaction.user.roles):
+    if not any(role.id == 1331717194995732580 for role in interaction.user.roles):
+
         return await interaction.response.send_message("❌ Non hai i permessi per effettuare un arresto.", ephemeral=True)
 
     await interaction.response.defer()
