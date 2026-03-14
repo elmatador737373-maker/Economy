@@ -12,6 +12,10 @@ import datetime
 import string
 import time
 from discord import ui
+import uuid  # <--- Fondamentale: risolve l'errore che vedi nel log
+import requests # <--- Serve per l'IA
+import base64 # <--- Serve per l'IA
+import os # <--- Serve per cancellare i file temporanei
 
 # ================= CONFIGURAZIONE =================
 TOKEN = os.environ.get("TOKEN")
@@ -1897,6 +1901,10 @@ async def wipe_utente(interaction: Interaction, utente: discord.Member):
 async def on_ready():
     await bot.tree.sync()
     print(f"✅ {bot.user} Online! Tutti i comandi sincronizzati e pubblici.")
+@bot.event
+async def on_ready():
+    await bot.tree.sync() # <--- Questo aggiorna i comandi su Discord
+    print(f"✅ Bot online come {bot.user}")
 
 app = Flask("")
 @app.route("/")
