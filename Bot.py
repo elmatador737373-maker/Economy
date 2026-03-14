@@ -11,6 +11,7 @@ from flask import Flask
 import datetime 
 import string
 import time
+from discord import ui
 
 # ================= CONFIGURAZIONE =================
 TOKEN = os.environ.get("TOKEN")
