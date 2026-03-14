@@ -403,7 +403,7 @@ async def me(interaction: discord.Interaction, azione: str):
 @app_commands.describe(quantita="Numero di messaggi da eliminare (max 100)")
 async def clear(interaction: discord.Interaction, quantita: int):
     # ID del ruolo autorizzato
-    ID_RUOLO_AUTORIZZATO = 1414902915679785031
+    ID_RUOLO_AUTORIZZATO = 1322352826667499591
     
     # Controllo se l'utente ha il ruolo richiesto
     role = interaction.guild.get_role(ID_RUOLO_AUTORIZZATO)
