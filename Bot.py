@@ -440,6 +440,36 @@ async def clear(interaction: discord.Interaction, quantita: int):
     except Exception as e:
         print(f"Errore comando clear: {e}")
         await interaction.followup.send("❌ Si è verificato un errore durante la pulizia.", ephemeral=True)
+# --- CONFIGURAZIONE ---
+RUOLO_RICHIESTO_ID = 1241534109503979631
+
+# ================= COMANDO RP ONLINE =================
+@bot.tree.command(name="rp_online", description="Avvia la sessione RP")
+@app_commands.describe(host="Inserisci l'ID PSN dell'Host")
+async def rp_online(interaction: discord.Interaction, host: str):
+    # Controllo se l'utente ha il ruolo richiesto
+    if not any(role.id == RUOLO_RICHIESTO_ID for role in interaction.user.roles):
+        return await interaction.response.send_message("❌ Non hai i permessi per avviare la sessione.", ephemeral=True)
+    
+    messaggio = (
+        "__La sessione è stata avviata, assicuratevi di iniziare i turni__\n\n"
+        f"**HOST:** {host}"
+    )
+    
+    await interaction.response.send_message(messaggio)
+
+# ================= COMANDO RP OFFLINE =================
+@bot.tree.command(name="rp_offline", description="Termina la sessione RP")
+async def rp_offline(interaction: discord.Interaction):
+    # Controllo se l'utente ha il ruolo richiesto
+    if not any(role.id == RUOLO_RICHIESTO_ID for role in interaction.user.roles):
+        return await interaction.response.send_message("❌ Non hai i permessi per terminare la sessione.", ephemeral=True)
+    
+    messaggio = "__La sessione è terminata, assicuratevi di finire i turni per poter ricevere lo stipendio__"
+    
+    await interaction.response.send_message(messaggio)
+
+
 @bot.tree.command(name="anonimo", description="Invia un messaggio criptato sulla rete segreta")
 @app_commands.describe(
     messaggio="Il testo del messaggio segreto",
@@ -484,7 +514,7 @@ async def anonimo(interaction: discord.Interaction, messaggio: str, nickname: st
         )
 
         embed = discord.Embed(
-            title="🔐 █▓▒░ ＥＮＣＲＹＰＴＥＤ ＮＥＴＷＯＲＫ ░▒▓█ 🔐",
+            title="🔐 █▓▒░ R E T E  A N O N I M A ░▒▓█ 🔐",
             description=desc_testo,
             color=discord.Color.dark_theme(),
             timestamp=datetime.datetime.now()
