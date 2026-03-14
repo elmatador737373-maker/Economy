@@ -441,33 +441,55 @@ async def clear(interaction: discord.Interaction, quantita: int):
         print(f"Errore comando clear: {e}")
         await interaction.followup.send("❌ Si è verificato un errore durante la pulizia.", ephemeral=True)
 # --- CONFIGURAZIONE ---
+# --- CONFIGURAZIONE ---
 RUOLO_RICHIESTO_ID = 1241534109503979631
+RUOLO_DA_TAGGARE_ID = 1331715326844469289
 
 # ================= COMANDO RP ONLINE =================
-@bot.tree.command(name="rp_online", description="Avvia la sessione RP")
+@bot.tree.command(name="rp_online", description="Avvia la sessione RP con Embed")
 @app_commands.describe(host="Inserisci l'ID PSN dell'Host")
 async def rp_online(interaction: discord.Interaction, host: str):
-    # Controllo se l'utente ha il ruolo richiesto
+    # Controllo permessi
     if not any(role.id == RUOLO_RICHIESTO_ID for role in interaction.user.roles):
-        return await interaction.response.send_message("❌ Non hai i permessi per avviare la sessione.", ephemeral=True)
+        return await interaction.response.send_message("❌ Non hai i permessi per usare questo comando.", ephemeral=True)
     
-    messaggio = (
-        "__La sessione è stata avviata, assicuratevi di iniziare i turni__\n\n"
-        f"**HOST:** {host}"
+    # Creazione Embed
+    embed = discord.Embed(
+        title="🟢 SESSIONE AVVIATA",
+        description="__La sessione è stata avviata, assicuratevi di iniziare i turni__",
+        color=discord.Color.green()
     )
-    
-    await interaction.response.send_message(messaggio)
+    embed.add_field(name="🎮 HOST PSN", value=f"**{host}**", inline=False)
+    embed.set_footer(text="State of RP - Sistema Sessioni")
+    embed.timestamp = datetime.datetime.now()
+
+    # Invio tag + embed
+    await interaction.response.send_message(
+        content=f"<@&{RUOLO_DA_TAGGARE_ID}>", 
+        embed=embed
+    )
 
 # ================= COMANDO RP OFFLINE =================
-@bot.tree.command(name="rp_offline", description="Termina la sessione RP")
+@bot.tree.command(name="rp_offline", description="Termina la sessione RP con Embed")
 async def rp_offline(interaction: discord.Interaction):
-    # Controllo se l'utente ha il ruolo richiesto
+    # Controllo permessi
     if not any(role.id == RUOLO_RICHIESTO_ID for role in interaction.user.roles):
-        return await interaction.response.send_message("❌ Non hai i permessi per terminare la sessione.", ephemeral=True)
+        return await interaction.response.send_message("❌ Non hai i permessi per usare questo comando.", ephemeral=True)
     
-    messaggio = "__La sessione è terminata, assicuratevi di finire i turni per poter ricevere lo stipendio__"
-    
-    await interaction.response.send_message(messaggio)
+    # Creazione Embed
+    embed = discord.Embed(
+        title="🔴 SESSIONE TERMINATA",
+        description="__La sessione è terminata, assicuratevi di finire i turni per poter ricevere lo stipendio__",
+        color=discord.Color.red()
+    )
+    embed.set_footer(text="State of RP - Sistema Sessioni")
+    embed.timestamp = datetime.datetime.now()
+
+    # Invio tag + embed
+    await interaction.response.send_message(
+        content=f"<@&{RUOLO_DA_TAGGARE_ID}>", 
+        embed=embed
+    )
 
 
 @bot.tree.command(name="anonimo", description="Invia un messaggio criptato sulla rete segreta")
