@@ -391,7 +391,7 @@ async def finisci_raccolta(interaction: discord.Interaction):
 async def me(interaction: discord.Interaction, azione: str):
     # Creazione dell'Embed con i parametri richiesti
     embed = discord.Embed(
-        title="<a:ciak:1334285912653434993> 𝐀𝐳𝐢𝐨𝐧𝐞  <a:progresso:1334288992547635394>",
+        title=" 🎬 𝐀𝐳𝐢𝐨𝐧𝐞 RP 🎬 ",
         description=f"{interaction.user.mention} : {azione}",
         color=discord.Color.from_rgb(170, 142, 214) # Un viola elegante per le azioni RP
     )
