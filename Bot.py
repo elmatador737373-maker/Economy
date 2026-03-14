@@ -265,6 +265,188 @@ async def finisci_raccolta(interaction: discord.Interaction):
     except Exception as e:
         print(f"Errore finisci_raccolta: {e}")
         await interaction.followup.send("❌ Errore nel calcolo dei minuti.", ephemeral=True)
+        # ================= GENERAZIONE IMMAGINI IA (IMAGEN 4.0) =================
+
+async def genera_immagine_ia(prompt, filename):
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict?key={apiKey}"
+    payload = {
+        "instances": [{"prompt": prompt}],
+        "parameters": {"sampleCount": 1}
+    }
+    
+    # Retry logic con backoff esponenziale
+    for delay in [1, 2, 4]:
+        try:
+            response = requests.post(url, json=payload, timeout=45)
+            if response.status_code == 200:
+                result = response.json()
+                image_data = result['predictions'][0]['bytesBase64Encoded']
+                with open(filename, "wb") as f:
+                    f.write(base64.b64decode(image_data))
+                return filename
+        except Exception as e:
+            print(f"Errore IA: {e}")
+            await asyncio.sleep(delay)
+    return None
+
+# ================= LOGICA DI PAGAMENTO (BOTTONE) =================
+
+class ScontrinoView(ui.View):
+    def __init__(self, id_scontrino, ammontare, cliente_id):
+        super().__init__(timeout=None)
+        self.id_scontrino = id_scontrino
+        self.ammontare = ammontare
+        self.cliente_id = cliente_id
+
+    @ui.button(label="Paga Ora 💳", style=discord.ButtonStyle.success, custom_id="paga_scontrino_btn")
+    async def paga_button(self, interaction: Interaction, button: ui.Button):
+        if str(interaction.user.id) != self.cliente_id:
+            return await interaction.response.send_message("❌ Questo scontrino non è per te!", ephemeral=True)
+        
+        await interaction.response.defer(ephemeral=True)
+        
+        conn = get_db_connection()
+        if not conn: return await interaction.followup.send("❌ Database non disponibile.")
+        
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        try:
+            # Controllo stato fattura
+            cur.execute("SELECT stato FROM fatture WHERE id_fattura = %s", (self.id_scontrino,))
+            f_data = cur.fetchone()
+            if not f_data or f_data['stato'] == 'Pagato':
+                return await interaction.followup.send("⚠️ Scontrino già pagato o inesistente.", ephemeral=True)
+
+            # Controllo Saldo Utente
+            cur.execute("SELECT wallet, bank FROM users WHERE user_id = %s", (self.cliente_id,))
+            user = cur.fetchone()
+            
+            if not user or (user['wallet'] + user['bank']) < self.ammontare:
+                return await interaction.followup.send(f"❌ Soldi insufficienti (Totale: {self.ammontare}$)", ephemeral=True)
+
+            # Esecuzione pagamento (Wallet -> Bank)
+            rimanente = self.ammontare
+            nuovo_wallet = user['wallet']
+            nuova_bank = user['bank']
+
+            if nuovo_wallet >= rimanente:
+                nuovo_wallet -= rimanente
+            else:
+                rimanente -= nuovo_wallet
+                nuovo_wallet = 0
+                nuova_bank -= rimanente
+
+            cur.execute("UPDATE users SET wallet = %s, bank = %s WHERE user_id = %s", (nuovo_wallet, nuova_bank, self.cliente_id))
+            cur.execute("UPDATE fatture SET stato = 'Pagato' WHERE id_fattura = %s", (self.id_scontrino,))
+            conn.commit()
+            
+            self.clear_items()
+            await interaction.message.edit(view=self)
+            await interaction.followup.send(f"✅ Hai pagato lo scontrino `#{self.id_scontrino}` di **{self.ammontare}$**!")
+        finally:
+            cur.close(); conn.close()
+
+# ================= COMANDI =================
+
+@bot.tree.command(name="news", description="Pubblica una notizia in prima pagina su un giornale")
+async def news(interaction: Interaction, titolo: str, contenuto: str):
+    # Controllo Staff/Admin
+    if not interaction.user.guild_permissions.administrator and not any(r.id == RUOLO_STAFF_ID for r in interaction.user.roles):
+        return await interaction.response.send_message("❌ Permessi insufficienti.", ephemeral=True)
+        
+    await interaction.response.defer()
+    
+    prompt = (
+        f"A professional front page of a city newspaper called 'CITY TIMES'. "
+        f"The main headline in giant black bold letters says: '{titolo.upper()}'. "
+        f"A realistic photo of a city event is shown below the title. "
+        f"The date is {datetime.datetime.now().strftime('%d/%m/%Y')}. "
+        f"Texture of real newspaper paper, ink details, very realistic."
+    )
+    
+    filename = f"news_{uuid.uuid4().hex[:5]}.png"
+    path = await genera_immagine_ia(prompt, filename)
+    
+    if path:
+        file = discord.File(path, filename="giornale.png")
+        emb = discord.Embed(title=titolo, description=contenuto, color=discord.Color.dark_red())
+        emb.set_image(url="attachment://giornale.png")
+        await interaction.followup.send(file=file, embed=emb)
+        os.remove(path)
+    else:
+        await interaction.followup.send("❌ Impossibile generare l'immagine del giornale, riprova.")
+
+@bot.tree.command(name="scontrino", description="Emetti uno scontrino reale con immagine IA")
+async def scontrino(interaction: Interaction, utente: discord.Member, ammontare: int, causale: str):
+    if ammontare <= 0: return await interaction.response.send_message("❌ Importo non valido.", ephemeral=True)
+    
+    await interaction.response.defer()
+    s_id = str(uuid.uuid4())[:8].upper()
+    
+    prompt = (
+        f"A hyper-realistic photo of a white thermal receipt paper held by a hand. "
+        f"Printed text in black says: 'CITY GOVERNMENT', 'RECEIPT #{s_id}', "
+        f"'TOTAL: {ammontare}$', 'FOR: {causale}'. "
+        f"Realistic lighting, wrinkled paper, blurred background of a shop."
+    )
+    
+    filename = f"scontrino_{s_id}.png"
+    path = await genera_immagine_ia(prompt, filename)
+    
+    conn = get_db_connection()
+    if conn:
+        cur = conn.cursor()
+        cur.execute("INSERT INTO fatture (id_fattura, id_cliente, id_azienda, descrizione, prezzo, data, stato) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                    (s_id, str(utente.id), str(interaction.user.id), causale, ammontare, str(datetime.datetime.now()), 'Pendente'))
+        conn.commit(); cur.close(); conn.close()
+
+    if path:
+        file = discord.File(path, filename="scontrino.png")
+        emb = discord.Embed(title="🧾 SCONTRINO EMESSO", color=discord.Color.light_gray())
+        emb.set_image(url="attachment://scontrino.png")
+        view = ScontrinoView(s_id, ammontare, str(utente.id))
+        await interaction.followup.send(content=f"🔔 {utente.mention}, scontrino da saldare!", file=file, embed=emb, view=view)
+        os.remove(path)
+    else:
+        view = ScontrinoView(s_id, ammontare, str(utente.id))
+        await interaction.followup.send(f"✅ Scontrino `#{s_id}` emesso senza immagine.", view=view)
+
+@bot.tree.command(name="pagascontrino", description="Paga uno scontrino manualmente tramite l'ID")
+async def pagascontrino(interaction: Interaction, id_scontrino: str):
+    await interaction.response.defer(ephemeral=True)
+    
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    
+    cur.execute("SELECT * FROM fatture WHERE id_fattura = %s AND id_cliente = %s AND stato = 'Pendente'", (id_scontrino, str(interaction.user.id)))
+    fattura = cur.fetchone()
+    
+    if not fattura:
+        conn.close()
+        return await interaction.followup.send("❌ Scontrino non trovato o già pagato.", ephemeral=True)
+    
+    cur.execute("SELECT wallet, bank FROM users WHERE user_id = %s", (str(interaction.user.id),))
+    user = cur.fetchone()
+    
+    prezzo = fattura['prezzo']
+    if (user['wallet'] + user['bank']) < prezzo:
+        conn.close()
+        return await interaction.followup.send("❌ Fondi insufficienti.", ephemeral=True)
+
+    # Logica sottrazione soldi
+    nuovo_wallet = user['wallet']
+    nuova_bank = user['bank']
+    if nuovo_wallet >= prezzo: nuovo_wallet -= prezzo
+    else: 
+        prezzo -= nuovo_wallet
+        nuovo_wallet = 0
+        nuova_bank -= prezzo
+
+    cur.execute("UPDATE users SET wallet = %s, bank = %s WHERE user_id = %s", (nuovo_wallet, nuova_bank, str(interaction.user.id)))
+    cur.execute("UPDATE fatture SET stato = 'Pagato' WHERE id_fattura = %s", (id_scontrino,))
+    conn.commit(); conn.close()
+    
+    await interaction.followup.send(f"✅ Hai pagato correttamente lo scontrino `#{id_scontrino}`.")
+
 @bot.tree.command(name="me", description="Esegui un'azione in gioco (Roleplay)")
 @app_commands.describe(azione="Descrivi l'azione che stai compiendo")
 async def me(interaction: discord.Interaction, azione: str):
