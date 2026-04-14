@@ -285,7 +285,7 @@ async def clear(interaction: discord.Interaction, quantita: int):
     ID_RUOLO_AUTORIZZATO = 1414902915679785031
     
     # Controllo se l'utente ha il ruolo richiesto
-    role = interaction.guild.get_role(ID_RUOLO_AUTORIZZATO)
+    role = interaction.guild.get_role(RUOLO_STAFF_ID)
     if role not in interaction.user.roles:
         return await interaction.response.send_message(
             "❌ Non hai i permessi necessari (Staff) per usare questo comando.", 
@@ -622,10 +622,16 @@ async def fine_turno(interaction: discord.Interaction):
         await interaction.followup.send("❌ Errore nel calcolo del tempo del turno.", ephemeral=True)
 
 # --- COMANDO PER ELIMINARE IL DOCUMENTO (SOLO ADMIN) ---
-@bot.tree.command(name="elimina_documento", description="Elimina il documento di un cittadino (Solo Admin)")
-@app_commands.default_permissions(administrator=True) # Rende il comando visibile solo agli admin
+@bot.tree.command(name="elimina_documento", description="Elimina il documento di un cittadino (Solo Staff)")
 @app_commands.describe(cittadino="Il cittadino a cui vuoi cancellare il documento")
 async def elimina_documento(interaction: discord.Interaction, cittadino: discord.Member):
+    # Controllo se l'utente ha il ruolo richiesto
+    if not any(role.id == RUOLO_STAFF_ID for role in interaction.user.roles):
+        return await interaction.response.send_message(
+            "❌ Non hai i permessi necessari (Ruolo Staff richiesto) per usare questo comando.", 
+            ephemeral=True
+        )
+
     await interaction.response.defer(ephemeral=True)
     
     try:
@@ -648,11 +654,15 @@ async def elimina_documento(interaction: discord.Interaction, cittadino: discord
         cur.close()
         conn.close()
         
-        await interaction.followup.send(f"✅ Documento di **{result[0]} {result[1]}** ({cittadino.display_name}) eliminato permanentemente dal database.", ephemeral=True)
+        await interaction.followup.send(
+            f"✅ Documento di **{result[0]} {result[1]}** ({cittadino.display_name}) eliminato permanentemente dal database.", 
+            ephemeral=True
+        )
         
     except Exception as e:
         print(f"ERRORE ELIMINAZIONE DOCUMENTO: {e}")
         await interaction.followup.send("❌ Errore tecnico durante l'eliminazione.", ephemeral=True)
+        
 POLIZIA_ROLE_ID = 1359569600198611104
 
 # --- FUNZIONE DI CONTROLLO POLIZIA ---
@@ -1463,15 +1473,7 @@ async def compra(interaction: Interaction, nome: str, quantita: int = 1):
     conn.commit(); cur.close(); conn.close()
     await interaction.followup.send(f"🛍️ **{interaction.user.display_name}** ha comprato {quantita}x **{nome_e}**!")
 
-@bot.tree.command(name="cerca", description="Cerca materiali (1 min)")
-async def cerca(interaction: Interaction):
-    await interaction.response.send_message(f"🔍 **{interaction.user.display_name}** ha iniziato a cercare materiali... torna tra 1 minuto.")
-    await asyncio.sleep(60)
-    mat = random.choice(["Ferro", "Rame", "Plastica", "Legno", "Pezzi di Vetro", "Cavi Elettrici"])
-    conn = get_db_connection(); cur = conn.cursor()
-    cur.execute("INSERT INTO inventory (user_id, item_name, quantity) VALUES (%s, %s, 1) ON CONFLICT (user_id, item_name) DO UPDATE SET quantity = inventory.quantity + 1", (str(interaction.user.id), mat))
-    conn.commit(); cur.close(); conn.close()
-    await interaction.channel.send(f"✅ **{interaction.user.mention}** ha trovato: **{mat}**!")
+
 
 # --- CLASSE VIEW PER I BOTTONI ---
 
@@ -1700,25 +1702,39 @@ async def staff_vedi_deposito(interaction: Interaction):
 
 # ================= COMANDI ADMIN =================
 
-@bot.tree.command(name="aggiungisoldi", description="ADMIN - Regala soldi")
+# Funzione di supporto per pulire il codice (opzionale ma consigliata)
+def is_staff(interaction: discord.Interaction):
+    return any(role.id == RUOLO_STAFF_ID for role in interaction.user.roles)
+
+# --- COMANDI SOLDI ---
+
+@bot.tree.command(name="aggiungisoldi", description="STAFF - Regala soldi")
 async def aggiungisoldi(interaction: Interaction, utente: discord.Member, importo: int):
-    if not interaction.user.guild_permissions.administrator: return
+    if not is_staff(interaction):
+        return await interaction.response.send_message("❌ Permessi insufficienti.", ephemeral=True)
+    
     conn = get_db_connection(); cur = conn.cursor()
     cur.execute("UPDATE users SET wallet = wallet + %s WHERE user_id = %s", (importo, str(utente.id)))
     conn.commit(); cur.close(); conn.close()
     await interaction.response.send_message(f"✅ Admin ha aggiunto **{importo}$** a {utente.mention}")
 
-@bot.tree.command(name="rimuovisoldi", description="ADMIN - Togli soldi")
+@bot.tree.command(name="rimuovisoldi", description="STAFF - Togli soldi")
 async def rimuovisoldi(interaction: Interaction, utente: discord.Member, importo: int):
-    if not interaction.user.guild_permissions.administrator: return
+    if not is_staff(interaction):
+        return await interaction.response.send_message("❌ Permessi insufficienti.", ephemeral=True)
+    
     conn = get_db_connection(); cur = conn.cursor()
     cur.execute("UPDATE users SET wallet = GREATEST(0, wallet - %s) WHERE user_id = %s", (importo, str(utente.id)))
     conn.commit(); cur.close(); conn.close()
     await interaction.response.send_message(f"✅ Admin ha rimosso **{importo}$** a {utente.mention}")
 
-@bot.tree.command(name="aggiungi_item", description="ADMIN - Regala item")
+# --- COMANDI ITEM ---
+
+@bot.tree.command(name="aggiungi_item", description="STAFF - Regala item")
 async def aggiungi_item(interaction: Interaction, utente: discord.Member, nome: str, quantita: int = 1):
-    if not interaction.user.guild_permissions.administrator: return
+    if not is_staff(interaction):
+        return await interaction.response.send_message("❌ Permessi insufficienti.", ephemeral=True)
+    
     await interaction.response.defer()
     nome_e = await cerca_item_smart(interaction, nome, "items")
     if not nome_e: return
@@ -1727,9 +1743,11 @@ async def aggiungi_item(interaction: Interaction, utente: discord.Member, nome: 
     conn.commit(); cur.close(); conn.close()
     await interaction.followup.send(f"✅ Admin ha dato {quantita}x **{nome_e}** a {utente.mention}")
 
-@bot.tree.command(name="rimuovi_item", description="ADMIN - Togli item")
+@bot.tree.command(name="rimuovi_item", description="STAFF - Togli item")
 async def rimuovi_item(interaction: Interaction, utente: discord.Member, nome: str, quantita: int = 1):
-    if not interaction.user.guild_permissions.administrator: return
+    if not is_staff(interaction):
+        return await interaction.response.send_message("❌ Permessi insufficienti.", ephemeral=True)
+    
     await interaction.response.defer()
     conn = get_db_connection(); cur = conn.cursor()
     cur.execute("UPDATE inventory SET quantity = GREATEST(0, quantity - %s) WHERE user_id = %s AND item_name ILIKE %s", (quantita, str(utente.id), f"%{nome}%"))
@@ -1737,18 +1755,24 @@ async def rimuovi_item(interaction: Interaction, utente: discord.Member, nome: s
     conn.commit(); cur.close(); conn.close()
     await interaction.followup.send(f"✅ Admin ha rimosso {quantita}x **{nome}** a {utente.mention}")
 
-@bot.tree.command(name="crea_item_shop", description="ADMIN - Crea item shop")
+# --- GESTIONE SHOP ---
+
+@bot.tree.command(name="crea_item_shop", description="STAFF - Crea item shop")
 async def crea_item_shop(interaction: Interaction, nome: str, descrizione: str, prezzo: int, ruolo: discord.Role = None):
-    if not interaction.user.guild_permissions.administrator: return
+    if not is_staff(interaction):
+        return await interaction.response.send_message("❌ Permessi insufficienti.", ephemeral=True)
+    
     rid = str(ruolo.id) if ruolo else "None"
     conn = get_db_connection(); cur = conn.cursor()
     cur.execute("INSERT INTO items (name, description, price, role_required) VALUES (%s,%s,%s,%s) ON CONFLICT (name) DO UPDATE SET price=EXCLUDED.price, description=EXCLUDED.description, role_required=EXCLUDED.role_required", (nome, descrizione, prezzo, rid))
     conn.commit(); cur.close(); conn.close()
     await interaction.response.send_message(f"✅ Item **{nome}** creato/aggiornato nello shop.")
 
-@bot.tree.command(name="elimina_item_shop", description="ADMIN - Elimina definitivamente item dallo shop")
+@bot.tree.command(name="elimina_item_shop", description="STAFF - Elimina definitivamente item dallo shop")
 async def elimina_item_shop(interaction: Interaction, nome: str):
-    if not interaction.user.guild_permissions.administrator: return
+    if not is_staff(interaction):
+        return await interaction.response.send_message("❌ Permessi insufficienti.", ephemeral=True)
+    
     await interaction.response.defer()
     nome_e = await cerca_item_smart(interaction, nome, "items")
     if not nome_e: return
@@ -1757,22 +1781,29 @@ async def elimina_item_shop(interaction: Interaction, nome: str):
     conn.commit(); cur.close(); conn.close()
     await interaction.followup.send(f"🗑️ L'item **{nome_e}** è stato rimosso dallo shop.")
 
-@bot.tree.command(name="registra_fazione", description="ADMIN - Registra ruolo fazione")
+# --- UTILITY ADMIN ---
+
+@bot.tree.command(name="registra_fazione", description="STAFF - Registra ruolo fazione")
 async def registra_fazione(interaction: Interaction, ruolo: discord.Role):
-    if not interaction.user.guild_permissions.administrator: return
+    if not is_staff(interaction):
+        return await interaction.response.send_message("❌ Permessi insufficienti.", ephemeral=True)
+    
     conn = get_db_connection(); cur = conn.cursor()
     cur.execute("INSERT INTO depositi (role_id, money) VALUES (%s, 0) ON CONFLICT DO NOTHING", (str(ruolo.id),))
     conn.commit(); cur.close(); conn.close()
     await interaction.response.send_message(f"✅ Fazione **{ruolo.name}** registrata nel sistema.")
 
-@bot.tree.command(name="wipe_utente", description="ADMIN - Reset totale utente")
+@bot.tree.command(name="wipe_utente", description="STAFF - Reset totale utente")
 async def wipe_utente(interaction: Interaction, utente: discord.Member):
-    if not interaction.user.guild_permissions.administrator: return
+    if not is_staff(interaction):
+        return await interaction.response.send_message("❌ Permessi insufficienti.", ephemeral=True)
+    
     conn = get_db_connection(); cur = conn.cursor()
     cur.execute("UPDATE users SET wallet = 500, bank = 0 WHERE user_id = %s", (str(utente.id),))
     cur.execute("DELETE FROM inventory WHERE user_id = %s", (str(utente.id),))
     conn.commit(); cur.close(); conn.close()
     await interaction.response.send_message(f"🧹 Reset totale per **{utente.name}**.")
+
 
 # ================= WEB SERVER & START =================
 
