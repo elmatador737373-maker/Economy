@@ -1807,10 +1807,16 @@ async def wipe_utente(interaction: Interaction, utente: discord.Member):
 
 # ================= WEB SERVER & START =================
 
-@bot.event
-async def on_ready():
-    await bot.tree.sync()
-    print(f"✅ {bot.user} Online! Tutti i comandi sincronizzati e pubblici.")
+# Lista dei server autorizzati
+ALLOWED_GUILDS = [1383905374092005376, 1233353915559313478, 1392825183915610205]
+
+@bot.tree.interaction_check
+async def check_guild(interaction: discord.Interaction):
+    if interaction.guild_id not in ALLOWED_GUILDS:
+        await interaction.response.send_message("❌ Questo bot non è autorizzato in questo server.", ephemeral=True)
+        return False
+    return True
+
 
 app = Flask("")
 @app.route("/")
