@@ -380,6 +380,7 @@ async def anonimo(interaction: discord.Interaction, messaggio: str, nickname: st
 # --- COMANDO SONDAGGIO ---
 @bot.tree.command(name="sondaggio", description="Crea un sondaggio per l'orario dell'RP")
 @app_commands.describe(ora="Inserisci l'orario (es. 21:30)")
+@app_commands.checks.has_role(1253707509399683202)
 async def sondaggio(interaction: discord.Interaction, ora: str):
     embed = discord.Embed(
         title="📢 Sondaggio Sessione RP",
@@ -391,10 +392,8 @@ async def sondaggio(interaction: discord.Interaction, ora: str):
     embed.add_field(name="❌ No", value="Non ci sarò", inline=True)
     embed.add_field(name="🕒 Ritardo", value="Entro più tardi", inline=True)
     
-    # Risposta silenziosa per confermare l'invio
     await interaction.response.send_message("Sondaggio inviato!", ephemeral=True)
     
-    # Invio effettivo del messaggio e aggiunta reazioni
     messaggio = await interaction.channel.send(embed=embed)
     await messaggio.add_reaction("✅")
     await messaggio.add_reaction("❌")
@@ -402,6 +401,7 @@ async def sondaggio(interaction: discord.Interaction, ora: str):
 
 # --- COMANDO RP ON ---
 @bot.tree.command(name="rpon", description="Segnala che l'RP è ONLINE")
+@app_commands.checks.has_role(1253707509399683202)
 async def rpon(interaction: discord.Interaction):
     embed = discord.Embed(
         title="🟢 RP ONLINE",
@@ -411,8 +411,9 @@ async def rpon(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed)
 
 # --- COMANDO RP OFF ---
-@bot.tree.command(name="proff", description="Segnala che l'RP è OFFLINE")
-async def proff(interaction: discord.Interaction):
+@bot.tree.command(name="rpoff", description="Segnala che l'RP è OFFLINE")
+@app_commands.checks.has_role(1253707509399683202)
+async def rpoff(interaction: discord.Interaction):
     embed = discord.Embed(
         title="🔴 RP OFFLINE",
         description="La sessione di Roleplay è terminata. Grazie a tutti per aver partecipato!",
