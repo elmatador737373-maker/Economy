@@ -1858,9 +1858,15 @@ async def wipe_utente(interaction: Interaction, utente: discord.Member):
 
 
 # ================= WEB SERVER & START =================
-
+# Lista dei server autorizzati
 # Lista dei server autorizzati
 ALLOWED_GUILDS = [1383905374092005376, 1233353915559313478, 1392825183915610205]
+
+# Funzione per sincronizzare i comandi all'avvio
+@bot.event
+async def on_ready():
+    await bot.tree.sync()
+    print(f"Sincronizzazione completata! Bot loggato come {bot.user}")
 
 @bot.tree.interaction_check
 async def check_guild(interaction: discord.Interaction):
@@ -1869,7 +1875,6 @@ async def check_guild(interaction: discord.Interaction):
         return False
     return True
 
-
 app = Flask("")
 @app.route("/")
 def home(): return "Bot Online"
@@ -1877,3 +1882,5 @@ def run(): app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
 threading.Thread(target=run).start()
 
 bot.run(TOKEN)
+
+
