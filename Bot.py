@@ -376,6 +376,15 @@ async def anonimo(interaction: discord.Interaction, messaggio: str, nickname: st
     except Exception as e:
         print(f"Errore anonimo: {e}")
         await interaction.followup.send("❌ Errore critico nel sistema di criptazione.", ephemeral=True)
+@bot.command()
+@commands.is_owner() # Solo il proprietario del bot può usarlo per sicurezza
+async def sync(ctx):
+    try:
+        # Sincronizza i comandi con l'API di Discord
+        synced = await bot.tree.sync()
+        await ctx.send(f"✅ Sincronizzazione completata! {len(synced)} comandi slash sono ora attivi.")
+    except Exception as e:
+        await ctx.send(f"❌ Si è verificato un errore durante il sync: {e}")
 
 # --- COMANDO SONDAGGIO ---
 @bot.tree.command(name="sondaggio", description="Crea un sondaggio per l'orario dell'RP")
