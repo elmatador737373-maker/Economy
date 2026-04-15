@@ -1855,6 +1855,67 @@ async def wipe_utente(interaction: Interaction, utente: discord.Member):
     cur.execute("DELETE FROM inventory WHERE user_id = %s", (str(utente.id),))
     conn.commit(); cur.close(); conn.close()
     await interaction.response.send_message(f"🧹 Reset totale per **{utente.name}**.")
+import discord
+from discord.ext import commands
+
+# Decoratore per il controllo del ruolo Polizia
+def is_polizia():
+    async def predicate(ctx):
+        # Verifica se l'utente ha il ruolo specifico
+        return any(role.name == "POLIZIA_ROLE_ID" for role in ctx.author.roles)
+    return commands.check(predicate)
+
+class PoliziaCittadini(discord.ui.Select):
+    def __init__(self, citizens, pool):
+        options = [
+            discord.SelectOption(label=f"{c['nome']} {c['cognome']}", description=f"ID: {c['user_id']}", value=c['user_id'])
+            for c in citizens
+        ]
+        super().__init__(placeholder="Seleziona un cittadino da controllare...", options=options)
+        self.pool = pool
+
+    async def callback(self, interaction: discord.Interaction):
+        user_id = self.values[0]
+        
+        async with self.pool.acquire() as conn:
+            # Query per dossier completo
+            doc = await conn.fetchrow("SELECT * FROM documenti WHERE user_id = $1", user_id)
+            veicoli = await conn.fetch("SELECT modello, targa FROM veicoli WHERE owner_id = $1", user_id)
+            multe = await conn.fetch("SELECT motivo, ammontare FROM multe WHERE user_id = $1 ORDER BY data DESC LIMIT 3", user_id)
+            arresti = await conn.fetch("SELECT motivo, tempo FROM arresti WHERE user_id = $1 ORDER BY data DESC LIMIT 3", user_id)
+
+        embed = discord.Embed(title=f"📁 Dossier: {doc['nome']} {doc['cognome']}", color=0x0047AB)
+        embed.add_field(name="🧬 Info", value=f"**Genere:** {doc['genere']}\n**Altezza:** {doc['altezza']}cm\n**Nato il:** {doc['data_nascita']}", inline=True)
+        
+        v_list = "\n".join([f"🚘 {v['modello']} ({v['targa']})" for v in veicoli]) or "Nessun veicolo"
+        embed.add_field(name="🚘 Veicoli", value=v_list, inline=False)
+
+        m_list = "\n".join([f"📜 {m['motivo']} (${m['ammontare']})" for m in multe]) or "Nessuna multa"
+        embed.add_field(name="📜 Ultime Multe", value=m_list, inline=True)
+
+        a_list = "\n".join([f"⚖️ {a['motivo']} ({a['tempo']} min)" for a in arresti]) or "Fedina pulita"
+        embed.add_field(name="⚖️ Precedenti", value=a_list, inline=True)
+
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+class PoliziaView(discord.ui.View):
+    def __init__(self, citizens, pool):
+        super().__init__()
+        self.add_item(PoliziaCittadini(citizens, pool))
+
+@bot.command(name="centrale")
+@is_polizia()
+async def centrale(ctx):
+    """Mostra la lista dei cittadini e permette il controllo dettagliato"""
+    async with bot.db_pool.acquire() as conn:
+        # Recuperiamo i primi 25 cittadini per il menu a tendina
+        citizens = await conn.fetch("SELECT user_id, nome, cognome FROM documenti ORDER BY cognome ASC LIMIT 25")
+        
+    if not citizens:
+        return await ctx.send("Nessun cittadino registrato nel database.")
+
+    view = PoliziaView(citizens, bot.db_pool)
+    await ctx.send("👮 **Database Centrale Polizia**: Seleziona un soggetto per il dossier.", view=view)
 
 
 # ================= WEB SERVER & START =================
