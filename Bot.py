@@ -181,6 +181,55 @@ async def cerca_item_smart(interaction: Interaction, nome_input: str, modo="item
     await interaction.followup.send("🤔 Più risultati, seleziona quello corretto:", view=view, ephemeral=True)
     await view.wait()
     return view.value
+    
+    
+@bot.tree.command(name="lista_anonimi", description="Mostra la lista di tutti i nickname anonimi associati agli utenti")
+async def lista_anonimi(interaction: discord.Interaction):
+    # Controllo se l'utente è staff o admin per evitare che tutti vedano i nomi
+    ID_RUOLO_STAFF =  1465432780551753811 # Sostituisci con il tuo ID ruolo staff
+    is_staff = any(r.id == ID_RUOLO_STAFF for r in interaction.user.roles) or interaction.user.guild_permissions.administrator
+    
+    if not is_staff:
+        return await interaction.response.send_message("❌ Non hai i permessi per vedere questa lista.", ephemeral=True)
+
+    await interaction.response.defer(ephemeral=True)
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Recuperiamo tutti gli utenti registrati
+        cur.execute("SELECT user_id, nickname FROM utenti_anonimi")
+        rows = cur.fetchall()
+        
+        cur.close()
+        conn.close()
+
+        if not rows:
+            return await interaction.followup.send("📭 Non ci sono utenti registrati nel database anonimo.", ephemeral=True)
+
+        # Creiamo la stringa della tabella
+        testo_lista = "## 📋 DATABASE IDENTITÀ ANONIME\n\n"
+        for row in rows:
+            user_mention = f"<@{row['user_id']}>"
+            nickname = row['nickname']
+            testo_lista += f"{user_mention} = **{nickname}**\n"
+
+        # Creiamo un embed per renderlo più ordinato
+        embed = discord.Embed(
+            title="🕵️ Registro Alias Segreti",
+            description=testo_lista,
+            color=discord.Color.blue(),
+            timestamp=datetime.datetime.now()
+        )
+        embed.set_footer(text="Accesso riservato allo Staff")
+
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    except Exception as e:
+        print(f"Errore lista_anonimi: {e}")
+        await interaction.followup.send("❌ Errore nel recupero del database.", ephemeral=True)
+
 # --- COMANDO INIZIA RACCOLTA ---
 @bot.tree.command(name="inizia_raccolta", description="Inizia la raccolta di qualcosa")
 @app_commands.describe(cosa="Cosa stai raccogliendo?")
