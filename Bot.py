@@ -302,90 +302,7 @@ async def lista_anonimi(interaction: discord.Interaction):
         print(f"Errore lista_anonimi: {e}")
         await interaction.followup.send("❌ Errore nel recupero del database.", ephemeral=True)
 
-# --- COMANDO INIZIA RACCOLTA ---
-@bot.tree.command(name="inizia_raccolta", description="Inizia la raccolta di qualcosa")
-@app_commands.describe(cosa="Cosa stai raccogliendo?")
-async def inizia_raccolta(interaction: discord.Interaction, cosa: str):
-    await interaction.response.defer()
-    
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        
-        # Registra l'inizio della raccolta (usa l'ora del DB già su Roma)
-        cur.execute("""
-            INSERT INTO sessioni_raccolta (user_id, cosa_raccoglie, inizio_timestamp)
-            VALUES (%s, %s, NOW())
-            ON CONFLICT (user_id) DO UPDATE SET
-                cosa_raccoglie = EXCLUDED.cosa_raccoglie,
-                inizio_timestamp = NOW()
-        """, (str(interaction.user.id), cosa))
-        
-        conn.commit()
-        cur.close()
-        conn.close()
-        
-        embed = discord.Embed(
-            title="INIZIO RACCOLTA",
-            description=f"Hai iniziato la raccolta di: **{cosa}**\nUsa `/finisci_raccolta` per terminare.",
-            color=discord.Color.blue()
-        )
-        await interaction.followup.send(embed=embed)
-        
-    except Exception as e:
-        print(f"Errore inizia_raccolta: {e}")
-        await interaction.followup.send("❌ Errore nel database.", ephemeral=True)
 
-# --- COMANDO FINISCI RACCOLTA ---
-@bot.tree.command(name="finisci_raccolta", description="Finisci la raccolta di qualcosa")
-async def finisci_raccolta(interaction: discord.Interaction):
-    await interaction.response.defer()
-    
-    try:
-        conn = get_db_connection()
-        from psycopg2.extras import RealDictCursor
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        
-        # Recupera dati e calcola i minuti trascorsi
-        cur.execute("""
-            SELECT cosa_raccoglie, 
-            EXTRACT(EPOCH FROM (NOW() - inizio_timestamp)) / 60 AS minuti
-            FROM sessioni_raccolta 
-            WHERE user_id = %s
-        """, (str(interaction.user.id),))
-        
-        res = cur.fetchone()
-        
-        if not res:
-            cur.close()
-            conn.close()
-            return await interaction.followup.send("❌ Non hai nessuna raccolta attiva! Usa `/inizia_raccolta`.", ephemeral=True)
-
-        minuti_totali = int(res['minuti'])
-        oggetto = res['cosa_raccoglie']
-        
-        # Elimina la sessione finita
-        cur.execute("DELETE FROM sessioni_raccolta WHERE user_id = %s", (str(interaction.user.id),))
-        
-        conn.commit()
-        cur.close()
-        conn.close()
-        
-        # Embed di chiusura
-        embed = discord.Embed(
-            title="FINE RACCOLTA",
-            color=discord.Color.green(),
-            timestamp=datetime.datetime.now()
-        )
-        embed.add_field(name="👷 Cittadino", value=interaction.user.mention, inline=True)
-        embed.add_field(name="📦 Raccolto", value=f"**{oggetto}**", inline=True)
-        embed.add_field(name="⏱️ Tempo", value=f"**{minuti_totali} minuti**", inline=False)
-        
-        await interaction.followup.send(content=f"✅ {interaction.user.mention} ha terminato la raccolta.", embed=embed)
-        
-    except Exception as e:
-        print(f"Errore finisci_raccolta: {e}")
-        await interaction.followup.send("❌ Errore nel calcolo dei minuti.", ephemeral=True)
 @bot.tree.command(name="me", description="Esegui un'azione in gioco (Roleplay)")
 @app_commands.describe(azione="Descrivi l'azione che stai compiendo")
 async def me(interaction: discord.Interaction, azione: str):
@@ -440,6 +357,138 @@ async def clear(interaction: discord.Interaction, quantita: int):
     except Exception as e:
         print(f"Errore comando clear: {e}")
         await interaction.followup.send("❌ Si è verificato un errore durante la pulizia.", ephemeral=True)
+# Sostituisci con l'ID reale del tuo ruolo Staff
+ 
+
+# --- COMANDO STAFF: AGGIUNGI DROGA ---
+@bot.tree.command(name="crea_droga", description="Configura una nuova droga (Solo Staff)")
+@app_commands.describe(nome="Nome della droga", quantita="Quanti pezzi si raccolgono al minuto")
+async def crea_droga(interaction: discord.Interaction, nome: str, quantita: int):
+    # Controllo Ruolo Staff
+    if not any(role.id == RUOLO_STAFF_ID for role in interaction.user.roles):
+        return await interaction.response.send_message("❌ Non hai i permessi per usare questo comando.", ephemeral=True)
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO droghe_config (nome, quantita_al_minuto)
+            VALUES (%s, %s)
+            ON CONFLICT (nome) DO UPDATE SET quantita_al_minuto = EXCLUDED.quantita_al_minuto
+        """, (nome.lower(), quantita))
+        conn.commit()
+        cur.close()
+        conn.close()
+        
+        await interaction.response.send_message(f"✅ Droga **{nome}** configurata: {quantita} pezzi/minuto.")
+    except Exception as e:
+        await interaction.response.send_message(f"❌ Errore DB: {e}", ephemeral=True)
+
+# --- AUTOCOMPLETE PER IL COMANDO INIZIA ---
+async def droga_autocomplete(interaction: discord.Interaction, current: str):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    # Cerca le droghe esistenti nella tabella droghe_config
+    cur.execute("SELECT nome FROM droghe_config WHERE nome ILIKE %s LIMIT 25", (f'%{current}%',))
+    choices = [app_commands.Choice(name=row[0].capitalize(), value=row[0]) for row in cur.fetchall()]
+    cur.close()
+    conn.close()
+    return choices
+
+# --- COMANDO INIZIA RACCOLTA ---
+@bot.tree.command(name="inizia_raccolta", description="Inizia la raccolta di una droga specifica")
+@app_commands.autocomplete(cosa=droga_autocomplete)
+async def inizia_raccolta(interaction: discord.Interaction, cosa: str):
+    await interaction.response.defer()
+    
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        # Verifica se la droga scelta esiste effettivamente nella config
+        cur.execute("SELECT nome FROM droghe_config WHERE nome = %s", (cosa,))
+        if not cur.fetchone():
+            cur.close()
+            conn.close()
+            return await interaction.followup.send("❌ Questa droga non è configurata. Usa una delle opzioni suggerite.", ephemeral=True)
+
+        cur.execute("""
+            INSERT INTO sessioni_raccolta (user_id, cosa_raccoglie, inizio_timestamp)
+            VALUES (%s, %s, NOW())
+            ON CONFLICT (user_id) DO UPDATE SET
+                cosa_raccoglie = EXCLUDED.cosa_raccoglie,
+                inizio_timestamp = NOW()
+        """, (str(interaction.user.id), cosa))
+        
+        conn.commit()
+        cur.close()
+        conn.close()
+        
+        embed = discord.Embed(title="🌿 RACCOLTA AVVIATA", color=discord.Color.blue())
+        embed.description = f"Hai iniziato a raccogliere: **{cosa.capitalize()}**\nUsa `/finisci_raccolta` per terminare."
+        await interaction.followup.send(embed=embed)
+        
+    except Exception as e:
+        print(f"Errore inizia_raccolta: {e}")
+        await interaction.followup.send("❌ Errore tecnico nel database.", ephemeral=True)
+
+# --- COMANDO FINISCI RACCOLTA ---
+@bot.tree.command(name="finisci_raccolta", description="Termina la raccolta e ricevi i prodotti")
+async def finisci_raccolta(interaction: discord.Interaction):
+    await interaction.response.defer()
+    
+    try:
+        conn = get_db_connection()
+        from psycopg2.extras import RealDictCursor
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Join tra sessione attiva e configurazione per calcolare il guadagno
+        cur.execute("""
+            SELECT s.cosa_raccoglie, d.quantita_al_minuto,
+            EXTRACT(EPOCH FROM (NOW() - s.inizio_timestamp)) / 60 AS minuti
+            FROM sessioni_raccolta s
+            JOIN droghe_config d ON s.cosa_raccoglie = d.nome
+            WHERE s.user_id = %s
+        """, (str(interaction.user.id),))
+        
+        res = cur.fetchone()
+        
+        if not res:
+            cur.close()
+            conn.close()
+            return await interaction.followup.send("❌ Non hai sessioni di raccolta attive.", ephemeral=True)
+
+        minuti_passati = int(res['minuti'])
+        quantita_guadagnata = minuti_passati * res['quantita_al_minuto']
+        item = res['cosa_raccoglie']
+        
+        # 1. Elimina la sessione
+        cur.execute("DELETE FROM sessioni_raccolta WHERE user_id = %s", (str(interaction.user.id),))
+        
+        # 2. Aggiungi all'inventario se ha raccolto almeno qualcosa
+        if quantita_guadagnata > 0:
+            cur.execute("""
+                INSERT INTO inventory (user_id, item_name, quantity)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (user_id, item_name) DO UPDATE SET
+                quantity = inventory.quantity + EXCLUDED.quantity
+            """, (str(interaction.user.id), item, quantita_guadagnata))
+        
+        conn.commit()
+        cur.close()
+        conn.close()
+        
+        embed = discord.Embed(title="📦 RACCOLTA COMPLETATA", color=discord.Color.green())
+        embed.add_field(name="Cittadino", value=interaction.user.mention, inline=True)
+        embed.add_field(name="Prodotto", value=item.capitalize(), inline=True)
+        embed.add_field(name="Tempo", value=f"{minuti_passati} minuti", inline=True)
+        embed.add_field(name="Quantità Ricevuta", value=f"**x{quantita_guadagnata}**", inline=False)
+        
+        await interaction.followup.send(embed=embed)
+        
+    except Exception as e:
+        print(f"Errore finisci_raccolta: {e}")
+        await interaction.followup.send("❌ Errore nel processare la fine della raccolta.", ephemeral=True)
 
 @bot.command()
 @commands.is_owner() # Solo il proprietario del bot può usarlo per sicurezza
