@@ -182,7 +182,79 @@ async def cerca_item_smart(interaction: Interaction, nome_input: str, modo="item
     await view.wait()
     return view.value
     
+# --- 1. COMANDO CREA (Solo Admin) ---
+@tree.command(name="crea", description="Invia l'embed base con immagine")
+@app_commands.checks.has_permissions(administrator=True)
+async def crea(interaction: Interaction, testo: str, url_immagine: str):
+    # Creazione dell'embed con lo stile scuro di Discord
+    embed = Embed(description=testo, color=0x2b2d31)
+    embed.set_image(url=url_immagine)
     
+    # Invia il messaggio iniziale
+    await interaction.response.send_message(embed=embed)
+
+
+# --- 2. COMANDO AGGIUNGI BOTTONE (Solo Admin) ---
+@tree.command(name="aggiungi", description="Aggiunge un bottone link a un messaggio esistente")
+@app_commands.checks.has_permissions(administrator=True)
+async def aggiungi(
+    interaction: Interaction, 
+    id_messaggio: str, 
+    testo_bottone: str, 
+    link: str, 
+    emoji: str = None
+):
+    canale = interaction.channel
+    messaggio = await canale.fetch_message(int(id_messaggio))
+    
+    # Prepariamo la View (il contenitore dei bottoni)
+    view = View()
+    
+    # Se il messaggio ha già bottoni, li recuperiamo per non sovrascriverli
+    if messaggio.components:
+        for riga in messaggio.components:
+            for comp in riga.children:
+                view.add_item(Button(label=comp.label, url=comp.url, emoji=comp.emoji))
+
+    # Aggiungiamo il nuovo bottone "a mano"
+    view.add_item(Button(label=testo_bottone, url=link, emoji=emoji))
+
+    # Modifica il messaggio aggiungendo i componenti
+    await messaggio.edit(view=view)
+    await interaction.response.send_message(f"✅ Bottone '{testo_bottone}' aggiunto con successo!", ephemeral=True)
+
+
+# --- 3. COMANDO AGGIORNA CONTENUTO (Solo Admin) ---
+@tree.command(name="aggiorna", description="Modifica testo o immagine senza cambiare i bottoni")
+@app_commands.checks.has_permissions(administrator=True)
+async def aggiorna(
+    interaction: Interaction, 
+    id_messaggio: str, 
+    nuovo_testo: str = None, 
+    nuova_img: str = None
+):
+    canale = interaction.channel
+    messaggio = await canale.fetch_message(int(id_messaggio))
+    
+    # Prendiamo l'embed esistente e modifichiamo solo i campi forniti
+    embed = messaggio.embeds[0]
+    
+    if nuovo_testo:
+        embed.description = nuovo_testo
+    if nuova_img:
+        embed.set_image(url=nuova_img)
+        
+    await messaggio.edit(embed=embed)
+    await interaction.response.send_message("✅ Contenuto dell'embed aggiornato!", ephemeral=True)
+
+# --- GESTIONE ERRORI PERMESSI ---
+@crea.error
+@aggiungi.error
+@aggiorna.error
+async def admin_error(interaction: Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, app_commands.MissingPermissions):
+        await interaction.response.send_message("❌ Non hai i permessi di Amministratore per usare questo comando!", ephemeral=True)
+
 @bot.tree.command(name="lista_anonimi", description="Mostra la lista di tutti i nickname anonimi associati agli utenti")
 async def lista_anonimi(interaction: discord.Interaction):
     # Controllo se l'utente è staff o admin per evitare che tutti vedano i nomi
