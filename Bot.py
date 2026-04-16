@@ -395,22 +395,22 @@ async def anonimo(interaction: discord.Interaction, messaggio: str, nickname: st
         await interaction.followup.send("❌ Errore critico nel sistema di criptazione.", ephemeral=True)
 
 
-# --- NUOVO EVENTO PER LO STAFF ---
 @bot.event
 async def on_raw_reaction_add(payload):
-    # Configura qui l'ID del ruolo staff
-    ID_RUOLO_STAFF = 1465432717645713428
+    # 1. Configurazione ID Ruolo Staff
+    ID_RUOLO_STAFF = 123456789012345678 
     
+    # 2. Filtro: solo l'emoji corretta e non il bot stesso
     if str(payload.emoji) != "❓" or payload.user_id == bot.user.id:
         return
 
+    # 3. Recupero Server e Membro
     guild = bot.get_guild(payload.guild_id)
     if not guild: return
-    
     member = guild.get_member(payload.user_id)
     if not member: return
 
-    # Controllo permessi: Ruolo Staff o Amministratore
+    # 4. Controllo Permessi Staff
     is_staff = any(r.id == ID_RUOLO_STAFF for r in member.roles) or member.guild_permissions.administrator
 
     if is_staff:
@@ -424,17 +424,26 @@ async def on_raw_reaction_add(payload):
                 utente_id = int(res['user_id'])
                 utente = await bot.fetch_user(utente_id)
                 
+                # Invio il DM allo staffer
                 info_embed = discord.Embed(title="🔍 Identità Svelata", color=discord.Color.red())
                 info_embed.add_field(name="Messaggio ID", value=f"`{payload.message_id}`", inline=False)
                 info_embed.add_field(name="Autore", value=f"{utente.mention} ({utente.name})", inline=True)
                 info_embed.add_field(name="ID Utente", value=f"`{utente_id}`", inline=True)
                 
                 await member.send(embed=info_embed)
+
+                # --- RIMOZIONE REAZIONE (Il punto critico) ---
+                channel = bot.get_channel(payload.channel_id)
+                if channel:
+                    # Usiamo fetch_message perché il messaggio potrebbe non essere in cache
+                    msg = await channel.fetch_message(payload.message_id)
+                    await msg.remove_reaction(payload.emoji, member)
             
             cur.close()
             conn.close()
         except Exception as e:
-            print(f"Errore reazione staff: {e}")
+            print(f"Errore durante la rimozione o l'invio DM: {e}")
+
 
 # --- COMANDO SONDAGGIO ---
 @bot.tree.command(name="sondaggio", description="Crea un sondaggio per l'orario dell'RP")
