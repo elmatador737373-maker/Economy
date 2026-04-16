@@ -189,7 +189,11 @@ async def crea(interaction: discord.Interaction, testo: str, url_immagine: str):
     embed = discord.Embed(description=testo, color=0x2b2d31)
     embed.set_image(url=url_immagine)
     await interaction.response.send_message(embed=embed)
-
+    
+    
+    
+    
+    
 # --- 2. COMANDO AGGIUNGI BOTTONE ---
 @bot.tree.command(name="aggiungi", description="Aggiunge un bottone link a un messaggio esistente")
 @discord.app_commands.checks.has_permissions(administrator=True)
@@ -209,6 +213,114 @@ async def aggiungi(interaction: discord.Interaction, id_messaggio: str, testo_bo
         await interaction.response.send_message(f"✅ Bottone '{testo_bottone}' aggiunto!", ephemeral=True)
     except Exception as e:
         await interaction.response.send_message(f"❌ Errore: {e}", ephemeral=True)
+# --- COMANDO ADMIN: CREA CONFIGURAZIONE RAPINA ---
+@bot.tree.command(name="crea_rapina", description="Configura una nuova rapina (Solo Admin)")
+@app_commands.describe(
+    nome="Nome del luogo (es: Banca, Gioielleria)", 
+    tempo="Secondi necessari per lo scasso", 
+    paga_min="Guadagno minimo", 
+    paga_max="Guadagno massimo"
+)
+@app_commands.checks.has_permissions(administrator=True) # Controllo nativo permessi Admin
+async def crea_rapina(interaction: discord.Interaction, nome: str, tempo: int, paga_min: int, paga_max: int):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO rapine_config (nome, tempo_scasso, paga_min, paga_max)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (nome) DO UPDATE SET 
+            tempo_scasso = EXCLUDED.tempo_scasso, 
+            paga_min = EXCLUDED.paga_min, 
+            paga_max = EXCLUDED.paga_max
+        """, (nome.lower(), tempo, paga_min, paga_max))
+        conn.commit()
+        cur.close()
+        conn.close()
+        await interaction.response.send_message(f"✅ Sede rapina **{nome.upper()}** configurata con successo!")
+    except Exception as e:
+        await interaction.response.send_message(f"❌ Errore nel database: {e}", ephemeral=True)
+
+# --- AUTOCOMPLETE PER LE RAPINE ---
+async def rapina_autocomplete(interaction: discord.Interaction, current: str):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT nome FROM rapine_config WHERE nome ILIKE %s LIMIT 25", (f'%{current}%',))
+    choices = [app_commands.Choice(name=row[0].title(), value=row[0]) for row in cur.fetchall()]
+    cur.close()
+    conn.close()
+    return choices
+
+# --- COMANDO INIZIA RAPINA ---
+@bot.tree.command(name="inizia_rapina", description="Inizia a scassinare un luogo configurato")
+@app_commands.autocomplete(luogo=rapina_autocomplete)
+async def inizia_rapina(interaction: discord.Interaction, luogo: str):
+    await interaction.response.defer()
+    
+    conn = get_db_connection()
+    from psycopg2.extras import RealDictCursor
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    
+    # Recupera i dati della rapina
+    cur.execute("SELECT * FROM rapine_config WHERE nome = %s", (luogo,))
+    config = cur.fetchone()
+    
+    if not config:
+        cur.close()
+        conn.close()
+        return await interaction.followup.send("❌ Questo luogo non esiste o non è stato ancora configurato dagli admin.", ephemeral=True)
+
+    tempo_rimanente = config['tempo_scasso']
+    # Scegliamo la paga subito ma la consegniamo solo alla fine
+    paga_finale = random.randint(config['paga_min'], config['paga_max'])
+    
+    embed = discord.Embed(
+        title="🚨 RAPINA IN CORSO",
+        description=f"Stai scassinando: **{luogo.upper()}**",
+        color=discord.Color.red()
+    )
+    embed.add_field(name="Stato", value="🛠️ Scassinamento in corso...")
+    embed.add_field(name="Timer", value=f"⏳ `{tempo_rimanente}s` rimanenti")
+    embed.set_footer(text="Se lasci il canale o cancelli il messaggio, la rapina fallirà.")
+    
+    messaggio_rapina = await interaction.followup.send(embed=embed)
+
+    # Ciclo di aggiornamento del timer (ogni 5 secondi per evitare lag/rate limit)
+    while tempo_rimanente > 0:
+        await asyncio.sleep(5)
+        tempo_rimanente -= 5
+        if tempo_rimanente < 0: tempo_rimanente = 0
+        
+        embed.set_field_at(1, name="Timer", value=f"⏳ `{tempo_rimanente}s` rimanenti")
+        try:
+            await messaggio_rapina.edit(embed=embed)
+        except:
+            # Se il messaggio viene eliminato, fermiamo il processo per sicurezza
+            cur.close()
+            conn.close()
+            return
+
+    # --- CONCLUSIONE E PAGAMENTO ---
+    try:
+        # Aggiunge i soldi al wallet dell'utente nella tabella users
+        cur.execute("UPDATE users SET wallet = wallet + %s WHERE user_id = %s", (paga_finale, str(interaction.user.id)))
+        conn.commit()
+        
+        embed.title = "✅ RAPINA RIUSCITA"
+        embed.color = discord.Color.green()
+        embed.set_field_at(0, name="Stato", value="💰 Colpo messo a segno!")
+        embed.set_field_at(1, name="Bottino", value=f"**+{paga_finale}€** trasferiti nel portafoglio.")
+        embed.set_footer(text="Ottimo lavoro, dileguati!")
+        
+        await messaggio_rapina.edit(embed=embed)
+        await interaction.channel.send(f"⚠️ **ALLARME:** {interaction.user.mention} ha appena svaligiato **{luogo.title()}** fuggendo con il bottino!")
+
+    except Exception as e:
+        print(f"Errore pagamento rapina: {e}")
+        await interaction.followup.send("❌ Errore durante il versamento del bottino.", ephemeral=True)
+    finally:
+        cur.close()
+        conn.close()
 
 # --- 3. COMANDO AGGIORNA CONTENUTO ---
 @bot.tree.command(name="aggiorna", description="Modifica testo o immagine dell'embed")
