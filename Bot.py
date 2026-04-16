@@ -319,6 +319,17 @@ async def clear(interaction: discord.Interaction, quantita: int):
     except Exception as e:
         print(f"Errore comando clear: {e}")
         await interaction.followup.send("❌ Si è verificato un errore durante la pulizia.", ephemeral=True)
+
+@bot.command()
+@commands.is_owner() # Solo il proprietario del bot può usarlo per sicurezza
+async def sync(ctx):
+    try:
+        # Sincronizza i comandi con l'API di Discord
+        synced = await bot.tree.sync()
+        await ctx.send(f"✅ Sincronizzazione completata! {len(synced)} comandi slash sono ora attivi.")
+    except Exception as e:
+        await ctx.send(f"❌ Si è verificato un errore durante il sync: {e}")
+# --- COMANDO AGGIORNATO ---
 @bot.tree.command(name="anonimo", description="Invia un messaggio criptato sulla rete segreta")
 @app_commands.describe(
     messaggio="Il testo del messaggio segreto",
@@ -329,7 +340,6 @@ async def anonimo(interaction: discord.Interaction, messaggio: str, nickname: st
     
     try:
         conn = get_db_connection()
-        from psycopg2.extras import RealDictCursor
         cur = conn.cursor(cursor_factory=RealDictCursor)
         
         cur.execute("SELECT nickname FROM utenti_anonimi WHERE user_id = %s", (str(interaction.user.id),))
@@ -350,9 +360,6 @@ async def anonimo(interaction: discord.Interaction, messaggio: str, nickname: st
             """, (str(interaction.user.id), nickname))
             conn.commit()
             
-        cur.close()
-        conn.close()
-        
         desc_testo = (
             f"```\n"
             f"SISTEMA: Connessione Criptata\n"
@@ -370,21 +377,64 @@ async def anonimo(interaction: discord.Interaction, messaggio: str, nickname: st
         )
         embed.set_footer(text="Tracciamento IP: Fallito • Rete Anonima")
         
-        await interaction.channel.send(embed=embed)
+        # Invio e salvataggio ID messaggio per futura investigazione
+        msg_inviato = await interaction.channel.send(embed=embed)
+        
+        # Logghiamo il legame tra messaggio e utente nel DB
+        cur.execute("INSERT INTO messaggi_anonimi (message_id, user_id) VALUES (%s, %s)", 
+                    (str(msg_inviato.id), str(interaction.user.id)))
+        conn.commit()
+            
+        cur.close()
+        conn.close()
+        
         await interaction.followup.send("✅ Messaggio inviato in totale anonimato.", ephemeral=True)
 
     except Exception as e:
         print(f"Errore anonimo: {e}")
         await interaction.followup.send("❌ Errore critico nel sistema di criptazione.", ephemeral=True)
-@bot.command()
-@commands.is_owner() # Solo il proprietario del bot può usarlo per sicurezza
-async def sync(ctx):
-    try:
-        # Sincronizza i comandi con l'API di Discord
-        synced = await bot.tree.sync()
-        await ctx.send(f"✅ Sincronizzazione completata! {len(synced)} comandi slash sono ora attivi.")
-    except Exception as e:
-        await ctx.send(f"❌ Si è verificato un errore durante il sync: {e}")
+
+
+# --- NUOVO EVENTO PER LO STAFF ---
+@bot.event
+async def on_raw_reaction_add(payload):
+    # Configura qui l'ID del ruolo staff
+    ID_RUOLO_STAFF = 123456789012345678 
+    
+    if str(payload.emoji) != "❓" or payload.user_id == bot.user.id:
+        return
+
+    guild = bot.get_guild(payload.guild_id)
+    if not guild: return
+    
+    member = guild.get_member(payload.user_id)
+    if not member: return
+
+    # Controllo permessi: Ruolo Staff o Amministratore
+    is_staff = any(r.id == ID_RUOLO_STAFF for r in member.roles) or member.guild_permissions.administrator
+
+    if is_staff:
+        try:
+            conn = get_db_connection()
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+            cur.execute("SELECT user_id FROM messaggi_anonimi WHERE message_id = %s", (str(payload.message_id),))
+            res = cur.fetchone()
+            
+            if res:
+                utente_id = int(res['user_id'])
+                utente = await bot.fetch_user(utente_id)
+                
+                info_embed = discord.Embed(title="🔍 Identità Svelata", color=discord.Color.red())
+                info_embed.add_field(name="Messaggio ID", value=f"`{payload.message_id}`", inline=False)
+                info_embed.add_field(name="Autore", value=f"{utente.mention} ({utente.name})", inline=True)
+                info_embed.add_field(name="ID Utente", value=f"`{utente_id}`", inline=True)
+                
+                await member.send(embed=info_embed)
+            
+            cur.close()
+            conn.close()
+        except Exception as e:
+            print(f"Errore reazione staff: {e}")
 
 # --- COMANDO SONDAGGIO ---
 @bot.tree.command(name="sondaggio", description="Crea un sondaggio per l'orario dell'RP")
