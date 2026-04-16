@@ -1041,6 +1041,118 @@ POLIZIA_ROLE_ID = 1359569600198611104
 # --- FUNZIONE DI CONTROLLO POLIZIA ---
 def is_polizia(interaction: discord.Interaction):
     return any(role.id == POLIZIA_ROLE_ID for role in interaction.user.roles)
+# Sostituisci con l'ID reale del ruolo Polizia
+
+# --- COMANDO: SEQUESTRA MEZZO ---
+@bot.tree.command(name="sequestra_mezzo", description="Metti sotto sequestro un veicolo (Solo Polizia)")
+@app_commands.describe(targa="La targa del veicolo da sequestrare")
+async def sequestra_mezzo(interaction: discord.Interaction, targa: str):
+    # Controllo Ruolo Polizia
+    if not any(role.id == POLIZIA_ROLE_ID for role in interaction.user.roles):
+        return await interaction.response.send_message("❌ Non sei autorizzato a eseguire sequestri.", ephemeral=True)
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        # Controlla se il veicolo esiste
+        cur.execute("SELECT modello, owner_id FROM veicoli WHERE targa = %s", (targa.upper(),))
+        veicolo = cur.fetchone()
+        
+        if not veicolo:
+            cur.close()
+            conn.close()
+            return await interaction.response.send_message(f"❌ Nessun veicolo trovato con targa **{targa.upper()}**.", ephemeral=True)
+
+        # Aggiorna lo stato in sequestrato
+        cur.execute("UPDATE veicoli SET sequestrato = TRUE WHERE targa = %s", (targa.upper(),))
+        
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        embed = discord.Embed(
+            title="🚔 SEQUESTRO EFFETTUATO",
+            description=f"Il veicolo con targa **{targa.upper()}** è stato posto sotto sequestro.",
+            color=discord.Color.dark_red()
+        )
+        embed.add_field(name="Modello", value=veicolo[0])
+        embed.add_field(name="Proprietario", value=f"<@{veicolo[1]}>")
+        embed.set_footer(text=f"Agente: {interaction.user.display_name}")
+
+        await interaction.response.send_message(embed=embed)
+
+    except Exception as e:
+        await interaction.response.send_message(f"❌ Errore: {e}", ephemeral=True)
+
+# --- COMANDO: LISTA E DISSEQUESTRO ---
+@bot.tree.command(name="gestisci_sequestri", description="Visualizza e gestisci i mezzi sequestrati (Solo Polizia)")
+async def gestisci_sequestri(interaction: discord.Interaction):
+    if not any(role.id == POLIZIA_ROLE_ID for role in interaction.user.roles):
+        return await interaction.response.send_message("❌ Accesso negato.", ephemeral=True)
+
+    await interaction.response.defer()
+
+    try:
+        conn = get_db_connection()
+        from psycopg2.extras import RealDictCursor
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Recupera tutti i mezzi sequestrati
+        cur.execute("SELECT targa, modello, owner_id FROM veicoli WHERE sequestrato = TRUE")
+        sequestrati = cur.fetchall()
+        
+        if not sequestrati:
+            cur.close()
+            conn.close()
+            return await interaction.followup.send("📑 Non ci sono veicoli attualmente sotto sequestro.")
+
+        embed = discord.Embed(
+            title="📋 REGISTRO SEQUESTRI",
+            description="Ecco la lista dei mezzi nel deposito giudiziario:",
+            color=discord.Color.blue()
+        )
+
+        for v in sequestrati:
+            embed.add_field(
+                name=f"🚗 {v['modello']} ({v['targa']})",
+                value=f"Proprietario: <@{v['owner_id']}>\nPer dissequestrare: `/dissequestra {v['targa']}`",
+                inline=False
+            )
+
+        cur.close()
+        conn.close()
+        await interaction.followup.send(embed=embed)
+
+    except Exception as e:
+        await interaction.followup.send(f"❌ Errore nel recupero dati: {e}", ephemeral=True)
+
+# --- COMANDO: DISSEQUESTRA (SOTTO-COMANDO DI SUPPORTO) ---
+@bot.tree.command(name="dissequestra", description="Rilascia un veicolo dal sequestro (Solo Polizia)")
+@app_commands.describe(targa="Targa del veicolo da rilasciare")
+async def dissequestra(interaction: discord.Interaction, targa: str):
+    if not any(role.id == POLIZIA_ROLE_ID for role in interaction.user.roles):
+        return await interaction.response.send_message("❌ Non autorizzato.", ephemeral=True)
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        cur.execute("UPDATE veicoli SET sequestrato = FALSE WHERE targa = %s AND sequestrato = TRUE", (targa.upper(),))
+        
+        if cur.rowcount == 0:
+            cur.close()
+            conn.close()
+            return await interaction.response.send_message("❌ Il veicolo non è sotto sequestro o la targa è errata.", ephemeral=True)
+
+        conn.commit()
+        cur.close()
+        conn.close()
+        
+        await interaction.response.send_message(f"✅ Il veicolo **{targa.upper()}** è stato dissequestrato e restituito al proprietario.")
+        
+    except Exception as e:
+        await interaction.response.send_message(f"❌ Errore DB: {e}", ephemeral=True)
 
 # --- COMANDO /MULTA ---
 @bot.tree.command(name="multa", description="Emetti una sanzione a un cittadino")
@@ -1211,119 +1323,141 @@ async def arresto(interaction: discord.Interaction, utente: discord.Member, temp
     except Exception as e:
         print(f"Errore arresto: {e}")
         await interaction.followup.send("❌ Errore nel salvataggio dell'arresto.")
-@bot.tree.command(name="ricerca_cittadino", description="Ricerca avanzata: usa il TAG o NOME e COGNOME")
+# --- CLASSE PER IL MENU DI SCELTA CITTADINO ---
+class CitizenSelect(discord.ui.Select):
+    def __init__(self, options, original_interaction):
+        super().__init__(placeholder="Seleziona il cittadino corretto...", options=options)
+        self.original_interaction = original_interaction
+
+    async def callback(self, interaction: discord.Interaction):
+        # Quando l'utente seleziona qualcuno dal menu, richiamiamo la visualizzazione del fascicolo
+        await interaction.response.defer()
+        target_id = self.values[0]
+        # Funzione helper per mostrare il fascicolo (definita sotto)
+        await mostra_fascicolo(interaction, target_id, self.original_interaction)
+
+class CitizenView(discord.ui.View):
+    def __init__(self, options, original_interaction):
+        super().__init__(timeout=60)
+        self.add_item(CitizenSelect(options, original_interaction))
+
+# --- COMANDO RICERCA AGGIORNATO ---
+@bot.tree.command(name="ricerca_cittadino", description="Ricerca avanzata con selezione multipla")
 @app_commands.describe(
     cittadino="Tagga l'utente (opzionale)",
-    nome="Nome nel documento (opzionale)",
-    cognome="Cognome nel documento (opzionale)"
+    nome="Nome o parte del nome (opzionale)",
+    cognome="Cognome o parte del cognome (opzionale)"
 )
 async def ricerca(interaction: discord.Interaction, cittadino: discord.Member = None, nome: str = None, cognome: str = None):
-    if not is_polizia(interaction):
+    if not any(role.id == POLIZIA_ROLE_ID for role in interaction.user.roles):
         return await interaction.response.send_message("❌ Accesso negato.", ephemeral=True)
     
     await interaction.response.defer()
-
-    target_id = None
-    target_member = None
 
     try:
         conn = get_db_connection()
         from psycopg2.extras import RealDictCursor
         cur = conn.cursor(cursor_factory=RealDictCursor)
 
-        # --- LOGICA DI RICERCA INTELLIGENTE ---
         if cittadino:
-            # Caso 1: Ricerca per TAG
-            target_id = str(cittadino.id)
-            target_member = cittadino
-        elif nome and cognome:
-            # Caso 2: Ricerca per Nome e Cognome
-            cur.execute("""
-                SELECT user_id FROM documenti 
-                WHERE LOWER(nome) = LOWER(%s) AND LOWER(cognome) = LOWER(%s)
-            """, (nome, cognome))
-            res_doc = cur.fetchone()
-            if res_doc:
-                target_id = res_doc['user_id']
-                # Proviamo a recuperare il membro dal server per l'avatar, se c'è
-                target_member = interaction.guild.get_member(int(target_id))
-            else:
-                cur.close()
-                conn.close()
-                return await interaction.followup.send(f"❌ Nessun cittadino trovato con il nome: **{nome} {cognome}**.")
-        else:
             cur.close()
             conn.close()
-            return await interaction.followup.send("⚠️ Devi taggare qualcuno o inserire sia Nome che Cognome!")
+            return await mostra_fascicolo(interaction, str(cittadino.id))
 
-        # --- RECUPERO DATI DAL FASCICOLO ---
-        # 1. Dati Documento
+        if nome or cognome:
+            search_nome = f"%{nome}%" if nome else "%"
+            search_cognome = f"%{cognome}%" if cognome else "%"
+
+            cur.execute("""
+                SELECT user_id, nome, cognome FROM documenti 
+                WHERE nome ILIKE %s AND cognome ILIKE %s
+                LIMIT 25
+            """, (search_nome, search_cognome))
+            
+            results = cur.fetchall()
+            cur.close()
+            conn.close()
+
+            if not results:
+                return await interaction.followup.send("❌ Nessun cittadino trovato.")
+            
+            if len(results) == 1:
+                # Un solo risultato, vai diretto
+                return await mostra_fascicolo(interaction, results[0]['user_id'])
+            
+            # Più risultati: crea il menu a tendina
+            options = [
+                discord.SelectOption(
+                    label=f"{r['nome']} {r['cognome']}", 
+                    description=f"ID: {r['user_id']}", 
+                    value=r['user_id']
+                ) for r in results
+            ]
+            
+            view = CitizenView(options, interaction)
+            await interaction.followup.send("🔎 Ho trovato più persone. Seleziona quella corretta:", view=view)
+        else:
+            return await interaction.followup.send("⚠️ Inserisci un TAG o un Nome/Cognome.")
+
+    except Exception as e:
+        print(f"Errore ricerca: {e}")
+        await interaction.followup.send("❌ Errore nel database.")
+
+# --- FUNZIONE HELPER PER MOSTRARE IL FASCICOLO ---
+async def mostra_fascicolo(interaction, target_id, original_interaction=None):
+    # original_interaction serve se stiamo rispondendo a una selezione dal menu
+    ctx = interaction if not original_interaction else original_interaction
+    
+    try:
+        conn = get_db_connection()
+        from psycopg2.extras import RealDictCursor
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Query dati (Documenti, Veicoli, Multe, Arresti)
         cur.execute("SELECT * FROM documenti WHERE user_id = %s", (target_id,))
         doc = cur.fetchone()
-        
-        # 2. Veicoli (Recupera TUTTI i veicoli)
-        cur.execute("SELECT targa, modello FROM veicoli WHERE owner_id = %s", (target_id,))
+        cur.execute("SELECT targa, modello, sequestrato FROM veicoli WHERE owner_id = %s", (target_id,))
         veicoli = cur.fetchall()
-        
-        # 3. Multe Pendenti
         cur.execute("SELECT * FROM multe WHERE user_id = %s", (target_id,))
         multe = cur.fetchall()
-        
-        # 4. Storico Arresti (ultimi 5)
         cur.execute("SELECT * FROM arresti WHERE user_id = %s ORDER BY id_arresto DESC LIMIT 5", (target_id,))
         arresti = cur.fetchall()
-        
         cur.close()
         conn.close()
 
-        # --- COSTRUZIONE EMBED ---
-        embed = discord.Embed(
-            title=f"📁 FASCICOLO FEDERALE",
-            color=discord.Color.dark_blue(),
-            timestamp=datetime.datetime.now()
-        )
+        target_member = ctx.guild.get_member(int(target_id))
+        nome_display = f"{doc['nome']} {doc['cognome']}" if doc else "Sconosciuto"
         
-        # Gestione Avatar e Titolo
-        nome_display = f"{doc['nome']} {doc['cognome']}" if doc else (target_member.display_name if target_member else "Sconosciuto")
-        embed.description = f"**Soggetto:** {nome_display}\n**ID Discord:** `{target_id}`"
+        embed = discord.Embed(title=f"📁 FASCICOLO: {nome_display}", color=discord.Color.dark_blue())
+        embed.description = f"**ID Discord:** `{target_id}`"
         
         if target_member:
             embed.set_thumbnail(url=target_member.display_avatar.url)
 
-        # Sezione Anagrafica
         if doc:
-            embed.add_field(name="🪪 Dati Anagrafici", 
-                value=f"**Nascita:** {doc['data_nascita']} ({doc['luogo_nascita']})\n**Sesso:** {doc['genere']} | **H:** {doc['altezza']}cm", 
-                inline=False)
-        else:
-            embed.add_field(name="🪪 Dati Anagrafici", value="⚠️ Documento non registrato.", inline=False)
-
-        # Sezione Veicoli
+            embed.add_field(name="🪪 Anagrafica", value=f"Nascita: {doc['data_nascita']} ({doc['luogo_nascita']})\nSesso: {doc['genere']} | H: {doc['altezza']}cm", inline=False)
+        
         if veicoli:
-            lista_v = "\n".join([f"• `{v['targa']}` - {v['modello']}" for v in veicoli])
-            embed.add_field(name="🚘 Veicoli Intestati", value=lista_v, inline=False)
-        else:
-            embed.add_field(name="🚘 Veicoli Intestati", value="Nessun veicolo registrato.", inline=False)
-
-        # Sezione Multe
+            v_list = "\n".join([f"• `{v['targa']}` - {v['modello']} {'(🚫)' if v['sequestrato'] else ''}" for v in veicoli])
+            embed.add_field(name="🚘 Veicoli", value=v_list, inline=False)
+        
         if multe:
-            lista_m = "\n".join([f"• **{m['ammontare']}$** - {m['motivo']} ({m['data']})" for m in multe])
-            embed.add_field(name="⚠️ Multe Pendenti", value=lista_m, inline=False)
-        else:
-            embed.add_field(name="⚠️ Multe Pendenti", value="Nessuna multa.", inline=False)
+            m_list = "\n".join([f"• {m['ammontare']}€ - {m['motivo']}" for m in multe])
+            embed.add_field(name="⚠️ Multe", value=m_list, inline=False)
 
-        # Sezione Arresti
         if arresti:
-            lista_a = "\n".join([f"• {a['data']}: {a['motivo']} ({a['tempo']} min)" for a in arresti])
-            embed.add_field(name="🚔 Cronologia Arresti", value=lista_a, inline=False)
-        else:
-            embed.add_field(name="🚔 Cronologia Arresti", value="Incensurato.", inline=False)
+            a_list = "\n".join([f"• {a['data']}: {a['motivo']}" for a in arresti])
+            embed.add_field(name="🚔 Arresti", value=a_list, inline=False)
 
-        await interaction.followup.send(embed=embed)
+        # Se veniamo dal menu, dobbiamo usare followup.send o edit_original_response
+        if original_interaction:
+            await interaction.followup.send(embed=embed)
+        else:
+            await ctx.followup.send(embed=embed)
 
     except Exception as e:
-        print(f"Errore ricerca intelligente: {e}")
-        await interaction.followup.send("❌ Errore durante l'interrogazione del database.")
+        print(f"Errore mostra_fascicolo: {e}")
+
 
 
 
@@ -1563,45 +1697,115 @@ async def registra_veicolo(
         print(f"Errore registrazione veicolo: {e}")
         await interaction.followup.send("❌ Errore durante la registrazione nel database.", ephemeral=True)
 
-@bot.tree.command(name="ricerca_targa", description="Interroga il database motorizzazione tramite targa")
+# --- CLASSE PER IL MENU DI SCELTA TARGA ---
+class TargaSelect(discord.ui.Select):
+    def __init__(self, options, original_interaction):
+        super().__init__(placeholder="Seleziona il veicolo corretto...", options=options)
+        self.original_interaction = original_interaction
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        # Chiamiamo la funzione di visualizzazione usando la targa selezionata
+        await mostra_risultato_targa(interaction, self.values[0], self.original_interaction)
+
+class TargaView(discord.ui.View):
+    def __init__(self, options, original_interaction):
+        super().__init__(timeout=60)
+        self.add_item(TargaSelect(options, original_interaction))
+
+# --- COMANDO RICERCA TARGA ---
+@bot.tree.command(name="ricerca_targa", description="Ricerca nel database motorizzazione (anche targa parziale)")
+@app_commands.describe(targa="Inserisci la targa o parte di essa")
 async def ricerca_targa(interaction: discord.Interaction, targa: str):
-    if not is_polizia(interaction): # Usa la tua funzione di controllo polizia
+    if not any(role.id == POLIZIA_ROLE_ID for role in interaction.user.roles):
         return await interaction.response.send_message("❌ Accesso negato.", ephemeral=True)
     
     await interaction.response.defer()
-    targa_clean = targa.upper().replace(" ", "")
+    targa_query = f"%{targa.upper().replace(' ', '')}%"
 
     try:
         conn = get_db_connection()
         from psycopg2.extras import RealDictCursor
         cur = conn.cursor(cursor_factory=RealDictCursor)
         
-        # Uniamo i dati di veicoli e documenti in una sola query
+        # Cerchiamo i veicoli che corrispondono alla targa parziale
         cur.execute("""
-            SELECT v.targa, v.modello, v.owner_id, d.nome, d.cognome 
+            SELECT targa, modello 
+            FROM veicoli 
+            WHERE targa ILIKE %s 
+            LIMIT 25
+        """, (targa_query,))
+        
+        results = cur.fetchall()
+        cur.close()
+        conn.close()
+
+        if not results:
+            return await interaction.followup.send(f"⚠️ Nessun veicolo trovato con targa simile a `{targa.upper()}`.")
+
+        if len(results) == 1:
+            # Risultato univoco
+            return await mostra_risultato_targa(interaction, results[0]['targa'])
+        
+        # Più risultati: mostra il menu
+        options = [
+            discord.SelectOption(
+                label=f"Targa: {r['targa']}", 
+                description=f"Modello: {r['modello']}", 
+                value=r['targa']
+            ) for r in results
+        ]
+        
+        view = TargaView(options, interaction)
+        await interaction.followup.send(f"🔎 Ho trovato {len(results)} targhe simili. Scegli quella corretta:", view=view)
+
+    except Exception as e:
+        print(f"Errore ricerca_targa: {e}")
+        await interaction.followup.send("❌ Errore nel database.")
+
+# --- FUNZIONE HELPER PER MOSTRARE IL RISULTATO ---
+async def mostra_risultato_targa(interaction, targa_exact, original_interaction=None):
+    ctx = interaction if not original_interaction else original_interaction
+    
+    try:
+        conn = get_db_connection()
+        from psycopg2.extras import RealDictCursor
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        
+        cur.execute("""
+            SELECT v.*, d.nome, d.cognome 
             FROM veicoli v
             LEFT JOIN documenti d ON v.owner_id = d.user_id
             WHERE v.targa = %s
-        """, (targa_clean,))
+        """, (targa_exact,))
         
         res = cur.fetchone()
         cur.close()
         conn.close()
 
         if not res:
-            return await interaction.followup.send(f"⚠️ La targa `{targa_clean}` non risulta nel database.")
+            return await ctx.followup.send("❌ Errore: veicolo scomparso dal database.")
 
-        embed = discord.Embed(title="🔍 Risultato Ricerca Targa", color=discord.Color.blue())
-        embed.add_field(name="🚘 Veicolo", value=f"**Modello:** {res['modello']}\n**Targa:** `{res['targa']}`", inline=False)
+        embed = discord.Embed(title="🔍 RISULTATO MOTORIZZAZIONE", color=discord.Color.blue())
         
-        proprietario = f"{res['nome']} {res['cognome']}" if res['nome'] else "Documento non registrato"
-        embed.add_field(name="👤 Proprietario", value=f"**Nome:** {proprietario}\n**Menzione:** <@{res['owner_id']}>", inline=False)
+        # Stato Sequestro (se presente nella tabella come visto nei messaggi precedenti)
+        stato_veicolo = "✅ Regolare"
+        if res.get('sequestrato'):
+            stato_veicolo = "⚠️ SOTTO SEQUESTRO"
+            embed.color = discord.Color.red()
+
+        embed.add_field(name="🚘 Veicolo", value=f"**Modello:** {res['modello']}\n**Targa:** `{res['targa']}`\n**Stato:** {stato_veicolo}", inline=False)
         
-        await interaction.followup.send(embed=embed)
+        proprietario_nome = f"{res['nome']} {res['cognome']}" if res['nome'] else "Documento non registrato"
+        embed.add_field(name="👤 Proprietario", value=f"**Nome:** {proprietario_nome}\n**Menzione:** <@{res['owner_id']}>", inline=False)
+        
+        if original_interaction:
+            await interaction.followup.send(embed=embed)
+        else:
+            await ctx.followup.send(embed=embed)
 
     except Exception as e:
-        print(f"Errore: {e}")
-        await interaction.followup.send("❌ Errore nella ricerca.")
+        print(f"Errore visualizzazione targa: {e}")
 
 
 
