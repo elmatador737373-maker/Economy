@@ -399,7 +399,7 @@ async def anonimo(interaction: discord.Interaction, messaggio: str, nickname: st
 @bot.event
 async def on_raw_reaction_add(payload):
     # Configura qui l'ID del ruolo staff
-    ID_RUOLO_STAFF = 123456789012345678 
+    ID_RUOLO_STAFF = 1465432717645713428
     
     if str(payload.emoji) != "❓" or payload.user_id == bot.user.id:
         return
