@@ -755,27 +755,6 @@ async def on_raw_reaction_add(payload):
             print(f"Errore durante la rimozione o l'invio DM: {e}")
 
 
-# --- COMANDO SONDAGGIO ---
-@bot.tree.command(name="sondaggio", description="Crea un sondaggio per l'orario dell'RP")
-@app_commands.describe(ora="Inserisci l'orario (es. 21:30)")
-@app_commands.checks.has_role(1253707509399683202)
-async def sondaggio(interaction: discord.Interaction, ora: str):
-    embed = discord.Embed(
-        title="📢 Sondaggio Sessione RP",
-        description=f"La sessione è prevista per le ore: **{ora}**\n\n"
-                    "Confermate la vostra presenza tramite le reazioni:",
-        color=discord.Color.blue()
-    )
-    embed.add_field(name="✅ Si", value="Ci sarò", inline=True)
-    embed.add_field(name="❌ No", value="Non ci sarò", inline=True)
-    embed.add_field(name="🕒 Ritardo", value="Entro più tardi", inline=True)
-    
-    await interaction.response.send_message("Sondaggio inviato!", ephemeral=True)
-    
-    messaggio = await interaction.channel.send(embed=embed)
-    await messaggio.add_reaction("✅")
-    await messaggio.add_reaction("❌")
-    await messaggio.add_reaction("🕒")
 
 # --- COMANDO RP ON ---
 @bot.tree.command(name="rpon", description="Segnala che l'RP è ONLINE")
@@ -787,6 +766,61 @@ async def rpon(interaction: discord.Interaction):
         color=discord.Color.green()
     )
     await interaction.response.send_message(embed=embed)
+@bot.tree.command(name="sondaggio_rp", description="Crea un sondaggio per l'orario dell'RP e avvisa tutti in DM")
+@app_commands.describe(ora="Inserisci l'orario (es. 21:30)")
+@app_commands.checks.has_role(1253707509399683202)
+async def sondaggio(interaction: discord.Interaction, ora: str):
+    # 1. Creazione dell'Embed per il canale
+    embed = discord.Embed(
+        title="🏙️ EVREN CITY RP - SESSIONE PROGRAMMATA",
+        description=f"È stata pianificata una nuova sessione!\n\n"
+                    f"⏰ Orario: **{ora}**\n"
+                    f"📍 Canale: {interaction.channel.mention}\n\n"
+                    "Confermate la vostra presenza tramite le reazioni qui sotto:",
+        color=discord.Color.gold()
+    )
+    embed.add_field(name="✅ Si", value="Presente", inline=True)
+    embed.add_field(name="❌ No", value="Assente", inline=True)
+    embed.add_field(name="🕒 Ritardo", value="In ritardo", inline=True)
+    embed.set_footer(text="Evren City RP Staff")
+    
+    # Conferma l'azione all'admin
+    await interaction.response.send_message("Sondaggio creato e invio DM ai cittadini iniziato!", ephemeral=True)
+    
+    # Invia il messaggio nel canale e aggiunge reazioni
+    messaggio = await interaction.channel.send(content="@everyone", embed=embed)
+    await messaggio.add_reaction("✅")
+    await messaggio.add_reaction("❌")
+    await messaggio.add_reaction("🕒")
+
+    # 2. Logica Invio DM a tutti i membri
+    embed_dm = discord.Embed(
+        title="📢 NUOVO SONDAGGIO RP - EVREN CITY",
+        description=f"Ciao Cittadino! È stato indetto un sondaggio per la prossima sessione.\n\n"
+                    f"🕔 **Orario scelto:** {ora}\n"
+                    f"🔗 **Vota qui:** [Clicca per andare al sondaggio]({messaggio.jump_url})\n\n"
+                    "Assicurati di votare per aiutarci a organizzare l'RP!",
+        color=discord.Color.blue()
+    )
+    embed_dm.set_thumbnail(url=interaction.guild.icon.url if interaction.guild.icon else None)
+
+    # Scorre i membri del server
+    # Nota: Assicurati di avere i 'members intent' attivi nel pannello developer
+    count = 0
+    for member in interaction.guild.members:
+        if member.bot: continue # Salta i bot
+        
+        try:
+            await member.send(embed=embed_dm)
+            count += 1
+            # Piccola pausa ogni 5 DM per evitare il rate limit di Discord
+            if count % 5 == 0:
+                await asyncio.sleep(1)
+        except discord.Forbidden:
+            # Succede se l'utente ha i DM chiusi
+            continue
+        except Exception as e:
+            print(f"Errore invio DM a {member.name}: {e}")
 
 # --- COMANDO RP OFF ---
 @bot.tree.command(name="rpoff", description="Segnala che l'RP è OFFLINE")
