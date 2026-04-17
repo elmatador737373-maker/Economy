@@ -1567,32 +1567,115 @@ async def inventario(interaction: Interaction):
     emb.description = desc
     await interaction.followup.send(embed=emb)
 
-@bot.tree.command(name="dai_item", description="Dai un oggetto a un utente")
-async def dai_item(interaction: Interaction, utente: discord.Member, nome: str, quantita: int = 1):
-    if utente.id == interaction.user.id: return await interaction.response.send_message("❌ Impossibile.")
-    await interaction.response.defer()
-    nome_e = await cerca_item_smart(interaction, nome, "inventory")
-    if not nome_e: return
-    conn = get_db_connection(); cur = conn.cursor()
-    cur.execute("SELECT quantity FROM inventory WHERE user_id = %s AND item_name = %s", (str(interaction.user.id), nome_e))
-    res = cur.fetchone()
-    if not res or res[0] < quantita: return await interaction.followup.send("❌ Non ne hai abbastanza.")
-    cur.execute("UPDATE inventory SET quantity = quantity - %s WHERE user_id = %s AND item_name = %s", (quantita, str(interaction.user.id), nome_e))
-    cur.execute("INSERT INTO inventory (user_id, item_name, quantity) VALUES (%s, %s, %s) ON CONFLICT (user_id, item_name) DO UPDATE SET quantity = inventory.quantity + %s", (str(utente.id), nome_e, quantita, quantita))
-    cur.execute("DELETE FROM inventory WHERE quantity <= 0")
-    conn.commit(); cur.close(); conn.close()
-    await interaction.followup.send(f"📦 **{interaction.user.display_name}** ha passato {quantita}x **{nome_e}** a **{utente.mention}**.")
+# --- FUNZIONE AUTOCOMPLETE (Suggerimenti dinamici) ---
+async def inventory_autocomplete(interaction: discord.Interaction, current: str):
+    """Suggerisce all'utente solo gli oggetti che possiede realmente nel DB"""
+    conn = get_db_connection()
+    from psycopg2.extras import RealDictCursor
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    
+    # Cerca gli item dell'utente filtrando per quello che sta scrivendo (case-insensitive)
+    cur.execute("""
+        SELECT item_name 
+        FROM inventory 
+        WHERE user_id = %s AND item_name ILIKE %s 
+        LIMIT 25
+    """, (str(interaction.user.id), f'%{current}%'))
+    
+    items = cur.fetchall()
+    cur.close()
+    conn.close()
+    
+    # Genera la lista di scelte per Discord
+    return [app_commands.Choice(name=f"{item['item_name']}", value=item['item_name']) for item in items]
 
-@bot.tree.command(name="usa", description="Usa un oggetto")
-async def usa(interaction: Interaction, nome: str):
+# --- COMANDO: DAI ITEM ---
+@bot.tree.command(name="dai_item", description="Passa un oggetto dal tuo inventario a un altro utente")
+@app_commands.describe(
+    utente="L'utente a cui dare l'oggetto", 
+    nome="Seleziona l'oggetto dal tuo inventario", 
+    quantita="Quante unità vuoi passare"
+)
+@app_commands.autocomplete(nome=inventory_autocomplete) # Attiva la selezione suggerita
+async def dai_item(interaction: discord.Interaction, utente: discord.Member, nome: str, quantita: int = 1):
+    # Controllo di base: non dare a se stessi
+    if utente.id == interaction.user.id: 
+        return await interaction.response.send_message("❌ Non puoi passare oggetti a te stesso.", ephemeral=True)
+    
+    if quantita <= 0:
+        return await interaction.response.send_message("❌ Inserisci una quantità valida (minimo 1).", ephemeral=True)
+
     await interaction.response.defer()
-    nome_e = await cerca_item_smart(interaction, nome, "inventory")
-    if not nome_e: return
-    conn = get_db_connection(); cur = conn.cursor()
-    cur.execute("UPDATE inventory SET quantity = quantity - 1 WHERE user_id = %s AND item_name = %s", (str(interaction.user.id), nome_e))
-    cur.execute("DELETE FROM inventory WHERE quantity <= 0")
-    conn.commit(); cur.close(); conn.close()
-    await interaction.followup.send(f"✨ **{interaction.user.display_name}** ha usato **{nome_e}**!")
+    
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    # 1. Verifica se il mittente ha l'oggetto e ne ha abbastanza
+    cur.execute("SELECT quantity FROM inventory WHERE user_id = %s AND item_name = %s", (str(interaction.user.id), nome))
+    res = cur.fetchone()
+    
+    if not res or res[0] < quantita:
+        cur.close(); conn.close()
+        return await interaction.followup.send(f"❌ Non hai abbastanza **{nome}** (Posseduti: {res[0] if res else 0}).")
+
+    try:
+        # 2. Sottrae gli oggetti al mittente
+        cur.execute("UPDATE inventory SET quantity = quantity - %s WHERE user_id = %s AND item_name = %s", (quantita, str(interaction.user.id), nome))
+        
+        # 3. Aggiunge gli oggetti al destinatario (Gestisce la creazione se non esiste)
+        cur.execute("""
+            INSERT INTO inventory (user_id, item_name, quantity) 
+            VALUES (%s, %s, %s) 
+            ON CONFLICT (user_id, item_name) 
+            DO UPDATE SET quantity = inventory.quantity + EXCLUDED.quantity
+        """, (str(utente.id), nome, quantita))
+        
+        # 4. Pulizia automatica: elimina righe con quantità zero
+        cur.execute("DELETE FROM inventory WHERE quantity <= 0")
+        
+        conn.commit()
+        await interaction.followup.send(f"📦 **{interaction.user.display_name}** ha passato {quantita}x **{nome}** a **{utente.mention}**.")
+    
+    except Exception as e:
+        print(f"Errore comando dai_item: {e}")
+        await interaction.followup.send("❌ Si è verificato un errore durante lo scambio.")
+    finally:
+        cur.close(); conn.close()
+
+# --- COMANDO: USA ---
+@bot.tree.command(name="usa", description="Usa un oggetto dal tuo inventario")
+@app_commands.describe(nome="Seleziona l'oggetto da usare")
+@app_commands.autocomplete(nome=inventory_autocomplete) # Attiva la selezione suggerita
+async def usa(interaction: discord.Interaction, nome: str):
+    await interaction.response.defer()
+    
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    # 1. Verifica se l'utente possiede l'oggetto selezionato
+    cur.execute("SELECT quantity FROM inventory WHERE user_id = %s AND item_name = %s", (str(interaction.user.id), nome))
+    res = cur.fetchone()
+    
+    if not res or res[0] <= 0:
+        cur.close(); conn.close()
+        return await interaction.followup.send(f"❌ Non possiedi l'oggetto **{nome}**.")
+
+    try:
+        # 2. Sottrae 1 unità dall'inventario
+        cur.execute("UPDATE inventory SET quantity = quantity - 1 WHERE user_id = %s AND item_name = %s", (str(interaction.user.id), nome))
+        
+        # 3. Elimina l'oggetto se la quantità è arrivata a zero
+        cur.execute("DELETE FROM inventory WHERE quantity <= 0")
+        
+        conn.commit()
+        await interaction.followup.send(f"✨ **{interaction.user.display_name}** ha usato **{nome}**!")
+        
+    except Exception as e:
+        print(f"Errore comando usa: {e}")
+        await interaction.followup.send("❌ Errore durante l'uso dell'oggetto.")
+    finally:
+        cur.close(); conn.close()
+
 # 1. DEFINIZIONE DELLA CLASSE (Deve stare sopra il comando)
 # ==========================================
 # 1. CLASSE PER IL PAGAMENTO (PagaFatturaView)
