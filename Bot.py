@@ -943,89 +943,136 @@ async def mostra_documento(interaction: discord.Interaction, cittadino: discord.
         print(f"ERRORE MOSTRA DOCUMENTO: {e}")
         await interaction.followup.send("❌ Errore nel recupero del documento.")
     # --- COMANDO INIZIO TURNO (Ruolo Libero) ---
-# --- COMANDO INIZIO TURNO ---
-@bot.tree.command(name="inizio_turno", description="Inizia il tuo turno di lavoro")
-@app_commands.describe(ruolo="Specifica il tuo ruolo (es. Polizia, Medico, Meccanico)")
-async def inizio_turno(interaction: discord.Interaction, ruolo: str):
+# --- LOGICA STAFF: VIEW PER APPROVAZIONE TURNI ---
+
+class TurnoStaffView(discord.ui.View):
+    def __init__(self, user_id, stipendio, ore, ruolo_nome):
+        super().__init__(timeout=None)
+        self.user_id = user_id
+        self.stipendio = stipendio
+        self.ore = ore
+        self.ruolo_nome = ruolo_nome
+
+    @discord.ui.button(label="Approva Stipendio", style=discord.ButtonStyle.success)
+    async def conferma_stipendio(self, interaction: discord.Interaction, button: discord.ui.Button):
+        try:
+            conn = get_db_connection()
+            cur = conn.cursor()
+            # Accredito su banca e aggiornamento ore totali lavorate
+            cur.execute("""
+                UPDATE users 
+                SET bank = bank + %s, ore_lavorate = ore_lavorate + %s 
+                WHERE user_id = %s
+            """, (self.stipendio, self.ore, self.user_id))
+            conn.commit()
+            cur.close()
+            conn.close()
+            
+            await interaction.response.edit_message(
+                content=f"✅ **STIPENDIO APPROVATO**: {self.stipendio}€ accreditati a <@{self.user_id}> per il turno come **{self.ruolo_nome}**.", 
+                embed=None, view=None
+            )
+        except Exception as e:
+            await interaction.response.send_message(f"❌ Errore durante l'accredito: {e}", ephemeral=True)
+
+    @discord.ui.button(label="Rifiuta", style=discord.ButtonStyle.danger)
+    async def annulla_turno(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            content=f"❌ **TURNO RIFIUTATO**: Lo stipendio di <@{self.user_id}> è stato annullato dallo staff.", 
+            embed=None, view=None
+        )
+
+# --- COMANDO INIZIA TURNO (CON SELEZIONE RUOLO SERVER) ---
+
+@bot.tree.command(name="inizia_turno", description="Inizia il tuo turno di lavoro selezionando il ruolo")
+@app_commands.describe(
+    ruolo="Seleziona il tuo ruolo lavorativo nel server",
+    paga_oraria="Inserisci il tuo stipendio orario (€/h)"
+)
+async def inizia_turno(interaction: discord.Interaction, ruolo: discord.Role, paga_oraria: int):
     await interaction.response.defer()
-    
     try:
         conn = get_db_connection()
         cur = conn.cursor()
         
-        # Salviamo l'inizio e il ruolo scelto
+        # Salviamo l'ID del ruolo o il nome del ruolo e la paga nel database
+        # Usiamo il separatore | per dividere NomeRuolo e PagaOraria nella colonna 'ruolo'
         cur.execute("""
             INSERT INTO turni (user_id, inizio, ruolo)
             VALUES (%s, NOW(), %s)
             ON CONFLICT (user_id) DO UPDATE SET 
-                inizio = NOW(),
+                inizio = NOW(), 
                 ruolo = EXCLUDED.ruolo
-        """, (str(interaction.user.id), ruolo))
+        """, (str(interaction.user.id), f"{ruolo.name}|{paga_oraria}"))
         
         conn.commit()
         cur.close()
         conn.close()
         
-        embed = discord.Embed(
-            title="𝐓𝐮𝐫𝐧𝐨 𝐀𝐯𝐯𝐢𝐚𝐭𝐨",
-            description=f"Hai iniziato il servizio come: **{ruolo}**\nOrario d'inizio registrato correttamente.",
-            color=discord.Color.blue()
-        )
-        await interaction.followup.send(embed=embed)
-        
+        await interaction.followup.send(f"🛠️ {interaction.user.mention}, turno avviato come {ruolo.mention} con una paga di **{paga_oraria}€/h**.")
     except Exception as e:
-        print(f"Errore inizio_turno: {e}")
-        await interaction.followup.send("❌ Errore nella registrazione del turno.", ephemeral=True)
+        await interaction.followup.send(f"❌ Errore nell'avvio del turno: {e}", ephemeral=True)
 
-# --- COMANDO FINE TURNO ---
-@bot.tree.command(name="fine_turno", description="Concludi il tuo turno di lavoro")
-async def fine_turno(interaction: discord.Interaction):
+# --- COMANDO FINISCI TURNO ---
+
+@bot.tree.command(name="finisci_turno", description="Termina il turno e invia la richiesta di stipendio")
+async def finisci_turno(interaction: discord.Interaction):
     await interaction.response.defer()
-    
     try:
         conn = get_db_connection()
         from psycopg2.extras import RealDictCursor
         cur = conn.cursor(cursor_factory=RealDictCursor)
         
-        # Recuperiamo ruolo e calcoliamo i minuti (già sincronizzati su Roma)
-        cur.execute("""
-            SELECT ruolo, EXTRACT(EPOCH FROM (NOW() - inizio)) / 60 AS minuti
-            FROM turni 
-            WHERE user_id = %s
-        """, (str(interaction.user.id),))
+        # Recupero dati turno e canale paghe
+        cur.execute("SELECT *, EXTRACT(EPOCH FROM (NOW() - inizio)) / 3600 AS ore FROM turni WHERE user_id = %s", (str(interaction.user.id),))
+        turno = cur.fetchone()
         
-        res = cur.fetchone()
+        cur.execute("SELECT setting_value FROM server_settings WHERE setting_name = 'canale_paghe'")
+        res_canale = cur.fetchone()
         
-        if not res:
+        if not turno:
             cur.close()
             conn.close()
-            return await interaction.followup.send("❌ Non hai nessun turno attivo! Usa `/inizio_turno`.", ephemeral=True)
+            return await interaction.followup.send("❌ Non hai un turno attivo da terminare.")
+        
+        if not res_canale:
+            cur.close()
+            conn.close()
+            return await interaction.followup.send("❌ Canale paghe non configurato. Chiedi a un Admin di usare `/set_canale_paghe`.")
 
-        minuti_totali = int(res['minuti'])
-        ruolo_svolto = res['ruolo']
+        # Parsing: recuperiamo nome ruolo e paga oraria
+        dati_lavoro = turno['ruolo'].split('|')
+        nome_ruolo = dati_lavoro[0]
+        paga_h = int(dati_lavoro[1]) if len(dati_lavoro) > 1 else 0
         
-        # Cancelliamo il turno dal database
+        ore_lavorate = round(float(turno['ore']), 2)
+        # Se ha lavorato meno di un minuto, arrotondiamo per eccesso o gestiamo il minimo
+        stipendio_finale = int(ore_lavorate * paga_h)
+        
+        # Rimuoviamo il turno dal DB prima di inviare la richiesta per evitare exploit
         cur.execute("DELETE FROM turni WHERE user_id = %s", (str(interaction.user.id),))
-        
         conn.commit()
+        
+        canale_staff = interaction.guild.get_channel(int(res_canale['setting_value']))
+        if canale_staff:
+            embed_staff = discord.Embed(title="📋 RICHIESTA STIPENDIO", color=discord.Color.blue())
+            embed_staff.add_field(name="Dipendente", value=interaction.user.mention, inline=True)
+            embed_staff.add_field(name="Inquadramento", value=f"**{nome_ruolo}**", inline=True)
+            embed_staff.add_field(name="Ore totali", value=f"`{ore_lavorate}` h", inline=True)
+            embed_staff.add_field(name="Totale da pagare", value=f"💰 **{stipendio_finale}€**", inline=False)
+            
+            view = TurnoStaffView(str(interaction.user.id), stipendio_finale, ore_lavorate, nome_ruolo)
+            await canale_staff.send(embed=embed_staff, view=view)
+        
         cur.close()
         conn.close()
         
-        # Embed finale con il riepilogo
-        embed = discord.Embed(
-            title="<a:ciak:1334285912653434993> 𝐅𝐢𝐧𝐞 𝐒𝐞𝐫𝐯𝐢𝐳𝐢𝐨",
-            color=discord.Color.green(),
-            timestamp=datetime.datetime.now()
-        )
-        embed.add_field(name="👷 Lavoratore", value=interaction.user.mention, inline=True)
-        embed.add_field(name="💼 Ruolo", value=f"**{ruolo_svolto}**", inline=True)
-        embed.add_field(name="⏱️ Durata", value=f"**{minuti_totali} minuti**", inline=False)
-        
-        await interaction.followup.send(content=f"✅ {interaction.user.mention} ha terminato il turno di lavoro.", embed=embed)
-        
+        await interaction.followup.send(f"✅ Turno terminato! Richiesta di **{stipendio_finale}€** inviata al dipartimento paghe.")
+
     except Exception as e:
-        print(f"Errore fine_turno: {e}")
-        await interaction.followup.send("❌ Errore nel calcolo del tempo del turno.", ephemeral=True)
+        print(f"Errore finisci_turno: {e}")
+        await interaction.followup.send("❌ Errore tecnico nel calcolo dello stipendio.", ephemeral=True)
+
 
 # --- COMANDO PER ELIMINARE IL DOCUMENTO (SOLO ADMIN) ---
 @bot.tree.command(name="elimina_documento", description="Elimina il documento di un cittadino (Solo Staff)")
