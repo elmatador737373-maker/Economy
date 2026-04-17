@@ -293,7 +293,6 @@ async def rapina_autocomplete(interaction: discord.Interaction, current: str):
 
 
 # --- COMANDO INIZIA RAPINA CON SISTEMA BBC ---
-
 @bot.tree.command(name="inizia_rapina", description="Inizia lo scasso in un luogo configurato")
 @app_commands.autocomplete(luogo=rapina_autocomplete)
 async def inizia_rapina(interaction: discord.Interaction, luogo: str):
@@ -307,7 +306,7 @@ async def inizia_rapina(interaction: discord.Interaction, luogo: str):
     cur.execute("SELECT * FROM rapine_config WHERE nome = %s", (luogo.lower(),))
     config = cur.fetchone()
     
-    # 2. Recupera Canale Staff
+    # 2. Recupera Canale Staff per le rapine
     cur.execute("SELECT setting_value FROM server_settings WHERE setting_name = 'canale_rapine'")
     res_canale = cur.fetchone()
     
@@ -319,7 +318,7 @@ async def inizia_rapina(interaction: discord.Interaction, luogo: str):
     if not res_canale:
         cur.close()
         conn.close()
-        return await interaction.followup.send("❌ Canale staff non impostato. Usa `/set_canale_rapine`.")
+        return await interaction.followup.send("❌ Canale staff rapine non impostato. Usa `/set_canale_rapine`.")
 
     canale_staff_id = int(res_canale['setting_value'])
     tempo_rimanente = config['tempo_scasso']
@@ -330,7 +329,7 @@ async def inizia_rapina(interaction: discord.Interaction, luogo: str):
     
     msg = await interaction.followup.send(embed=embed)
 
-    # Loop del Timer
+    # --- LOOP DEL TIMER ---
     while tempo_rimanente > 0:
         await asyncio.sleep(5)
         tempo_rimanente -= 5
@@ -343,7 +342,8 @@ async def inizia_rapina(interaction: discord.Interaction, luogo: str):
             conn.close()
             return
 
-    # Fine Scasso: Notifica Utente
+    # --- FINE SCASSO (NESSUN ACCREDITO SOLDI QUI!) ---
+    
     embed.title = "🛠️ SCASSINAMENTO COMPLETATO"
     embed.color = discord.Color.orange()
     embed.set_field_at(0, name="Stato", value="⌛ In attesa di approvazione staff...")
@@ -356,13 +356,18 @@ async def inizia_rapina(interaction: discord.Interaction, luogo: str):
         embed_staff.add_field(name="Cittadino", value=interaction.user.mention, inline=True)
         embed_staff.add_field(name="Luogo", value=luogo.upper(), inline=True)
         embed_staff.add_field(name="Importo Generato", value=f"**{paga_casuale}€**", inline=False)
-        embed_staff.set_footer(text=f"ID: {interaction.user.id}")
-
+        
+        # Passiamo i dati alla View: sarà lei a pagare tramite il bottone
         view = RapinaStaffView(str(interaction.user.id), paga_casuale, luogo)
         await canale_staff.send(embed=embed_staff, view=view)
+    else:
+        # Se il bot non trova il canale, avvisa l'utente
+        await interaction.followup.send("⚠️ Errore: Il canale staff non è raggiungibile. Contatta un Admin.")
 
     cur.close()
     conn.close()
+
+
 
 
 # --- 3. COMANDO AGGIORNA CONTENUTO ---
