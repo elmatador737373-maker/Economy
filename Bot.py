@@ -213,46 +213,78 @@ async def aggiungi(interaction: discord.Interaction, id_messaggio: str, testo_bo
         await interaction.response.send_message(f"✅ Bottone '{testo_bottone}' aggiunto!", ephemeral=True)
     except Exception as e:
         await interaction.response.send_message(f"❌ Errore: {e}", ephemeral=True)
-# --- COMANDO ADMIN: CREA CONFIGURAZIONE RAPINA ---
-@bot.tree.command(name="crea_rapina", description="Configura una nuova rapina (Solo Admin)")
-@app_commands.describe(
-    nome="Nome del luogo (es: Banca, Gioielleria)", 
-    tempo="Secondi necessari per lo scasso", 
-    paga_min="Guadagno minimo", 
-    paga_max="Guadagno massimo"
-)
-@app_commands.checks.has_permissions(administrator=True) # Controllo nativo permessi Admin
-async def crea_rapina(interaction: discord.Interaction, nome: str, tempo: int, paga_min: int, paga_max: int):
+# --- LOGICA STAFF: VIEW E MODAL PER APPROVAZIONE ---
+
+class ModificaBottinoModal(discord.ui.Modal, title="Modifica Bottino Rapina"):
+    nuovo_importo = discord.ui.TextInput(label="Nuovo Ammontare (€)", placeholder="Inserisci la cifra...")
+    
+    def __init__(self, user_id, luogo):
+        super().__init__()
+        self.user_id = user_id
+        self.luogo = luogo
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            valore = int(self.nuovo_importo.value)
+            conn = get_db_connection()
+            cur = conn.cursor()
+            cur.execute("UPDATE users SET wallet = wallet + %s WHERE user_id = %s", (valore, self.user_id))
+            conn.commit()
+            cur.close()
+            conn.close()
+            
+            await interaction.response.edit_message(content=f"✍️ **BOTTINO MODIFICATO**: Accreditati **{valore}€** a <@{self.user_id}> per la rapina a **{self.luogo}**.", embed=None, view=None)
+        except ValueError:
+            await interaction.response.send_message("❌ Inserisci un numero valido!", ephemeral=True)
+
+class RapinaStaffView(discord.ui.View):
+    def __init__(self, user_id, ammontare, luogo):
+        super().__init__(timeout=None)
+        self.user_id = user_id
+        self.ammontare = ammontare
+        self.luogo = luogo
+
+    @discord.ui.button(label="Conferma", style=discord.ButtonStyle.success)
+    async def conferma(self, interaction: discord.Interaction, button: discord.ui.Button):
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("UPDATE users SET wallet = wallet + %s WHERE user_id = %s", (self.ammontare, self.user_id))
+        conn.commit()
+        cur.close()
+        conn.close()
+        await interaction.response.edit_message(content=f"✅ **PAGAMENTO APPROVATO**: {self.ammontare}€ accreditati a <@{self.user_id}>.", embed=None, view=None)
+
+    @discord.ui.button(label="Annulla", style=discord.ButtonStyle.danger)
+    async def annulla(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(content=f"❌ **RAPINA ANNULLATA**: Il colpo di <@{self.user_id}> è stato invalidato.", embed=None, view=None)
+
+    @discord.ui.button(label="Modifica Importo", style=discord.ButtonStyle.secondary)
+    async def modifica(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(ModificaBottinoModal(self.user_id, self.luogo))
+
+# --- COMANDO SETTAGGIO CANALE (SOLO ADMIN) ---
+
+@bot.tree.command(name="set_canale_rapine", description="Imposta il canale per le approvazioni rapine (Solo Admin)")
+@app_commands.checks.has_permissions(administrator=True)
+async def set_canale_rapine(interaction: discord.Interaction, canale: discord.TextChannel):
     try:
         conn = get_db_connection()
         cur = conn.cursor()
         cur.execute("""
-            INSERT INTO rapine_config (nome, tempo_scasso, paga_min, paga_max)
-            VALUES (%s, %s, %s, %s)
-            ON CONFLICT (nome) DO UPDATE SET 
-            tempo_scasso = EXCLUDED.tempo_scasso, 
-            paga_min = EXCLUDED.paga_min, 
-            paga_max = EXCLUDED.paga_max
-        """, (nome.lower(), tempo, paga_min, paga_max))
+            INSERT INTO server_settings (setting_name, setting_value) 
+            VALUES ('canale_rapine', %s) 
+            ON CONFLICT (setting_name) DO UPDATE SET setting_value = EXCLUDED.setting_value
+        """, (str(canale.id),))
         conn.commit()
         cur.close()
         conn.close()
-        await interaction.response.send_message(f"✅ Sede rapina **{nome.upper()}** configurata con successo!")
+        await interaction.response.send_message(f"✅ Canale approvazione rapine impostato su: {canale.mention}")
     except Exception as e:
-        await interaction.response.send_message(f"❌ Errore nel database: {e}", ephemeral=True)
+        await interaction.response.send_message(f"❌ Errore: {e}", ephemeral=True)
 
-# --- AUTOCOMPLETE PER LE RAPINE ---
-async def rapina_autocomplete(interaction: discord.Interaction, current: str):
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT nome FROM rapine_config WHERE nome ILIKE %s LIMIT 25", (f'%{current}%',))
-    choices = [app_commands.Choice(name=row[0].title(), value=row[0]) for row in cur.fetchall()]
-    cur.close()
-    conn.close()
-    return choices
+# --- COMANDO INIZIA RAPINA CON SISTEMA BBC ---
 
-# --- COMANDO INIZIA RAPINA ---
-@bot.tree.command(name="inizia_rapina", description="Inizia a scassinare un luogo configurato")
+@bot.tree.command(name="inizia_rapina", description="Inizia lo scasso in un luogo configurato")
 @app_commands.autocomplete(luogo=rapina_autocomplete)
 async def inizia_rapina(interaction: discord.Interaction, luogo: str):
     await interaction.response.defer()
@@ -261,66 +293,67 @@ async def inizia_rapina(interaction: discord.Interaction, luogo: str):
     from psycopg2.extras import RealDictCursor
     cur = conn.cursor(cursor_factory=RealDictCursor)
     
-    # Recupera i dati della rapina
-    cur.execute("SELECT * FROM rapine_config WHERE nome = %s", (luogo,))
+    # 1. Recupera Config Rapina
+    cur.execute("SELECT * FROM rapine_config WHERE nome = %s", (luogo.lower(),))
     config = cur.fetchone()
+    
+    # 2. Recupera Canale Staff
+    cur.execute("SELECT setting_value FROM server_settings WHERE setting_name = 'canale_rapine'")
+    res_canale = cur.fetchone()
     
     if not config:
         cur.close()
         conn.close()
-        return await interaction.followup.send("❌ Questo luogo non esiste o non è stato ancora configurato dagli admin.", ephemeral=True)
+        return await interaction.followup.send("❌ Luogo non configurato.")
+    
+    if not res_canale:
+        cur.close()
+        conn.close()
+        return await interaction.followup.send("❌ Canale staff non impostato. Usa `/set_canale_rapine`.")
 
+    canale_staff_id = int(res_canale['setting_value'])
     tempo_rimanente = config['tempo_scasso']
-    # Scegliamo la paga subito ma la consegniamo solo alla fine
-    paga_finale = random.randint(config['paga_min'], config['paga_max'])
+    paga_casuale = random.randint(config['paga_min'], config['paga_max'])
     
-    embed = discord.Embed(
-        title="🚨 RAPINA IN CORSO",
-        description=f"Stai scassinando: **{luogo.upper()}**",
-        color=discord.Color.red()
-    )
-    embed.add_field(name="Stato", value="🛠️ Scassinamento in corso...")
-    embed.add_field(name="Timer", value=f"⏳ `{tempo_rimanente}s` rimanenti")
-    embed.set_footer(text="Se lasci il canale o cancelli il messaggio, la rapina fallirà.")
+    embed = discord.Embed(title="🚨 RAPINA IN CORSO", description=f"Sede: **{luogo.upper()}**", color=discord.Color.red())
+    embed.add_field(name="Progresso", value=f"⏳ Scasso in corso: `{tempo_rimanente}s`")
     
-    messaggio_rapina = await interaction.followup.send(embed=embed)
+    msg = await interaction.followup.send(embed=embed)
 
-    # Ciclo di aggiornamento del timer (ogni 5 secondi per evitare lag/rate limit)
+    # Loop del Timer
     while tempo_rimanente > 0:
         await asyncio.sleep(5)
         tempo_rimanente -= 5
         if tempo_rimanente < 0: tempo_rimanente = 0
-        
-        embed.set_field_at(1, name="Timer", value=f"⏳ `{tempo_rimanente}s` rimanenti")
+        embed.set_field_at(0, name="Progresso", value=f"⏳ Scasso in corso: `{tempo_rimanente}s`")
         try:
-            await messaggio_rapina.edit(embed=embed)
+            await msg.edit(embed=embed)
         except:
-            # Se il messaggio viene eliminato, fermiamo il processo per sicurezza
             cur.close()
             conn.close()
             return
 
-    # --- CONCLUSIONE E PAGAMENTO ---
-    try:
-        # Aggiunge i soldi al wallet dell'utente nella tabella users
-        cur.execute("UPDATE users SET wallet = wallet + %s WHERE user_id = %s", (paga_finale, str(interaction.user.id)))
-        conn.commit()
-        
-        embed.title = "✅ RAPINA RIUSCITA"
-        embed.color = discord.Color.green()
-        embed.set_field_at(0, name="Stato", value="💰 Colpo messo a segno!")
-        embed.set_field_at(1, name="Bottino", value=f"**+{paga_finale}€** trasferiti nel portafoglio.")
-        embed.set_footer(text="Ottimo lavoro, dileguati!")
-        
-        await messaggio_rapina.edit(embed=embed)
-        await interaction.channel.send(f"⚠️ **ALLARME:** {interaction.user.mention} ha appena svaligiato **{luogo.title()}** fuggendo con il bottino!")
+    # Fine Scasso: Notifica Utente
+    embed.title = "🛠️ SCASSINAMENTO COMPLETATO"
+    embed.color = discord.Color.orange()
+    embed.set_field_at(0, name="Stato", value="⌛ In attesa di approvazione staff...")
+    await msg.edit(embed=embed)
 
-    except Exception as e:
-        print(f"Errore pagamento rapina: {e}")
-        await interaction.followup.send("❌ Errore durante il versamento del bottino.", ephemeral=True)
-    finally:
-        cur.close()
-        conn.close()
+    # Invio richiesta al Canale Staff
+    canale_staff = interaction.guild.get_channel(canale_staff_id)
+    if canale_staff:
+        embed_staff = discord.Embed(title="🛡️ RICHIESTA BOTTINO RAPINA", color=discord.Color.gold())
+        embed_staff.add_field(name="Cittadino", value=interaction.user.mention, inline=True)
+        embed_staff.add_field(name="Luogo", value=luogo.upper(), inline=True)
+        embed_staff.add_field(name="Importo Generato", value=f"**{paga_casuale}€**", inline=False)
+        embed_staff.set_footer(text=f"ID: {interaction.user.id}")
+
+        view = RapinaStaffView(str(interaction.user.id), paga_casuale, luogo)
+        await canale_staff.send(embed=embed_staff, view=view)
+
+    cur.close()
+    conn.close()
+
 
 # --- 3. COMANDO AGGIORNA CONTENUTO ---
 @bot.tree.command(name="aggiorna", description="Modifica testo o immagine dell'embed")
