@@ -281,6 +281,16 @@ async def set_canale_rapine(interaction: discord.Interaction, canale: discord.Te
         await interaction.response.send_message(f"✅ Canale approvazione rapine impostato su: {canale.mention}")
     except Exception as e:
         await interaction.response.send_message(f"❌ Errore: {e}", ephemeral=True)
+# 1. DEFINISCI PRIMA LA FUNZIONE DI AUTOCOMPLETE
+async def rapina_autocomplete(interaction: discord.Interaction, current: str):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT nome FROM rapine_config WHERE nome ILIKE %s LIMIT 25", (f'%{current}%',))
+    choices = [app_commands.Choice(name=row[0].title(), value=row[0]) for row in cur.fetchall()]
+    cur.close()
+    conn.close()
+    return choices
+
 
 # --- COMANDO INIZIA RAPINA CON SISTEMA BBC ---
 
