@@ -1218,6 +1218,117 @@ async def elimina_documento(interaction: discord.Interaction, cittadino: discord
         print(f"ERRORE ELIMINAZIONE DOCUMENTO: {e}")
         await interaction.followup.send("❌ Errore tecnico durante l'eliminazione.", ephemeral=True)
         
+        
+        
+@bot.tree.command(name="set_ricetta", description="Crea o modifica una ricetta di crafting (Solo Staff)")
+@app_commands.describe(item_finale="L'item che verrà creato", materiali="Formato: Nome:Quantità,Nome:Quantità (es. Ferro:2,Legno:1)")
+@app_commands.checks.has_permissions(administrator=True)
+async def set_ricetta(interaction: discord.Interaction, item_finale: str, materiali: str):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO ricette (item_risultato, materiali) 
+            VALUES (%s, %s) 
+            ON CONFLICT (item_risultato) DO UPDATE SET materiali = EXCLUDED.materiali
+        """, (item_finale, materiali))
+        conn.commit()
+        cur.close()
+        conn.close()
+        await interaction.response.send_message(f"✅ Ricetta per **{item_finale}** salvata!\nMateriali richiesti: `{materiali}`")
+    except Exception as e:
+        await interaction.response.send_message(f"❌ Errore: {e}", ephemeral=True)
+class CraftingView(discord.ui.View):
+    def __init__(self, item_risultato, materiali_dict, user_id):
+        super().__init__(timeout=None)
+        self.item_risultato = item_risultato
+        self.materiali_dict = materiali_dict
+        self.user_id = user_id
+
+    @discord.ui.button(label="Inizia Crafting (1m)", style=discord.ButtonStyle.success, emoji="🔨")
+    async def inizia_craft(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if str(interaction.user.id) != self.user_id:
+            return await interaction.response.send_message("❌ Questo menu non è per te.", ephemeral=True)
+
+        user_id = self.user_id
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        # 1. Verifica se l'utente ha tutti i materiali
+        for mat, qta in self.materiali_dict.items():
+            cur.execute("SELECT quantity FROM inventory WHERE user_id = %s AND item_name = %s", (user_id, mat))
+            res = cur.fetchone()
+            if not res or res[0] < qta:
+                cur.close(); conn.close()
+                return await interaction.response.send_message(f"❌ Non hai abbastanza **{mat}**!", ephemeral=True)
+
+        # 2. Se ha tutto, disabilita il bottone e inizia il timer
+        button.disabled = True
+        button.label = "Crafting in corso..."
+        await interaction.response.edit_message(view=self)
+
+        # --- TIMER DI 1 MINUTO ---
+        tempo = 60
+        while tempo > 0:
+            await asyncio.sleep(10) # Aggiorna ogni 10 secondi per evitare lag
+            tempo -= 10
+            if tempo > 0:
+                try: await interaction.edit_original_response(content=f"🔨 Lavorando su **{self.item_risultato}**... `{tempo}s` rimanenti.")
+                except: break
+
+        # 3. Fine timer: Consuma materiali e dai l'item
+        try:
+            for mat, qta in self.materiali_dict.items():
+                cur.execute("UPDATE inventory SET quantity = quantity - %s WHERE user_id = %s AND item_name = %s", (qta, user_id, mat))
+            
+            cur.execute("""
+                INSERT INTO inventory (user_id, item_name, quantity) VALUES (%s, %s, 1) 
+                ON CONFLICT (user_id, item_name) DO UPDATE SET quantity = inventory.quantity + 1
+            """, (user_id, self.item_risultato))
+            
+            cur.execute("DELETE FROM inventory WHERE quantity <= 0")
+            conn.commit()
+
+            await interaction.edit_original_response(content=f"✅ Crafting completato! Hai ottenuto **{self.item_risultato}**.", view=None)
+        except Exception as e:
+            await interaction.edit_original_response(content=f"❌ Errore durante il crafting: {e}", view=None)
+        finally:
+            cur.close(); conn.close()
+
+@bot.tree.command(name="crafta", description="Visualizza una ricetta e crea l'oggetto")
+@app_commands.describe(item="L'oggetto che vuoi costruire")
+async def crafta(interaction: discord.Interaction, item: str):
+    conn = get_db_connection()
+    from psycopg2.extras import RealDictCursor
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    
+    cur.execute("SELECT * FROM ricette WHERE item_risultato ILIKE %s", (item,))
+    ricetta = cur.fetchone()
+    cur.close(); conn.close()
+
+    if not ricetta:
+        return await interaction.response.send_message("❌ Questa ricetta non esiste.", ephemeral=True)
+
+    # Parsing dei materiali (da "Ferro:2,Legno:1" a dizionario)
+    materiali_lista = ricetta['materiali'].split(',')
+    materiali_dict = {}
+    testo_materiali = ""
+    for m in materiali_lista:
+        nome, qta = m.split(':')
+        materiali_dict[nome.strip()] = int(qta)
+        testo_materiali += f"• {nome.strip()}: x{qta}\n"
+
+    # Embed Anteprima Ricetta
+    embed = discord.Embed(
+        title=f"🔨 Banco da Lavoro: {ricetta['item_risultato']}",
+        description=f"Per costruire questo oggetto ti servono:\n\n{testo_materiali}",
+        color=discord.Color.dark_gray()
+    )
+    embed.set_footer(text="Assicurati di avere tutto nello zaino prima di iniziare.")
+
+    view = CraftingView(ricetta['item_risultato'], materiali_dict, str(interaction.user.id))
+    await interaction.response.send_message(embed=embed, view=view)
+
 POLIZIA_ROLE_ID = 1359569600198611104
 
 # --- FUNZIONE DI CONTROLLO POLIZIA ---
