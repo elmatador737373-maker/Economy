@@ -455,54 +455,45 @@ async def me(interaction: discord.Interaction, azione: str):
     # Invia il messaggio nel canale in cui è stato usato il comando
     await interaction.response.send_message(embed=embed)
 # --- COMANDO SETUP WL (Solo Admin) ---
-@bot.tree.command(name="setup_wl", description="[ADMIN] Configura ruoli e permessi per il sistema WL")
+@bot.tree.command(name="setup_wl", description="[ADMIN] Configura il sistema WL")
 @app_commands.describe(
-    ruolo_passata="Ruolo assegnato a chi passa",
-    ruolo_rifiutata="Ruolo assegnato a chi viene bocciato",
-    ruolo_staff_display="Il ruolo dello staffer che apparirà nell'embed (es. @Staffer)"
+    ruolo_passata="Ruolo per chi passa",
+    ruolo_rifiutata="Ruolo per chi viene bocciato",
+    ruolo_staff_display="Ruolo visualizzato nell'embed (es. @Responsabile)",
+    ruolo_per_fare_esito="Il ruolo che lo staffer DEVE AVERE per usare il comando /esito-wl"
 )
 @app_commands.checks.has_permissions(administrator=True)
 async def setup_wl(
     interaction: discord.Interaction, 
     ruolo_passata: discord.Role, 
     ruolo_rifiutata: discord.Role,
-    ruolo_staff_display: discord.Role
+    ruolo_staff_display: discord.Role,
+    ruolo_per_fare_esito: discord.Role
 ):
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("""
-        INSERT INTO wl_config (guild_id, ruolo_passata, ruolo_rifiutata, ruolo_staff) 
-        VALUES (%s, %s, %s, %s) 
+        INSERT INTO wl_config (guild_id, ruolo_passata, ruolo_rifiutata, ruolo_staff, ruolo_abilitato_esito) 
+        VALUES (%s, %s, %s, %s, %s) 
         ON CONFLICT (guild_id) DO UPDATE SET 
         ruolo_passata = EXCLUDED.ruolo_passata, 
         ruolo_rifiutata = EXCLUDED.ruolo_rifiutata,
-        ruolo_staff = EXCLUDED.ruolo_staff
-    """, (str(interaction.guild.id), str(ruolo_passata.id), str(ruolo_rifiutata.id), str(ruolo_staff_display.id)))
+        ruolo_staff = EXCLUDED.ruolo_staff,
+        ruolo_abilitato_esito = EXCLUDED.ruolo_abilitato_esito
+    """, (str(interaction.guild.id), str(ruolo_passata.id), str(ruolo_rifiutata.id), 
+          str(ruolo_staff_display.id), str(ruolo_per_fare_esito.id)))
     conn.commit()
     cur.close(); conn.close()
     
-    await interaction.response.send_message(
-        f"✅ **Configurazione WL completata!**\n"
-        f"🔹 Ruolo Passata: {ruolo_passata.mention}\n"
-        f"🔸 Ruolo Rifiutata: {ruolo_rifiutata.mention}\n"
-        f"👤 Visualizzazione Staff: {ruolo_staff_display.mention}", 
-        ephemeral=True
-    )
+    await interaction.response.send_message(f"✅ Configurazione WL salvata correttamente!", ephemeral=True)
 
 # --- COMANDO ESITO WL ---
 @bot.tree.command(name="esito-wl", description="Invia l'esito della Whitelist")
-@app_commands.describe(
-    utente="L'utente che ha fatto il provino",
-    esito="Seleziona l'esito",
-    errori="Numero di errori commessi"
-)
 @app_commands.choices(esito=[
     app_commands.Choice(name="✅ Passata", value="accettato"),
     app_commands.Choice(name="❌ Rifiutata", value="rifiutato")
 ])
 async def esito_wl(interaction: discord.Interaction, utente: discord.Member, esito: app_commands.Choice[str], errori: int):
-    await interaction.response.defer()
-
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
     cur.execute("SELECT * FROM wl_config WHERE guild_id = %s", (str(interaction.guild.id),))
@@ -510,41 +501,39 @@ async def esito_wl(interaction: discord.Interaction, utente: discord.Member, esi
     cur.close(); conn.close()
 
     if not config:
-        return await interaction.followup.send("❌ Sistema non configurato. Usa `/setup_wl`.", ephemeral=True)
+        return await interaction.response.send_message("❌ Sistema non configurato.", ephemeral=True)
 
-    # Colore ed Emoji in base all'esito
+    # --- CONTROLLO RUOLO ABILITATO ---
+    id_ruolo_esito = config.get('ruolo_abilitato_esito')
+    if id_ruolo_esito:
+        ruolo_necessario = interaction.guild.get_role(int(id_ruolo_esito))
+        if ruolo_necessario not in interaction.user.roles:
+            return await interaction.response.send_message(f"❌ Solo chi ha il ruolo {ruolo_necessario.mention} può dare esiti WL!", ephemeral=True)
+
+    await interaction.response.defer()
+
+    # Logica Estetica
     color = discord.Color.green() if esito.value == "accettato" else discord.Color.red()
     emoji_status = "🟩" if esito.value == "accettato" else "🟥"
     
-    # Gestione Ruoli Utente
+    # Assegnazione Ruolo all'utente
     role_to_add_id = config['ruolo_passata'] if esito.value == "accettato" else config['ruolo_rifiutata']
     role_to_add = interaction.guild.get_role(int(role_to_add_id))
-    
-    # Recupero Ruolo Staff settato dall'admin
-    ruolo_staff_id = config.get('ruolo_staff')
-    display_staff_role = f"<@&{ruolo_staff_id}>" if ruolo_staff_id else "@Staffer"
-
     if role_to_add:
         try: await utente.add_roles(role_to_add)
         except: pass
 
-    # Costruzione Embed
+    # Recupero Ruolo Staff da mostrare nell'embed
+    display_staff_role = f"<@&{config['ruolo_staff']}>" if config['ruolo_staff'] else "@Staffer"
+
+    # Creazione Embed
     embed = discord.Embed(title=f"{emoji_status} | Approval notices", color=color)
     embed.set_thumbnail(url=interaction.guild.icon.url if interaction.guild.icon else None)
-    
     embed.add_field(name="Evrenians ❯❯", value=utente.mention, inline=False)
     embed.add_field(name="Esito ❯❯", value=f"**{esito.value.upper()}**", inline=True)
     embed.add_field(name="Errori ❯❯", value=f"**{errori}**", inline=True)
-    
     embed.add_field(name="━━━━━━━━━━━━━━━━━━━━", value=" ", inline=False)
-    
-    # Campo Staffer dinamico basato sul setup dell'admin
-    embed.add_field(
-        name=f"Da {display_staff_role} :", 
-        value=interaction.user.mention, 
-        inline=False
-    )
-    
+    embed.add_field(name=f"Da {display_staff_role} :", value=interaction.user.mention, inline=False)
     embed.set_footer(text=f"Evren City RP • {discord.utils.utcnow().strftime('%d/%m/%Y')}")
 
     await interaction.followup.send(content=utente.mention, embed=embed)
