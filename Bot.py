@@ -638,49 +638,7 @@ async def scassina(interaction: discord.Interaction):
     
     cur.close()
     conn.close()
-import discord
-from discord import app_commands
-from discord.ext import commands
-class BackgroundStaffView(discord.ui.View):
-    def __init__(self, user_id, psn_id):
-        super().__init__(timeout=None)
-        self.user_id = user_id
-        self.psn_id = psn_id
 
-    @discord.ui.button(label="ACCETTA", style=discord.ButtonStyle.success, emoji="✅")
-    async def accept(self, interaction: discord.Interaction, button: discord.ui.Button):
-        member = interaction.guild.get_member(self.user_id)
-        if not member:
-            return await interaction.response.send_message("❌ Utente non trovato.", ephemeral=True)
-
-        # Invio DM
-        embed_dm = discord.Embed(
-            title="✅ Background Accettato!",
-            description=f"Il tuo background per **Evren City** è stato approvato.\nIl tuo nick è stato impostato su `{self.psn_id}`.",
-            color=discord.Color.green()
-        )
-        
-        try:
-            await member.edit(nick=self.psn_id)
-            await member.send(embed=embed_dm)
-            status = "✅ Esito inviato in DM e Nick cambiato."
-        except:
-            status = "⚠️ Accettato, ma DM chiusi o permessi nick insufficienti."
-
-        await interaction.response.edit_message(content=f"{status} | Staffer: {interaction.user.mention}", view=None)
-
-    @discord.ui.button(label="RIFIUTA", style=discord.ButtonStyle.danger, emoji="❌")
-    async def reject(self, interaction: discord.Interaction, button: discord.ui.Button):
-        member = interaction.guild.get_member(self.user_id)
-        embed_dm = discord.Embed(title="❌ Background Rifiutato", description="Il tuo background non è stato approvato.", color=discord.Color.red())
-        
-        try:
-            if member: await member.send(embed=embed_dm)
-            status = "❌ Rifiuto inviato in DM."
-        except:
-            status = "⚠️ Rifiutato, ma DM chiusi."
-
-        await interaction.response.edit_message(content=f"{status} | Staffer: {interaction.user.mention}", view=None)
 
 # --- COMANDO SETUP BACKGROUND (Solo Admin) ---
 @bot.tree.command(name="setup_background", description="[ADMIN] Configura canale staff e ruolo per i background")
@@ -708,6 +666,62 @@ async def setup_background(interaction: discord.Interaction, canale_staff: disco
         f"🛡️ Ruolo richiesto: {ruolo_richiesto.mention}", 
         ephemeral=True
     )
+class BackgroundStaffView(discord.ui.View):
+    def __init__(self, user_id, psn_id):
+        super().__init__(timeout=None)
+        self.user_id = user_id
+        self.psn_id = psn_id
+
+    @discord.ui.button(label="ACCETTA", style=discord.ButtonStyle.success, emoji="✅")
+    async def accept(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer() # Evita che il bottone scada
+        
+        try:
+            # fetch_member è più potente di get_member (lo cerca anche se non è in cache)
+            member = await interaction.guild.fetch_member(self.user_id)
+            
+            # 1. Prova a cambiare il Nickname
+            try:
+                await member.edit(nick=self.psn_id)
+            except:
+                pass # Se il bot non ha permessi per il nick, continua comunque
+
+            # 2. Invia il DM di successo
+            embed_dm = discord.Embed(
+                title="✅ Background Accettato!",
+                description=f"Il tuo background per **Evren City** è stato approvato.\nIl tuo nickname è stato impostato su: `{self.psn_id}`.",
+                color=discord.Color.green()
+            )
+            await member.send(embed=embed_dm)
+            
+            await interaction.edit_original_response(content=f"✅ Accettato e DM inviato a {member.mention}", view=None)
+            
+        except discord.Forbidden:
+            # Questo accade se l'utente ha i DM chiusi
+            await interaction.edit_original_response(content="⚠️ Background accettato, ma l'utente ha i **DM CHIUSI**. Non ha ricevuto l'esito.", view=None)
+        except Exception as e:
+            await interaction.edit_original_response(content=f"❌ Errore nel trovare l'utente o inviare l'esito: {e}", view=None)
+
+    @discord.ui.button(label="RIFIUTA", style=discord.ButtonStyle.danger, emoji="❌")
+    async def reject(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+
+        try:
+            member = await interaction.guild.fetch_member(self.user_id)
+            
+            embed_dm = discord.Embed(
+                title="❌ Background Rifiutato",
+                description="Il tuo background non è stato approvato. Riprova seguendo meglio il regolamento.",
+                color=discord.Color.red()
+            )
+            await member.send(embed=embed_dm)
+            
+            await interaction.edit_original_response(content=f"❌ Rifiutato e DM inviato a {member.mention}", view=None)
+            
+        except discord.Forbidden:
+            await interaction.edit_original_response(content="⚠️ Rifiutato, ma l'utente ha i **DM CHIUSI**.", view=None)
+        except Exception as e:
+            await interaction.edit_original_response(content="❌ Errore: l'utente potrebbe aver lasciato il server.", view=None)
 
 # --- COMANDO BACKGROUND PER UTENTI ---
 @bot.tree.command(name="background", description="Invia il tuo background PG e ricevi una copia in DM")
