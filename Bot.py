@@ -1175,6 +1175,77 @@ async def finisci_turno(interaction: discord.Interaction):
         await canale_staff.send(embed=embed_s, view=TurnoStaffView(str(interaction.user.id), stipendio, ore_lavorate, nome_ruolo))
 
 
+class WipeConfirmView(discord.ui.View):
+    def __init__(self, original_interaction):
+        super().__init__(timeout=30)
+        self.original_interaction = original_interaction
+
+    @discord.ui.button(label="CONFERMA WIPE TOTALE", style=discord.ButtonStyle.danger, emoji="⚠️")
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Verifica di sicurezza aggiuntiva sul bottone
+        is_owner = await bot.is_owner(interaction.user)
+        is_guild_owner = interaction.user == interaction.guild.owner
+        
+        if not (is_owner or is_guild_owner):
+            return await interaction.response.send_message("❌ Non sei autorizzato a confermare questa azione.", ephemeral=True)
+
+        await interaction.response.defer(ephemeral=True)
+        
+        try:
+            conn = get_db_connection()
+            cur = conn.cursor()
+
+            # Elenco di tutte le tabelle da svuotare (TRUNCATE le svuota all'istante)
+            tabelle = [
+                "users", "inventory", "items", "ricette", "veicoli", 
+                "documenti", "fatture", "multe", "arresti", "depositi", 
+                "depositi_items", "turni", "sessioni_raccolta"
+            ]
+            
+            # Eseguiamo il reset
+            query = f"TRUNCATE TABLE {', '.join(tabelle)} RESTART IDENTITY CASCADE;"
+            cur.execute(query)
+            
+            conn.commit()
+            await interaction.followup.send("✅ **WIPE COMPLETATO.** Il database è stato resettato correttamente.", ephemeral=True)
+            
+            # Log opzionale nel canale log se lo hai configurato
+            # await send_log("⚠️ WIPE TOTALE eseguito da " + interaction.user.name)
+
+        except Exception as e:
+            await interaction.followup.send(f"❌ Errore durante il wipe: `{e}`", ephemeral=True)
+        finally:
+            if conn: cur.close(); conn.close()
+
+    @discord.ui.button(label="Annulla", style=discord.ButtonStyle.secondary)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(content="❌ Operazione annullata.", view=None)
+
+@bot.tree.command(name="wipe_totale", description="ELIMINA TUTTI I DATI (Solo Owner)")
+async def wipe_totale(interaction: discord.Interaction):
+    # 1. Controllo se è il proprietario del bot o del server
+    is_owner = await bot.is_owner(interaction.user)
+    is_guild_owner = interaction.user == interaction.guild.owner
+
+    if not (is_owner or is_guild_owner):
+        return await interaction.response.send_message("⛔ Solo il proprietario del server o del bot può eseguire questa azione!", ephemeral=True)
+
+    # 2. Messaggio di avvertimento con bottone
+    embed = discord.Embed(
+        title="⚠️ ATTENZIONE: WIPE TOTALE",
+        description=(
+            "Stai per eliminare **TUTTI** i dati del server:\n"
+            "• Account utenti (Banca e Portafoglio)\n"
+            "• Inventari e Veicoli\n"
+            "• Catalogo Shop e Ricette\n"
+            "• Documenti, Fatture e Multe\n\n"
+            "**Questa azione è irreversibile.** Vuoi procedere?"
+        ),
+        color=discord.Color.red()
+    )
+    
+    view = WipeConfirmView(interaction)
+    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 # --- COMANDO PER ELIMINARE IL DOCUMENTO (SOLO ADMIN) ---
 @bot.tree.command(name="elimina_documento", description="Elimina il documento di un cittadino (Solo Staff)")
