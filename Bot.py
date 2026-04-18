@@ -704,12 +704,16 @@ async def setup_background(interaction: discord.Interaction, canale_staff: disco
     await interaction.response.send_message(f"✅ Setup completato per {canale_staff.mention}", ephemeral=True)
 
 # --- COMANDO BACKGROUND (UTENTI) ---
-@bot.tree.command(name="background", description="Invia il tuo background PG")
+# --- COMANDO BACKGROUND (VERSIONE INTEGRALE) ---
+@bot.tree.command(name="background", description="Invia il tuo background PG completo")
 async def background(
     interaction: discord.Interaction, 
     nome: str, eta: str, psn_id: str, esperienze: str, 
     storia: str, paure: str, obiettivi: str, regolamento: str
 ):
+    await interaction.response.defer(ephemeral=True)
+
+    # Recupero Config
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
     cur.execute("SELECT * FROM background_config WHERE guild_id = %s", (str(interaction.guild.id),))
@@ -717,36 +721,48 @@ async def background(
     cur.close(); conn.close()
 
     if not config:
-        return await interaction.response.send_message("❌ Sistema non configurato.", ephemeral=True)
+        return await interaction.followup.send("❌ Sistema non configurato.", ephemeral=True)
 
-    role_req = interaction.guild.get_role(int(config['required_role_id']))
-    if role_req not in interaction.user.roles:
-        return await interaction.response.send_message(f"❌ Devi avere il ruolo {role_req.mention}!", ephemeral=True)
+    # Funzione per creare l'embed SENZA tagli eccessivi
+    def create_full_embed(title, color):
+        emb = discord.Embed(
+            title=title, 
+            color=color, 
+            description=f"**📖 STORIA DEL PERSONAGGIO:**\n{storia}", # Storia messa in description per massimo spazio
+            timestamp=discord.utils.utcnow()
+        )
+        emb.add_field(name="👤 Nome & Età", value=f"{nome} ({eta})", inline=True)
+        emb.add_field(name="🎮 ID PSN", value=f"`{psn_id}`", inline=True)
+        emb.add_field(name="📜 Regolamento", value=regolamento, inline=True)
+        
+        # Usiamo campi separati per il resto così nulla viene unito
+        emb.add_field(name="📚 Esperienze RP", value=esperienze if esperienze else "Nessuna", inline=False)
+        emb.add_field(name="😨 Paure", value=paure, inline=False)
+        emb.add_field(name="🎯 Obiettivi", value=obiettivi, inline=False)
+        
+        emb.set_footer(text=f"Inviato da: {interaction.user.display_name}")
+        return emb
 
-    # 1. Invio Copia Immediata in DM all'utente
-    embed_copia = discord.Embed(title="📝 Riepilogo Background Inviato", color=discord.Color.blue(), timestamp=discord.utils.utcnow())
-    embed_copia.add_field(name="👤 Nome & Età", value=f"{nome} ({eta})", inline=False)
-    embed_copia.add_field(name="🎮 ID PSN", value=psn_id, inline=False)
-    embed_copia.add_field(name="📖 Storia", value=storia[:1024], inline=False)
-    
+    # 1. INVIO RIEPILOGO COMPLETO IN DM
     try:
-        await interaction.user.send(embed=embed_copia)
-        await interaction.response.send_message("✅ Background inviato! Hai ricevuto una copia in DM.", ephemeral=True)
-    except:
-        await interaction.response.send_message("✅ Background inviato! (DM chiusi, copia non inviata).", ephemeral=True)
+        user_embed = create_full_embed("📝 IL TUO BACKGROUND COMPLETO", discord.Color.blue())
+        await interaction.user.send(embed=user_embed)
+        dm_status = "✅ Copia integrale inviata in DM."
+    except Exception as e:
+        dm_status = "⚠️ Copia DM non inviata (DM chiusi)."
 
-    # 2. Invio allo Staff Channel
+    # 2. INVIO ALLO STAFF
     staff_chan = interaction.guild.get_channel(int(config['staff_channel_id']))
-    embed_staff = discord.Embed(title="📩 Nuova Richiesta Background", color=discord.Color.orange())
-    embed_staff.set_author(name=interaction.user.name, icon_url=interaction.user.display_avatar.url)
-    embed_staff.add_field(name="👤 Dati", value=f"Nome: {nome}\nEtà: {eta}\nPSN: `{psn_id}`", inline=False)
-    embed_staff.add_field(name="📚 Esperienze", value=esperienze, inline=False)
-    embed_staff.add_field(name="📖 Storia", value=storia[:1024], inline=False)
-    embed_staff.add_field(name="😨 Paure/Obiettivi", value=f"Paure: {paure}\nObiettivi: {obiettivi}", inline=False)
-    embed_staff.add_field(name="📜 Regolamento", value=regolamento, inline=False)
-
-    view = BackgroundStaffView(user_id=interaction.user.id, psn_id=psn_id)
-    await staff_chan.send(embed=embed_staff, view=view)
+    if staff_chan:
+        staff_embed = create_full_embed("📩 NUOVO BACKGROUND DA VALUTARE", discord.Color.orange())
+        staff_embed.set_author(name=interaction.user.name, icon_url=interaction.user.display_avatar.url)
+        
+        view = BackgroundStaffView(user_id=interaction.user.id, psn_id=psn_id)
+        await staff_chan.send(embed=staff_embed, view=view)
+        
+        await interaction.followup.send(f"✅ Background consegnato! {dm_status}", ephemeral=True)
+    else:
+        await interaction.followup.send("❌ Errore: Canale staff non trovato.", ephemeral=True)
 
 # --- COMANDI RP LEGA/SLEGA (SOLO TESTUALI) ---
 @bot.tree.command(name="lega", description="Azione RP: Lega un utente")
