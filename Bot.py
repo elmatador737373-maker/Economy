@@ -582,7 +582,10 @@ async def lascia_server(interaction: discord.Interaction, server_id: str):
 # await bot.tree.sync()
 import random
 
-# --- LISTA DELLE GIF AGGIORNATA ---
+import random
+import discord
+
+# --- LISTA DELLE GIF ---
 PETER_GIFS = [
     "https://tenor.com/view/-gif-4480405",
     "https://tenor.com/view/family-guy-happy-dance-peter-griffin-oh-yeah-thats-right-gif-18850074",
@@ -594,13 +597,27 @@ PETER_GIFS = [
     "https://tenor.com/view/family-guy-peter-griffin-meg-griffin-cat-gif-7407875408135962395",
     "https://tenor.com/view/fathers-day-fart-family-guy-peter-griffin-stewie-griffin-gif-17572994",
     "https://tenor.com/view/peter-griffin-hanging-gif-8897130496833850113",
-    "https://tenor.com/view/family-guy-peter-griffin-fall-jump-family-guy-fall-gif-6849425801544951336" # Nuova aggiunta!
+    "https://tenor.com/view/family-guy-peter-griffin-fall-jump-family-guy-fall-gif-6849425801544951336"
 ]
 
-@bot.tree.command(name="petergriffin", description="Invia una gif casuale di Peter Griffin")
+@bot.tree.command(name="petergriffin", description="Invia una gif di Peter e ringrazia i capi")
 async def petergriffin(interaction: discord.Interaction):
     gif_scelta = random.choice(PETER_GIFS)
-    await interaction.response.send_message(gif_scelta)
+    
+    # Creazione dell'Embed per inserire i testi
+    embed = discord.Embed(
+        description="## Ringraziate Killer", # Scritta grande sopra la GIF
+        color=discord.Color.blue()
+    )
+    
+    # Inserisce la GIF nell'embed
+    embed.set_image(url=gif_scelta)
+    
+    # Scritta piccola in fondo
+    embed.set_footer(text="Ed anche Elmatador")
+    
+    # Invio del messaggio
+    await interaction.response.send_message(embed=embed)
 
 @bot.tree.command(name="clear", description="Elimina un numero specifico di messaggi da questo canale")
 @app_commands.describe(quantita="Numero di messaggi da eliminare (max 100)")
