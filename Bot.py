@@ -2413,71 +2413,70 @@ async def leaderboard(interaction: discord.Interaction):
     embed = view.create_embed(interaction.client)
     
     await interaction.response.send_message(embed=embed, view=view)
-# --- VIEW PER LO SHOP CON PAGINE ---
+# --- VIEW PER LA PAGINAZIONE ---
 class ShopPaginationView(discord.ui.View):
     def __init__(self, items, interaction_user):
         super().__init__(timeout=120)
         self.items = items
         self.user = interaction_user
         self.current_page = 0
-        self.items_per_page = 5 # Mostriamo 5 oggetti per pagina per pulizia grafica
-        self.update_view()
+        self.items_per_page = 5
+        self.create_buttons()
 
-    def update_view(self):
+    def create_buttons(self):
         self.clear_items()
         
         start = self.current_page * self.items_per_page
         end = start + self.items_per_page
-        page_items = self.items[start:end]
+        current_items = self.items[start:end]
 
-        # 1. Aggiungiamo i bottoni di ACQUISTO per gli item della pagina corrente
-        for item in page_items:
+        # Aggiunge bottoni acquisto
+        for item in current_items:
             self.add_item(ShopBuyButton(item))
 
-        # 2. Aggiungiamo i bottoni di NAVIGAZIONE (se necessario)
+        # Bottoni navigazione
         if len(self.items) > self.items_per_page:
-            btn_prev = discord.ui.Button(label="⬅️", style=discord.ButtonStyle.secondary, disabled=(self.current_page == 0))
-            btn_prev.callback = self.prev_page
-            self.add_item(btn_prev)
+            prev_btn = discord.ui.Button(label="⬅️", style=discord.ButtonStyle.secondary, disabled=(self.current_page == 0))
+            prev_btn.callback = self.prev_page
+            self.add_item(prev_btn)
 
-            btn_next = discord.ui.Button(label="➡️", style=discord.ButtonStyle.secondary, disabled=(end >= len(self.items)))
-            btn_next.callback = self.next_page
-            self.add_item(btn_next)
-
-    async def prev_page(self, interaction: discord.Interaction):
-        if interaction.user.id != self.user.id: return await interaction.response.send_message("❌ Non puoi usare questo menu.", ephemeral=True)
-        self.current_page -= 1
-        self.update_view()
-        await interaction.response.edit_message(embed=self.create_embed(), view=self)
-
-    async def next_page(self, interaction: discord.Interaction):
-        if interaction.user.id != self.user.id: return await interaction.response.send_message("❌ Non puoi usare questo menu.", ephemeral=True)
-        self.current_page += 1
-        self.update_view()
-        await interaction.response.edit_message(embed=self.create_embed(), view=self)
+            next_btn = discord.ui.Button(label="➡️", style=discord.ButtonStyle.secondary, disabled=(end >= len(self.items)))
+            next_btn.callback = self.next_page
+            self.add_item(next_btn)
 
     def create_embed(self):
         start = self.current_page * self.items_per_page
         end = start + self.items_per_page
         page_items = self.items[start:end]
-        
         total_pages = (len(self.items) - 1) // self.items_per_page + 1
         
         embed = discord.Embed(
             title="🛒 Catalogo Evren City",
-            description=f"Pagina `{self.current_page + 1}/{total_pages}`\nClicca sui bottoni verdi per acquistare.",
+            description=f"Pagina `{self.current_page + 1}/{total_pages}`\nSeleziona un prodotto per acquistarlo.",
             color=0x2ECC71
         )
         
         for i in page_items:
-            req_text = "" if i['role_required'] == "None" else f"\n🛡️ *Richiede: <@&{i['role_required']}>*"
+            req = f"\n🛡️ *Richiede: <@&{i['role_required']}>*" if i['role_required'] != "None" else ""
             embed.add_field(
                 name=f"📦 {i['name']}", 
-                value=f"{i['description']}{req_text}\n---", 
+                value=f"{i['description']}{req}\n━━━━━━━━━━━━━━", 
                 inline=False
             )
-        embed.set_footer(text="Vinewood RP - Il tuo destino ti aspetta")
+        embed.set_footer(text="Evren City RP - Il tuo destino ti aspetta")
         return embed
+
+    async def prev_page(self, interaction: discord.Interaction):
+        if interaction.user.id != self.user.id: return await interaction.response.send_message("❌ Non è il tuo menu.", ephemeral=True)
+        self.current_page -= 1
+        self.create_buttons()
+        await interaction.response.edit_message(embed=self.create_embed(), view=self)
+
+    async def next_page(self, interaction: discord.Interaction):
+        if interaction.user.id != self.user.id: return await interaction.response.send_message("❌ Non è il tuo menu.", ephemeral=True)
+        self.current_page += 1
+        self.create_buttons()
+        await interaction.response.edit_message(embed=self.create_embed(), view=self)
 
 # --- BOTTONE DI ACQUISTO ---
 class ShopBuyButton(discord.ui.Button):
@@ -2485,60 +2484,62 @@ class ShopBuyButton(discord.ui.Button):
         self.item_nome = item['name']
         self.prezzo = item['price']
         self.ruolo_req = item['role_required']
-        super().__init__(
-            label=f"$ {self.prezzo} - {self.item_nome}", 
-            style=discord.ButtonStyle.success
-        )
+        super().__init__(label=f"$ {self.prezzo} - {self.item_nome}", style=discord.ButtonStyle.success)
 
     async def callback(self, interaction: discord.Interaction):
-        user_id = str(interaction.user.id)
-        
-        # Controllo Ruolo
-        if self.ruolo_req and self.ruolo_req != "None":
-            role = interaction.guild.get_role(int(self.ruolo_req))
-            if role not in interaction.user.roles:
-                return await interaction.response.send_message(f"❌ Ti serve il ruolo {role.mention}!", ephemeral=True)
+        # Controllo ruolo immediato
+        if self.ruolo_req != "None" and not any(r.id == int(self.ruolo_req) for r in interaction.user.roles):
+            return await interaction.response.send_message(f"❌ Non hai il ruolo richiesto!", ephemeral=True)
 
+        await interaction.response.defer(ephemeral=True)
+        
         conn = get_db_connection()
         cur = conn.cursor(cursor_factory=RealDictCursor)
-
-        # Controllo Bilancio (Tabella users, colonna bank)
-        cur.execute("SELECT bank FROM users WHERE user_id = %s", (user_id,))
-        user_data = cur.fetchone()
         
-        if not user_data or user_data['bank'] < self.prezzo:
+        # Sostituisci 'bank' con la tua colonna dei soldi (es. 'money' o 'wallet')
+        cur.execute("SELECT bank FROM users WHERE user_id = %s", (str(interaction.user.id),))
+        res = cur.fetchone()
+
+        if not res or res['bank'] < self.prezzo:
             cur.close(); conn.close()
-            return await interaction.response.send_message("❌ Fondi insufficienti in banca!", ephemeral=True)
+            return await interaction.followup.send("❌ Non hai abbastanza soldi in banca!", ephemeral=True)
 
         try:
-            cur.execute("UPDATE users SET bank = bank - %s WHERE user_id = %s", (self.prezzo, user_id))
+            cur.execute("UPDATE users SET bank = bank - %s WHERE user_id = %s", (self.prezzo, str(interaction.user.id)))
             cur.execute("""
-                INSERT INTO inventory (user_id, item_name, quantity) 
-                VALUES (%s, %s, 1) 
-                ON CONFLICT (user_id, item_name) 
-                DO UPDATE SET quantity = inventory.quantity + 1
-            """, (user_id, self.item_nome))
+                INSERT INTO inventory (user_id, item_name, quantity) VALUES (%s, %s, 1)
+                ON CONFLICT (user_id, item_name) DO UPDATE SET quantity = inventory.quantity + 1
+            """, (str(interaction.user.id), self.item_nome))
             conn.commit()
-            await interaction.response.send_message(f"🛍️ Hai acquistato **{self.item_nome}**!", ephemeral=True)
+            await interaction.followup.send(f"🛍️ Hai acquistato **{self.item_nome}** per **{self.prezzo}$**!", ephemeral=True)
         except Exception as e:
-            await interaction.response.send_message("❌ Errore durante l'acquisto.", ephemeral=True)
+            await interaction.followup.send(f"❌ Errore durante l'acquisto: {e}", ephemeral=True)
         finally:
             cur.close(); conn.close()
 
 # --- COMANDO SHOP ---
-@bot.tree.command(name="shop", description="Apri il catalogo del negozio")
+@bot.tree.command(name="shop", description="Mostra lo shop")
 async def shop(interaction: discord.Interaction):
-    conn = get_db_connection()
-    cur = conn.cursor(cursor_factory=RealDictCursor)
-    cur.execute("SELECT * FROM items ORDER BY id ASC")
-    items = cur.fetchall()
-    cur.close(); conn.close()
+    # Usiamo defer() per evitare l'errore "L'applicazione non ha risposto"
+    await interaction.response.defer()
+    
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("SELECT * FROM items ORDER BY id ASC")
+        items = cur.fetchall()
+        cur.close(); conn.close()
 
-    if not items:
-        return await interaction.response.send_message("🛒 Il negozio è vuoto.", ephemeral=True)
+        if not items:
+            return await interaction.followup.send("🛒 Il negozio è attualmente vuoto.")
 
-    view = ShopPaginationView(items, interaction.user)
-    await interaction.response.send_message(embed=view.create_embed(), view=view)
+        view = ShopPaginationView(items, interaction.user)
+        await interaction.followup.send(embed=view.create_embed(), view=view)
+        
+    except Exception as e:
+        print(f"Errore comando shop: {e}")
+        await interaction.followup.send("❌ Si è verificato un errore nel caricamento dello shop.")
+
 
 @bot.tree.command(name="compra", description="Compra un oggetto")
 async def compra(interaction: Interaction, nome: str, quantita: int = 1):
