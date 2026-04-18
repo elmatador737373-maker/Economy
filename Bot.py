@@ -642,7 +642,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-# --- MODALE PER L'INSERIMENTO DEL BACKGROUND ---
+# --- MODALE PER BACKGROUND ---
 class BackgroundModal(discord.ui.Modal, title="Compilazione Background PG"):
     # Abbiamo 5 campi disponibili (il massimo su Discord)
     campo1 = discord.ui.TextInput(label="Nome, Età e ID PSN", placeholder="Es: Mario Rossi, 25, PSN_ID", min_length=10)
