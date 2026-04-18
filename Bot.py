@@ -592,32 +592,35 @@ import random
 import discord
 
 # Ho inserito i tuoi link originali. 
-# Per farli funzionare meglio negli embed, aggiungiamo ".gif" alla fine nel codice.
-PETER_GIFS = [
-    "https://tenor.com/view/-gif-4480405",
-    "https://tenor.com/view/family-guy-happy-dance-peter-griffin-oh-yeah-thats-right-gif-18850074",
-    "https://tenor.com/view/floreyonce-family-guy-peter-griffin-fat-gif-14408743807094970321",
-    "https://tenor.com/view/peter-griffin-bull-riding-bull-mechanical-mechanical-bull-gif-406373728649696942",
-    "https://tenor.com/view/peter-griffin-crashing-out-breaking-everything-nosolohit-gif-13296016008002848344",
-    "https://tenor.com/view/family-guy-peter-griffin-meg-griffin-cat-gif-7407875408135962395",
-    "https://tenor.com/view/fathers-day-fart-family-guy-peter-griffin-stewie-griffin-gif-17572994",
-    "https://tenor.com/view/peter-griffin-hanging-gif-8897130496833850113",
-    "https://tenor.com/view/family-guy-peter-griffin-fall-jump-family-guy-fall-gif-6849425801544951336"
-]
-
-@bot.tree.command(name="petergriffin", description="Invia una gif di Peter Griffin")
-async def petergriffin(interaction: discord.Interaction):
-    gif_link = random.choice(PETER_GIFS)
+# --- COMANDO ADMIN PER AGGIUNGERE ---
+@bot.tree.command(name="peter_add", description="Aggiunge una GIF (Solo Admin)")
+@app_commands.checks.has_permissions(administrator=True)
+async def peter_add(interaction: discord.Interaction, link: str):
+    # Pulisce il link per assicurarsi che sia diretto (opzionale ma consigliato)
+    if "tenor.com/view" in link and not link.endswith(".gif"):
+        link = f"{link}.gif"
     
-    # Trucco: aggiungendo .gif alla fine del link di Tenor, 
-    # Discord lo interpreta quasi sempre come immagine diretta nell'embed.
-    if not gif_link.endswith(".gif"):
-        final_link = f"{gif_link}.gif"
-    else:
-        final_link = gif_link
+    try:
+        supabase.table("peter_gifs").insert({"url": link}).execute()
+        await interaction.response.send_message(f"✅ GIF salvata nel database!", ephemeral=True)
+    except Exception as e:
+        await interaction.response.send_message(f"❌ Errore: {e}", ephemeral=True)
 
+# --- COMANDO PUBBLICO PER VISUALIZZARE ---
+@bot.tree.command(name="petergriffin", description="Invia una gif casuale di Peter")
+async def petergriffin(interaction: discord.Interaction):
+    # Recupero dati da Supabase
+    response = supabase.table("peter_gifs").select("url").execute()
+    
+    if not response.data:
+        return await interaction.response.send_message("⚠️ Il database è vuoto. Chiedi a un admin di usare /peter_add", ephemeral=True)
+
+    # Scelta casuale
+    gif_scelta = random.choice([record['url'] for record in response.data])
+    
+    # Creazione Embed pulito
     embed = discord.Embed(color=discord.Color.from_rgb(255, 255, 255))
-    embed.set_image(url=final_link)
+    embed.set_image(url=gif_scelta)
     embed.set_footer(text="Ringraziate Killer")
     
     await interaction.response.send_message(embed=embed)
