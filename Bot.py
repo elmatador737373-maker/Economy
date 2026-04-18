@@ -537,6 +537,49 @@ async def esito_wl(interaction: discord.Interaction, utente: discord.Member, esi
     embed.set_footer(text=f"Evren City RP • {discord.utils.utcnow().strftime('%d/%m/%Y')}")
 
     await interaction.followup.send(content=utente.mention, embed=embed)
+# --- LOGICA PER NOTIFICA DM E COMANDO SLASH CON AUTOCOMPLETE ---
+
+YOUR_USER_ID =  1191824316376043580 #Inserisci il tuo ID
+
+# 1. Evento Notifica DM
+@bot.event
+async def on_guild_join(guild):
+    user = await bot.fetch_user(YOUR_USER_ID)
+    if user:
+        link = "Nessun permesso per l'invito"
+        for channel in guild.text_channels:
+            if channel.permissions_for(guild.me).create_instant_invite:
+                inv = await channel.create_invite(max_age=300)
+                link = inv.url
+                break
+        await user.send(f"✅ **Nuovo Server**: {guild.name}\n🔗 **Link**: {link}")
+
+# 2. Autocomplete per la lista dei server
+async def server_autocomplete(interaction: discord.Interaction, current: str):
+    # Mostra solo i server che contengono il testo scritto dall'utente
+    return [
+        discord.app_commands.Choice(name=guild.name, value=str(guild.id))
+        for guild in bot.guilds
+        if current.lower() in guild.name.lower()
+    ][:25] # Massimo 25 suggerimenti consentiti da Discord
+
+# 3. Comando Slash per uscire
+@bot.tree.command(name="lascia_server", description="Fa uscire il bot da un server specifico")
+@discord.app_commands.autocomplete(server_id=server_autocomplete)
+async def lascia_server(interaction: discord.Interaction, server_id: str):
+    # Controllo sicurezza: Solo tu puoi eseguire il comando
+    if interaction.user.id != YOUR_USER_ID:
+        return await interaction.response.send_message("❌ Non hai i permessi!", ephemeral=True)
+
+    guild = bot.get_guild(int(server_id))
+    if guild:
+        await guild.leave()
+        await interaction.response.send_message(f"✅ Ho lasciato il server: **{guild.name}**", ephemeral=True)
+    else:
+        await interaction.response.send_message("❌ Server non trovato.", ephemeral=True)
+
+# Ricordati di sincronizzare i comandi slash nel tuo evento on_ready:
+# await bot.tree.sync()
 
 @bot.tree.command(name="clear", description="Elimina un numero specifico di messaggi da questo canale")
 @app_commands.describe(quantita="Numero di messaggi da eliminare (max 100)")
