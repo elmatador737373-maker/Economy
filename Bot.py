@@ -642,92 +642,133 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-# --- MODALE PER BACKGROUND ---
-class BackgroundModal(discord.ui.Modal, title="Compilazione Background PG"):
-    # Abbiamo 5 campi disponibili (il massimo su Discord)
-    campo1 = discord.ui.TextInput(label="Nome, Età e ID PSN", placeholder="Es: Mario Rossi, 25, PSN_ID", min_length=10)
-    campo2 = discord.ui.TextInput(label="Esperienze RP", style=discord.TextStyle.long, placeholder="Descrivi i server dove hai giocato...")
-    campo3 = discord.ui.TextInput(label="Storia del Personaggio", style=discord.TextStyle.long, placeholder="Racconta il passato del tuo PG...")
-    campo4 = discord.ui.TextInput(label="Paure e Obiettivi PG", style=discord.TextStyle.long, placeholder="Cosa teme e cosa vuole fare in città?")
-    campo5 = discord.ui.TextInput(label="Presa visione Regolamento", placeholder="Scrivi 'Sì' se hai letto e accettato il regolamento")
+# --- COMANDO SETUP BACKGROUND (Solo Admin) ---
+@bot.tree.command(name="setup_background", description="[ADMIN] Configura canale staff e ruolo per i background")
+@app_commands.describe(
+    canale_staff="Il canale dove lo staff riceverà i background",
+    ruolo_richiesto="Il ruolo che l'utente deve avere per usare /background"
+)
+@app_commands.checks.has_permissions(administrator=True)
+async def setup_background(interaction: discord.Interaction, canale_staff: discord.TextChannel, ruolo_richiesto: discord.Role):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO background_config (guild_id, staff_channel_id, required_role_id) 
+        VALUES (%s, %s, %s) 
+        ON CONFLICT (guild_id) DO UPDATE SET 
+        staff_channel_id = EXCLUDED.staff_channel_id, 
+        required_role_id = EXCLUDED.required_role_id
+    """, (str(interaction.guild.id), str(canale_staff.id), str(ruolo_richiesto.id)))
+    conn.commit()
+    cur.close(); conn.close()
+    
+    await interaction.response.send_message(
+        f"✅ **Configurazione Background Salvata!**\n"
+        f"📍 Canale Staff: {canale_staff.mention}\n"
+        f"🛡️ Ruolo richiesto: {ruolo_richiesto.mention}", 
+        ephemeral=True
+    )
 
-    def __init__(self, staff_channel):
-        super().__init__()
-        self.staff_channel = staff_channel
+# --- COMANDO BACKGROUND PER UTENTI ---
+@bot.tree.command(name="background", description="Invia il tuo background PG e ricevi una copia in DM")
+@app_commands.describe(
+    nome="Nome e Cognome del tuo personaggio",
+    eta="Età del tuo personaggio",
+    psn_id="Il tuo ID PSN (verrà impostato come nickname)",
+    esperienze="Le tue esperienze passate nel mondo RP",
+    storia="Racconta la storia e il passato del tuo PG",
+    paure="Quali sono le paure del tuo personaggio?",
+    obiettivi="Cosa intendi fare una volta entrato in città?",
+    regolamento="Confermi di aver letto il regolamento? (Sì/No)"
+)
+async def background(
+    interaction: discord.Interaction, 
+    nome: str, eta: str, psn_id: str, esperienze: str, 
+    storia: str, paure: str, obiettivi: str, regolamento: str
+):
+    # 1. Recupero configurazione
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute("SELECT * FROM background_config WHERE guild_id = %s", (str(interaction.guild.id),))
+    config = cur.fetchone()
+    cur.close(); conn.close()
 
-    async def on_submit(self, interaction: discord.Interaction):
-        # Messaggio di conferma privato all'utente
-        await interaction.response.send_message("✅ Background inviato! Riceverai l'esito qui nei tuoi messaggi privati (DM).", ephemeral=True)
-        
-        # Embed per il canale STAFF con le risposte separate
-        embed = discord.Embed(title="📝 Nuovo Background Ricevuto", color=discord.Color.blue())
-        embed.set_thumbnail(url=interaction.user.display_avatar.url)
-        
-        embed.add_field(name="👤 Info Generali", value=self.campo1.value, inline=False)
-        embed.add_field(name="🎮 Esperienze RP", value=self.campo2.value, inline=False)
-        embed.add_field(name="📖 Storia PG", value=self.campo3.value[:1024], inline=False)
-        embed.add_field(name="🔍 Paure e Obiettivi", value=self.campo4.value[:1024], inline=False)
-        embed.add_field(name="📜 Regolamento", value=self.campo5.value, inline=False)
-        
-        embed.set_footer(text=f"Inviato da: {interaction.user.name} ({interaction.user.id})")
+    if not config:
+        return await interaction.response.send_message("❌ Il sistema non è configurato. Un Admin deve usare `/setup_background`.", ephemeral=True)
 
-        # Passiamo l'ID utente alla View per poterlo contattare dopo
-        view = BackgroundStaffView(user_id=interaction.user.id, info_generali=self.campo1.value)
-        await self.staff_channel.send(embed=embed, view=view)
+    # 2. Controllo Ruolo Richiesto
+    role_req = interaction.guild.get_role(int(config['required_role_id']))
+    if role_req not in interaction.user.roles:
+        return await interaction.response.send_message(f"❌ Devi avere il ruolo {role_req.mention} per inviare il background!", ephemeral=True)
 
-# --- VIEW PER LO STAFF CON INVIO DM ---
+    staff_chan = interaction.guild.get_channel(int(config['staff_channel_id']))
+    if not staff_chan:
+        return await interaction.response.send_message("❌ Canale staff non trovato. Contatta un Admin.", ephemeral=True)
+
+    # 3. Funzione per creare l'Embed (uguale per entrambi)
+    def create_bg_embed(title, color):
+        emb = discord.Embed(title=title, color=color, timestamp=discord.utils.utcnow())
+        emb.add_field(name="👤 Nome PG", value=nome, inline=True)
+        emb.add_field(name="🎂 Età PG", value=eta, inline=True)
+        emb.add_field(name="🎮 ID PSN", value=f"`{psn_id}`", inline=True)
+        emb.add_field(name="📚 Esperienze RP", value=esperienze, inline=False)
+        emb.add_field(name="📖 Storia PG", value=storia[:1024], inline=False)
+        emb.add_field(name="😨 Paure PG", value=paure, inline=True)
+        emb.add_field(name="🎯 Obiettivi", value=obiettivi, inline=True)
+        emb.add_field(name="📜 Regolamento", value=regolamento, inline=False)
+        return emb
+
+    # 4. Invio copia in DM all'utente
+    user_embed = create_bg_embed("📝 Copia del tuo Background inviato", discord.Color.blue())
+    user_embed.set_footer(text="Questa è una copia automatica. Attendi l'esito dello staff.")
+    
+    dm_status = "✅ Copia inviata in DM."
+    try:
+        await interaction.user.send(embed=user_embed)
+    except:
+        dm_status = "⚠️ Non ho potuto inviarti la copia in DM (messaggi chiusi)."
+
+    # 5. Risposta all'utente
+    await interaction.response.send_message(f"✅ Background inviato con successo allo staff! {dm_status}", ephemeral=True)
+
+    # 6. Invio allo Staff
+    staff_embed = create_bg_embed("📩 Nuova Richiesta Background", discord.Color.orange())
+    staff_embed.set_author(name=interaction.user.name, icon_url=interaction.user.display_avatar.url)
+    
+    view = BackgroundStaffView(user_id=interaction.user.id, psn_id=psn_id)
+    await staff_chan.send(embed=staff_embed, view=view)
+
+# --- VIEW PER LO STAFF ---
 class BackgroundStaffView(discord.ui.View):
-    def __init__(self, user_id, info_generali):
+    def __init__(self, user_id, psn_id):
         super().__init__(timeout=None)
         self.user_id = user_id
-        self.info_generali = info_generali
+        self.psn_id = psn_id
 
     @discord.ui.button(label="ACCETTA", style=discord.ButtonStyle.success, emoji="✅")
     async def accept(self, interaction: discord.Interaction, button: discord.ui.Button):
-        guild = interaction.guild
-        member = guild.get_member(self.user_id)
-        
-        if not member:
-            return await interaction.response.send_message("❌ Utente non trovato nel server.", ephemeral=True)
+        member = interaction.guild.get_member(self.user_id)
+        if not member: return await interaction.response.send_message("Utente non in server.", ephemeral=True)
 
-        # Cerchiamo di estrarre l'ID PSN per il nickname (assumendo sia l'ultima parte del campo 1)
-        # In alternativa, lo staff può cambiarlo a mano se il formato non è chiaro
+        embed_dm = discord.Embed(title="✅ Background Accettato!", description=f"Benvenuto a **Evren City**!\nIl tuo nickname è stato impostato su `{self.psn_id}`.", color=discord.Color.green())
         
-        embed_dm = discord.Embed(
-            title="✅ Background Approvato!",
-            description="Il tuo background per **Evren City** è stato visionato e **ACCETTATO**.\n\nPuoi ora procedere nel server. Benvenuto!",
-            color=discord.Color.green()
-        )
-
         try:
+            await member.edit(nick=self.psn_id)
             await member.send(embed=embed_dm)
-            status_msg = f"✅ Esito inviato in DM a {member.mention}"
-        except discord.Forbidden:
-            status_msg = f"⚠️ Background accettato, ma non ho potuto inviare il DM (Messaggi chiusi)."
-
-        await interaction.response.edit_message(content=f"{status_msg} | Gestito da {interaction.user.mention}", view=None)
+        except: pass
+        
+        await interaction.response.edit_message(content=f"✅ Accettato da {interaction.user.mention}", view=None)
 
     @discord.ui.button(label="RIFIUTA", style=discord.ButtonStyle.danger, emoji="❌")
     async def reject(self, interaction: discord.Interaction, button: discord.ui.Button):
-        guild = interaction.guild
-        member = guild.get_member(self.user_id)
+        member = interaction.guild.get_member(self.user_id)
+        embed_dm = discord.Embed(title="❌ Background Rifiutato", description="Il tuo background non è stato approvato. Riprova seguendo il regolamento.", color=discord.Color.red())
         
-        if not member:
-            return await interaction.response.send_message("❌ Utente non trovato nel server.", ephemeral=True)
-
-        embed_dm = discord.Embed(
-            title="❌ Background Rifiutato",
-            description="Purtroppo il tuo background non è stato approvato.\n\nTi consigliamo di rileggere il regolamento e approfondire la storia del tuo personaggio prima di riprovare.",
-            color=discord.Color.red()
-        )
-
-        try:
-            await member.send(embed=embed_dm)
-            status_msg = f"❌ Esito di rifiuto inviato in DM a {member.mention}"
-        except discord.Forbidden:
-            status_msg = f"⚠️ Background rifiutato, ma non ho potuto inviare il DM (Messaggi chiusi)."
-
-        await interaction.response.edit_message(content=f"{status_msg} | Gestito da {interaction.user.mention}", view=None)
+        if member:
+            try: await member.send(embed=embed_dm)
+            except: pass
+            
+        await interaction.response.edit_message(content=f"❌ Rifiutato da {interaction.user.mention}", view=None)
 
 # --- COMANDO STAFF: AGGIUNGI DROGA ---
 @bot.tree.command(name="crea_droga", description="Configura una nuova droga (Solo Staff)")
