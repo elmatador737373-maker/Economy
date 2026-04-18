@@ -592,38 +592,45 @@ import random
 import discord
 
 # Ho inserito i tuoi link originali. 
-# --- COMANDO ADMIN PER AGGIUNGERE ---
-@bot.tree.command(name="peter_add", description="Aggiunge una GIF (Solo Admin)")
+# --- COMANDO ADMIN: AGGIUNGI TRAMITE ALLEGATO ---
+@bot.tree.command(name="peter_add", description="Aggiunge una GIF caricando un file (Solo Admin)")
 @app_commands.checks.has_permissions(administrator=True)
-async def peter_add(interaction: discord.Interaction, link: str):
-    # Pulisce il link per assicurarsi che sia diretto (opzionale ma consigliato)
-    if "tenor.com/view" in link and not link.endswith(".gif"):
-        link = f"{link}.gif"
-    
-    try:
-        supabase.table("peter_gifs").insert({"url": link}).execute()
-        await interaction.response.send_message(f"✅ GIF salvata nel database!", ephemeral=True)
-    except Exception as e:
-        await interaction.response.send_message(f"❌ Errore: {e}", ephemeral=True)
+async def peter_add(interaction: discord.Interaction, file: discord.Attachment):
+    # Controlliamo che sia un'immagine o un video
+    if not file.content_type or not any(x in file.content_type for x in ["image", "video"]):
+        return await interaction.response.send_message("❌ Carica un file valido (GIF, PNG, MP4)!", ephemeral=True)
 
-# --- COMANDO PUBBLICO PER VISUALIZZARE ---
+    try:
+        # Salviamo l'URL dell'allegato su Supabase
+        # Nota: l'URL di Discord per i file caricati è permanente finché il messaggio non viene eliminato
+        supabase.table("peter_gifs").insert({"url": file.url}).execute()
+        
+        await interaction.response.send_message(f"✅ GIF aggiunta! Nome file: `{file.filename}`", ephemeral=True)
+    except Exception as e:
+        await interaction.response.send_message(f"❌ Errore Database: {e}", ephemeral=True)
+
+# --- COMANDO PUBBLICO: VISUALIZZA ---
 @bot.tree.command(name="petergriffin", description="Invia una gif casuale di Peter")
 async def petergriffin(interaction: discord.Interaction):
-    # Recupero dati da Supabase
-    response = supabase.table("peter_gifs").select("url").execute()
-    
-    if not response.data:
-        return await interaction.response.send_message("⚠️ Il database è vuoto. Chiedi a un admin di usare /peter_add", ephemeral=True)
+    try:
+        # Recupero dati da Supabase
+        response = supabase.table("peter_gifs").select("url").execute()
+        
+        if not response.data:
+            return await interaction.response.send_message("⚠️ Il database è vuoto!", ephemeral=True)
 
-    # Scelta casuale
-    gif_scelta = random.choice([record['url'] for record in response.data])
-    
-    # Creazione Embed pulito
-    embed = discord.Embed(color=discord.Color.from_rgb(255, 255, 255))
-    embed.set_image(url=gif_scelta)
-    embed.set_footer(text="Ringraziate Killer")
-    
-    await interaction.response.send_message(embed=embed)
+        # Scelta casuale tra i link salvati
+        gif_data = random.choice(response.data)
+        gif_url = gif_data['url']
+        
+        # Creazione Embed
+        embed = discord.Embed(color=discord.Color.from_rgb(255, 255, 255))
+        embed.set_image(url=gif_url)
+        embed.set_footer(text="Ringraziate Killer")
+        
+        await interaction.response.send_message(embed=embed)
+    except Exception as e:
+        await interaction.response.send_message(f"❌ Errore durante il recupero: {e}", ephemeral=True)
 
 @bot.tree.command(name="clear", description="Elimina un numero specifico di messaggi da questo canale")
 @app_commands.describe(quantita="Numero di messaggi da eliminare (max 100)")
