@@ -585,31 +585,37 @@ import random
 import random
 import discord
 
-# --- LISTA DELLE GIF ---
+import random
+import discord
+
+# Lista delle GIF ottimizzata per l'invio tramite Embed
 PETER_GIFS = [
-    "https://tenor.com/view/-gif-4480405",
-    "https://tenor.com/view/family-guy-happy-dance-peter-griffin-oh-yeah-thats-right-gif-18850074",
-    "https://tenor.com/view/floreyonce-family-guy-peter-griffin-fat-gif-14408743807094970321",
-    "https://tenor.com/view/peter-griffin-bull-riding-bull-mechanical-mechanical-bull-gif-406373728649696942",
-    "https://tenor.com/view/family-guy-peter-griffin-swing-fail-swing-jump-gif-2960440163463971808",
-    "https://tenor.com/view/fall-falling-comedy-peter-griffin-family-guy-gif-4634006",
-    "https://tenor.com/view/family-guy-peter-griffin-meg-griffin-cat-gif-7407875408135962395",
-    "https://tenor.com/view/fathers-day-fart-family-guy-peter-griffin-stewie-griffin-gif-17572994",
-    "https://tenor.com/view/peter-griffin-hanging-gif-8897130496833850113",
-    "https://tenor.com/view/family-guy-peter-griffin-fall-jump-family-guy-fall-gif-6849425801544951336"
+    "https://media.tenor.com/7I-K3hYVz-wAAAAC/family-guy-peter-griffin.gif",
+    "https://media.tenor.com/yS_e5_U9_k8AAAAC/family-guy-happy-dance.gif",
+    "https://media.tenor.com/floreyonce-family-guy.gif",
+    "https://media.tenor.com/R3pS2SbeS_gAAAAC/peter-griffin-family-guy.gif",
+    "https://media.tenor.com/uITwHSzqxlgAAAAC/peter-griffin-crashing-out.gif",
+    "https://media.tenor.com/6X9m7_0n7p8AAAAC/peter-griffin-stewie.gif",
+    "https://media.tenor.com/X-578Z9D-XoAAAAC/peter-griffin-fall.gif",
+    "https://media.tenor.com/j_fG-p6S8-wAAAAC/family-guy-peter-griffin.gif"
 ]
-
-
 
 @bot.tree.command(name="petergriffin", description="Invia una gif di Peter Griffin")
 async def petergriffin(interaction: discord.Interaction):
+    # Selezione casuale della GIF
     gif_scelta = random.choice(PETER_GIFS)
     
-    # Messaggio pulito: Link della GIF + Testo in piccolo sotto
-    # Usiamo il grassetto e il corsivo per simulare un footer elegante
-    testo_footer = f"{gif_scelta}\n\n*Ringraziate Killer, ed anche Elmatador*"
+    # Creazione dell'Embed
+    embed = discord.Embed(color=discord.Color.random())
     
-    await interaction.response.send_message(testo_footer)
+    # Imposta la GIF scelta
+    embed.set_image(url=gif_scelta)
+    
+    # Footer aggiornato (Solo Killer)
+    embed.set_footer(text="Ringraziate Killer")
+    
+    # Invio dell'embed (il link non si vedrà nel messaggio)
+    await interaction.response.send_message(embed=embed)
 
 @bot.tree.command(name="clear", description="Elimina un numero specifico di messaggi da questo canale")
 @app_commands.describe(quantita="Numero di messaggi da eliminare (max 100)")
