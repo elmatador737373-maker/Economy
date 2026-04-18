@@ -15,7 +15,7 @@ import time
 # ================= CONFIGURAZIONE =================
 TOKEN = os.environ.get("TOKEN")
 DATABASE_URL = os.environ.get("DATABASE_URL")
-RUOLO_STAFF_ID = 1253460150141059198
+RUOLO_STAFF_ID = 1465432780551753811
 
 intents = discord.Intents.default()
 intents.members = True
@@ -397,7 +397,7 @@ async def on_app_command_error(interaction: discord.Interaction, error: discord.
 @bot.tree.command(name="lista_anonimi", description="Mostra la lista di tutti i nickname anonimi associati agli utenti")
 async def lista_anonimi(interaction: discord.Interaction):
     # Controllo se l'utente è staff o admin per evitare che tutti vedano i nomi
-    ID_RUOLO_STAFF =  1465432780551753811 # Sostituisci con il tuo ID ruolo staff
+    ID_RUOLO_STAFF = 1465432780551753811 # tuo ID ruolo staff
     is_staff = any(r.id == ID_RUOLO_STAFF for r in interaction.user.roles) or interaction.user.guild_permissions.administrator
     
     if not is_staff:
@@ -459,7 +459,7 @@ async def me(interaction: discord.Interaction, azione: str):
 @app_commands.describe(quantita="Numero di messaggi da eliminare (max 100)")
 async def clear(interaction: discord.Interaction, quantita: int):
     # ID del ruolo autorizzato
-    ID_RUOLO_AUTORIZZATO = 1414902915679785031
+    ID_RUOLO_AUTORIZZATO = 1465432780551753811
     
     # Controllo se l'utente ha il ruolo richiesto
     role = interaction.guild.get_role(RUOLO_STAFF_ID)
