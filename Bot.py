@@ -580,6 +580,27 @@ async def lascia_server(interaction: discord.Interaction, server_id: str):
 
 # Ricordati di sincronizzare i comandi slash nel tuo evento on_ready:
 # await bot.tree.sync()
+import random
+
+# --- LISTA DELLE GIF AGGIORNATA ---
+PETER_GIFS = [
+    "https://tenor.com/view/-gif-4480405",
+    "https://tenor.com/view/family-guy-happy-dance-peter-griffin-oh-yeah-thats-right-gif-18850074",
+    "https://tenor.com/view/floreyonce-family-guy-peter-griffin-fat-gif-14408743807094970321",
+    "https://tenor.com/view/peter-griffin-bull-riding-bull-mechanical-mechanical-bull-gif-406373728649696942",
+    "https://media.tenor.com/uITwHSzqxlgAAAPo/peter-griffin-crashing-out-breaking-everything-nosolohit.mp4",
+    "https://tenor.com/view/family-guy-peter-griffin-swing-fail-swing-jump-gif-2960440163463971808",
+    "https://tenor.com/view/fall-falling-comedy-peter-griffin-family-guy-gif-4634006",
+    "https://tenor.com/view/family-guy-peter-griffin-meg-griffin-cat-gif-7407875408135962395",
+    "https://tenor.com/view/fathers-day-fart-family-guy-peter-griffin-stewie-griffin-gif-17572994",
+    "https://tenor.com/view/peter-griffin-hanging-gif-8897130496833850113",
+    "https://tenor.com/view/family-guy-peter-griffin-fall-jump-family-guy-fall-gif-6849425801544951336" # Nuova aggiunta!
+]
+
+@bot.tree.command(name="petergriffin", description="Invia una gif casuale di Peter Griffin")
+async def petergriffin(interaction: discord.Interaction):
+    gif_scelta = random.choice(PETER_GIFS)
+    await interaction.response.send_message(gif_scelta)
 
 @bot.tree.command(name="clear", description="Elimina un numero specifico di messaggi da questo canale")
 @app_commands.describe(quantita="Numero di messaggi da eliminare (max 100)")
