@@ -498,63 +498,63 @@ async def clear(interaction: discord.Interaction, quantita: int):
         await interaction.followup.send("❌ Si è verificato un errore durante la pulizia.", ephemeral=True)
 # Sostituisci con l'ID reale del tuo ruolo Staff
  
-import random # Assicurati di avere questo import in alto
+import asyncio
+import random
 
-@bot.tree.command(name="scassina", description="Tenta di scassinare una serratura (Probabilità 60%)")
+@bot.tree.command(name="scassina", description="Tenta di scassinare una serratura (10 secondi)")
 async def scassina(interaction: discord.Interaction):
-    await interaction.response.defer()
-    
     user_id = str(interaction.user.id)
     item_nome = "Grimaldello"
     
+    # 1. Controllo immediato dell'oggetto (senza defer per rispondere subito)
     conn = get_db_connection()
     cur = conn.cursor()
-    
-    # 1. Verifica se l'utente ha almeno 1 Grimaldello
     cur.execute("SELECT quantity FROM inventory WHERE user_id = %s AND item_name = %s", (user_id, item_nome))
     res = cur.fetchone()
     
     if not res or res[0] <= 0:
         cur.close(); conn.close()
-        return await interaction.followup.send(f"❌ Non hai un **{item_nome}** per tentare lo scasso!")
+        return await interaction.response.send_message(f"❌ Non hai un **{item_nome}**!", ephemeral=True)
 
-    # 2. Consuma 1x Grimaldello
+    # 2. Risposta iniziale e inizio countdown
+    await interaction.response.send_message(f"🛠️ {interaction.user.mention} ha iniziato a manomettere la serratura...")
+    msg = await interaction.original_response()
+
+    # --- FASE DI ATTESA (10 SECONDI) ---
+    tempo_attesa = 10
+    while tempo_attesa > 0:
+        await asyncio.sleep(2) # Aggiorniamo ogni 2 secondi per non sovraccaricare Discord
+        tempo_attesa -= 2
+        if tempo_attesa > 0:
+            await interaction.edit_original_response(content=f"🛠️ {interaction.user.mention} sta scassinando... `{tempo_attesa}s` rimanenti.")
+
+    # 3. Fine attesa: Consumo oggetto e calcolo successo
     cur.execute("UPDATE inventory SET quantity = quantity - 1 WHERE user_id = %s AND item_name = %s", (user_id, item_nome))
     cur.execute("DELETE FROM inventory WHERE quantity <= 0")
     conn.commit()
     
-    # 3. Logica probabilità (60% successo)
-    successo = random.random() < 0.60 # Genera un numero tra 0 e 1. Se minore di 0.60 è successo.
+    successo = random.random() < 0.60
     
-    # 4. Creazione Embed (stile immagine caricata)
+    # 4. Embed finale
     embed = discord.Embed(
         title="Scassinamento eseguito",
-        description=f"{interaction.user.mention} Sta tentando di scassinare una serratura...",
-        color=0xE91E63 # Colore rosa/fucsia simile all'immagine
+        description=f"{interaction.user.mention} ha terminato il tentativo.",
+        color=0xE91E63 if not successo else 0x2ECC71 # Rosa se fallisce, Verde se riesce
     )
-    
-    # Immagine piccola (thumbnail) simile a quella nel tuo screenshot
-    embed.set_thumbnail(url="https://i.imgur.com/8Nn3vC9.png") # Esempio di icona serratura
+    embed.set_thumbnail(url="https://i.imgur.com/8Nn3vC9.png")
 
     if successo:
-        embed.add_field(
-            name="Risultato:", 
-            value="✅ Sei riuscito a scassinare la serratura con successo!", 
-            inline=False
-        )
+        embed.add_field(name="Risultato:", value="✅ **SUCCESSO!** La serratura è stata forzata.", inline=False)
     else:
-        embed.add_field(
-            name="Risultato:", 
-            value="• Non sei riuscito a scassinare la serratura!\n• Hai consumato 1x Grimaldello", 
-            inline=False
-        )
+        embed.add_field(name="Risultato:", value="• **FALLITO!** Il grimaldello si è spezzato.\n• Hai consumato 1x Grimaldello", inline=False)
 
-    embed.set_footer(text="Evren City RP - Sistema Scasso")
+    embed.set_footer(text="Evren City RP - Sistema Sicurezza")
+    
+    # Modifica il messaggio finale trasformandolo nell'Embed del risultato
+    await interaction.edit_original_response(content=None, embed=embed)
     
     cur.close()
     conn.close()
-    
-    await interaction.followup.send(embed=embed)
 
 # --- COMANDO STAFF: AGGIUNGI DROGA ---
 @bot.tree.command(name="crea_droga", description="Configura una nuova droga (Solo Staff)")
