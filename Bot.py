@@ -649,6 +649,128 @@ async def scassina(interaction: discord.Interaction):
     
     cur.close()
     conn.close()
+import discord
+from discord import app_commands
+from discord.ext import commands
+
+# --- MODALE PER L'INSERIMENTO DEL BACKGROUND ---
+class BackgroundModal(discord.ui.Modal, title="Compilazione Background PG"):
+    nome = discord.ui.TextInput(label="Nome PG", placeholder="Es: Mario Rossi", min_length=3)
+    eta = discord.ui.TextInput(label="Età PG", placeholder="Es: 25", min_length=1, max_length=2)
+    esperienze = discord.ui.TextInput(label="Esperienze RP", style=discord.TextStyle.long, placeholder="Descrivi le tue esperienze passate...")
+    psn_id = discord.ui.TextInput(label="ID PSN", placeholder="Il tuo ID PlayStation per il nickname")
+    storia = discord.ui.TextInput(label="Storia PG", style=discord.TextStyle.long, placeholder="Racconta la vita del tuo personaggio...")
+    
+    # Seconda parte (Discord limita a 5 campi per modale, quindi accorpiamo o usiamo campi densi)
+    altre_info = discord.ui.TextInput(
+        label="Paure, Obiettivi e Regolamento", 
+        style=discord.TextStyle.long, 
+        placeholder="Paure PG | Cosa farai in città | Hai letto il regolamento? (Sì/No)"
+    )
+
+    def __init__(self, staff_channel, role_req):
+        super().__init__()
+        self.staff_channel = staff_channel
+        self.role_req = role_req
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.send_message("✅ Il tuo background è stato inviato allo staff!", ephemeral=True)
+        
+        # Embed per lo staff
+        embed = discord.Embed(title="📝 Nuovo Background Ricevuto", color=discord.Color.blue())
+        embed.set_author(name=f"{interaction.user.name} ({interaction.user.id})", icon_url=interaction.user.display_avatar.url)
+        
+        embed.add_field(name="👤 Nome & Età", value=f"**Nome:** {self.nome.value}\n**Età:** {self.eta.value}", inline=False)
+        embed.add_field(name="🎮 ID PSN (Nickname)", value=f"`{self.psn_id.value}`", inline=False)
+        embed.add_field(name="📚 Esperienze RP", value=self.esperienze.value, inline=False)
+        embed.add_field(name="📖 Storia PG", value=self.storia.value[:1024], inline=False)
+        embed.add_field(name="🔍 Altre Info & Regolamento", value=self.altre_info.value, inline=False)
+        
+        view = BackgroundStaffView(user_id=interaction.user.id, psn_id=self.psn_id.value)
+        await self.staff_channel.send(embed=embed, view=view)
+
+# --- VIEW PER LO STAFF (BOTTONI ACCETTA/RIFIUTA) ---
+class BackgroundStaffView(discord.ui.View):
+    def __init__(self, user_id, psn_id):
+        super().__init__(timeout=None)
+        self.user_id = user_id
+        self.psn_id = psn_id
+
+    @discord.ui.button(label="Accetta", style=discord.ButtonStyle.success, emoji="✅")
+    async def accept(self, interaction: discord.Interaction, button: discord.ui.Button):
+        member = interaction.guild.get_member(self.user_id)
+        
+        # Embed DM
+        dm_embed = discord.Embed(
+            title="✅ Background Accettato!",
+            description=f"Il tuo background per **Evren City** è stato approvato dallo staff.\nBenvenuto in città!",
+            color=discord.Color.green()
+        )
+        
+        try:
+            if member:
+                await member.send(embed=dm_embed)
+                # Cambia il nickname con l'ID PSN fornito
+                await member.edit(nick=self.psn_id)
+        except: pass
+
+        await interaction.response.edit_message(content=f"✅ Approvato da {interaction.user.mention}", view=None)
+
+    @discord.ui.button(label="Rifiuta", style=discord.ButtonStyle.danger, emoji="❌")
+    async def reject(self, interaction: discord.Interaction, button: discord.ui.Button):
+        member = interaction.guild.get_member(self.user_id)
+        
+        dm_embed = discord.Embed(
+            title="❌ Background Rifiutato",
+            description="Purtroppo il tuo background non è stato approvato. Controlla il regolamento e riprova.",
+            color=discord.Color.red()
+        )
+        
+        try:
+            if member: await member.send(embed=dm_embed)
+        except: pass
+
+        await interaction.response.edit_message(content=f"❌ Rifiutato da {interaction.user.mention}", view=None)
+
+# --- COMANDI ADMIN & USER ---
+@bot.tree.command(name="setup_background", description="[ADMIN] Configura il sistema background")
+@app_commands.checks.has_permissions(administrator=True)
+async def setup_background(interaction: discord.Interaction, canale_staff: discord.TextChannel, ruolo_richiesto: discord.Role):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO background_config (guild_id, staff_channel_id, required_role_id) 
+        VALUES (%s, %s, %s) 
+        ON CONFLICT (guild_id) DO UPDATE SET 
+        staff_channel_id = EXCLUDED.staff_channel_id, 
+        required_role_id = EXCLUDED.required_role_id
+    """, (str(interaction.guild.id), str(canale_staff.id), str(ruolo_richiesto.id)))
+    conn.commit()
+    cur.close(); conn.close()
+    await interaction.response.send_message(f"✅ Sistema configurato!\nCanale: {canale_staff.mention}\nRuolo richiesto: {ruolo_richiesto.mention}", ephemeral=True)
+
+@bot.tree.command(name="background", description="Invia il tuo background per la Whitelist")
+async def background(interaction: discord.Interaction):
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute("SELECT * FROM background_config WHERE guild_id = %s", (str(interaction.guild.id),))
+    config = cur.fetchone()
+    cur.close(); conn.close()
+
+    if not config:
+        return await interaction.response.send_message("❌ Il sistema non è ancora stato configurato.", ephemeral=True)
+
+    # Controllo Ruolo Richiesto
+    role_req = interaction.guild.get_role(int(config['required_role_id']))
+    if role_req not in interaction.user.roles:
+        return await interaction.response.send_message(f"❌ Devi avere il ruolo {role_req.mention} per inviare il background!", ephemeral=True)
+
+    staff_channel = interaction.guild.get_channel(int(config['staff_channel_id']))
+    if not staff_channel:
+        return await interaction.response.send_message("❌ Canale staff non trovato.", ephemeral=True)
+
+    # Mostra il modale
+    await interaction.response.send_modal(BackgroundModal(staff_channel, role_req))
 
 # --- COMANDO STAFF: AGGIUNGI DROGA ---
 @bot.tree.command(name="crea_droga", description="Configura una nuova droga (Solo Staff)")
