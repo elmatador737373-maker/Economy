@@ -591,7 +591,6 @@ PETER_GIFS = [
     "https://tenor.com/view/family-guy-happy-dance-peter-griffin-oh-yeah-thats-right-gif-18850074",
     "https://tenor.com/view/floreyonce-family-guy-peter-griffin-fat-gif-14408743807094970321",
     "https://tenor.com/view/peter-griffin-bull-riding-bull-mechanical-mechanical-bull-gif-406373728649696942",
-    "https://media.tenor.com/uITwHSzqxlgAAAPo/peter-griffin-crashing-out-breaking-everything-nosolohit.mp4",
     "https://tenor.com/view/family-guy-peter-griffin-swing-fail-swing-jump-gif-2960440163463971808",
     "https://tenor.com/view/fall-falling-comedy-peter-griffin-family-guy-gif-4634006",
     "https://tenor.com/view/family-guy-peter-griffin-meg-griffin-cat-gif-7407875408135962395",
@@ -600,24 +599,17 @@ PETER_GIFS = [
     "https://tenor.com/view/family-guy-peter-griffin-fall-jump-family-guy-fall-gif-6849425801544951336"
 ]
 
-@bot.tree.command(name="petergriffin", description="Invia una gif di Peter e ringrazia i capi")
+
+
+@bot.tree.command(name="petergriffin", description="Invia una gif di Peter Griffin")
 async def petergriffin(interaction: discord.Interaction):
     gif_scelta = random.choice(PETER_GIFS)
     
-    # Creazione dell'Embed per inserire i testi
-    embed = discord.Embed(
-        description="## Ringraziate Killer", # Scritta grande sopra la GIF
-        color=discord.Color.blue()
-    )
+    # Messaggio pulito: Link della GIF + Testo in piccolo sotto
+    # Usiamo il grassetto e il corsivo per simulare un footer elegante
+    testo_footer = f"{gif_scelta}\n\n*Ringraziate Killer, ed anche Elmatador*"
     
-    # Inserisce la GIF nell'embed
-    embed.set_image(url=gif_scelta)
-    
-    # Scritta piccola in fondo
-    embed.set_footer(text="Ed anche Elmatador")
-    
-    # Invio del messaggio
-    await interaction.response.send_message(embed=embed)
+    await interaction.response.send_message(testo_footer)
 
 @bot.tree.command(name="clear", description="Elimina un numero specifico di messaggi da questo canale")
 @app_commands.describe(quantita="Numero di messaggi da eliminare (max 100)")
