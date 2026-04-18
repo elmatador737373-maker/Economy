@@ -583,6 +583,28 @@ async def clear(interaction: discord.Interaction, quantita: int):
  
 import asyncio
 import random
+@bot.tree.command(name="lega", description="Esegue l'azione RP di legare un utente")
+@app_commands.describe(utente="L'utente da legare")
+async def lega(interaction: discord.Interaction, utente: discord.Member):
+    # Controllo per evitare di legare se stessi (opzionale)
+    if utente.id == interaction.user.id:
+        return await interaction.response.send_message("❌ Non puoi legarti da solo!", ephemeral=True)
+
+    embed = discord.Embed(
+        description=f"⛓️ **{interaction.user.display_name}** ha legato **{utente.mention}**.",
+        color=discord.Color.dark_gray()
+    )
+    # Il messaggio viene inviato nel canale per tutti
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="slega", description="Esegue l'azione RP di slegare un utente")
+@app_commands.describe(utente="L'utente da slegare")
+async def slega(interaction: discord.Interaction, utente: discord.Member):
+    embed = discord.Embed(
+        description=f"🔓 **{interaction.user.display_name}** ha slegato **{utente.mention}**.",
+        color=discord.Color.green()
+    )
+    await interaction.response.send_message(embed=embed)
 
 @bot.tree.command(name="scassina", description="Tenta di scassinare una serratura (10 secondi)")
 async def scassina(interaction: discord.Interaction):
