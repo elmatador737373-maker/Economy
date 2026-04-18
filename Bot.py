@@ -454,6 +454,100 @@ async def me(interaction: discord.Interaction, azione: str):
     
     # Invia il messaggio nel canale in cui è stato usato il comando
     await interaction.response.send_message(embed=embed)
+# --- COMANDO SETUP WL (Solo Admin) ---
+@bot.tree.command(name="setup_wl", description="[ADMIN] Configura ruoli e permessi per il sistema WL")
+@app_commands.describe(
+    ruolo_passata="Ruolo assegnato a chi passa",
+    ruolo_rifiutata="Ruolo assegnato a chi viene bocciato",
+    ruolo_staff_display="Il ruolo dello staffer che apparirà nell'embed (es. @Staffer)"
+)
+@app_commands.checks.has_permissions(administrator=True)
+async def setup_wl(
+    interaction: discord.Interaction, 
+    ruolo_passata: discord.Role, 
+    ruolo_rifiutata: discord.Role,
+    ruolo_staff_display: discord.Role
+):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO wl_config (guild_id, ruolo_passata, ruolo_rifiutata, ruolo_staff) 
+        VALUES (%s, %s, %s, %s) 
+        ON CONFLICT (guild_id) DO UPDATE SET 
+        ruolo_passata = EXCLUDED.ruolo_passata, 
+        ruolo_rifiutata = EXCLUDED.ruolo_rifiutata,
+        ruolo_staff = EXCLUDED.ruolo_staff
+    """, (str(interaction.guild.id), str(ruolo_passata.id), str(ruolo_rifiutata.id), str(ruolo_staff_display.id)))
+    conn.commit()
+    cur.close(); conn.close()
+    
+    await interaction.response.send_message(
+        f"✅ **Configurazione WL completata!**\n"
+        f"🔹 Ruolo Passata: {ruolo_passata.mention}\n"
+        f"🔸 Ruolo Rifiutata: {ruolo_rifiutata.mention}\n"
+        f"👤 Visualizzazione Staff: {ruolo_staff_display.mention}", 
+        ephemeral=True
+    )
+
+# --- COMANDO ESITO WL ---
+@bot.tree.command(name="esito-wl", description="Invia l'esito della Whitelist")
+@app_commands.describe(
+    utente="L'utente che ha fatto il provino",
+    esito="Seleziona l'esito",
+    errori="Numero di errori commessi"
+)
+@app_commands.choices(esito=[
+    app_commands.Choice(name="✅ Passata", value="accettato"),
+    app_commands.Choice(name="❌ Rifiutata", value="rifiutato")
+])
+async def esito_wl(interaction: discord.Interaction, utente: discord.Member, esito: app_commands.Choice[str], errori: int):
+    await interaction.response.defer()
+
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute("SELECT * FROM wl_config WHERE guild_id = %s", (str(interaction.guild.id),))
+    config = cur.fetchone()
+    cur.close(); conn.close()
+
+    if not config:
+        return await interaction.followup.send("❌ Sistema non configurato. Usa `/setup_wl`.", ephemeral=True)
+
+    # Colore ed Emoji in base all'esito
+    color = discord.Color.green() if esito.value == "accettato" else discord.Color.red()
+    emoji_status = "🟩" if esito.value == "accettato" else "🟥"
+    
+    # Gestione Ruoli Utente
+    role_to_add_id = config['ruolo_passata'] if esito.value == "accettato" else config['ruolo_rifiutata']
+    role_to_add = interaction.guild.get_role(int(role_to_add_id))
+    
+    # Recupero Ruolo Staff settato dall'admin
+    ruolo_staff_id = config.get('ruolo_staff')
+    display_staff_role = f"<@&{ruolo_staff_id}>" if ruolo_staff_id else "@Staffer"
+
+    if role_to_add:
+        try: await utente.add_roles(role_to_add)
+        except: pass
+
+    # Costruzione Embed
+    embed = discord.Embed(title=f"{emoji_status} | Approval notices", color=color)
+    embed.set_thumbnail(url=interaction.guild.icon.url if interaction.guild.icon else None)
+    
+    embed.add_field(name="Evrenians ❯❯", value=utente.mention, inline=False)
+    embed.add_field(name="Esito ❯❯", value=f"**{esito.value.upper()}**", inline=True)
+    embed.add_field(name="Errori ❯❯", value=f"**{errori}**", inline=True)
+    
+    embed.add_field(name="━━━━━━━━━━━━━━━━━━━━", value=" ", inline=False)
+    
+    # Campo Staffer dinamico basato sul setup dell'admin
+    embed.add_field(
+        name=f"Da {display_staff_role} :", 
+        value=interaction.user.mention, 
+        inline=False
+    )
+    
+    embed.set_footer(text=f"Evren City RP • {discord.utils.utcnow().strftime('%d/%m/%Y')}")
+
+    await interaction.followup.send(content=utente.mention, embed=embed)
 
 @bot.tree.command(name="clear", description="Elimina un numero specifico di messaggi da questo canale")
 @app_commands.describe(quantita="Numero di messaggi da eliminare (max 100)")
