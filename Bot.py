@@ -588,50 +588,58 @@ import discord
 import random
 import discord
 
-import random
-import discord
-
-# Ho inserito i tuoi link originali. 
 # --- COMANDO ADMIN: AGGIUNGI TRAMITE ALLEGATO ---
 @bot.tree.command(name="peter_add", description="Aggiunge una GIF caricando un file (Solo Admin)")
 @app_commands.checks.has_permissions(administrator=True)
 async def peter_add(interaction: discord.Interaction, file: discord.Attachment):
-    # Controlliamo che sia un'immagine o un video
+    # Controllo tipo file
     if not file.content_type or not any(x in file.content_type for x in ["image", "video"]):
         return await interaction.response.send_message("❌ Carica un file valido (GIF, PNG, MP4)!", ephemeral=True)
 
-    try:
-        # Salviamo l'URL dell'allegato su Supabase
-        # Nota: l'URL di Discord per i file caricati è permanente finché il messaggio non viene eliminato
-        supabase.table("peter_gifs").insert({"url": file.url}).execute()
-        
-        await interaction.response.send_message(f"✅ GIF aggiunta! Nome file: `{file.filename}`", ephemeral=True)
-    except Exception as e:
-        await interaction.response.send_message(f"❌ Errore Database: {e}", ephemeral=True)
+    conn = get_db_connection()
+    if conn:
+        try:
+            cur = conn.cursor()
+            # Inseriamo l'URL dell'allegato nella tabella peter_gifs
+            cur.execute("INSERT INTO peter_gifs (url) VALUES (%s)", (file.url,))
+            conn.commit()
+            cur.close()
+            conn.close()
+            await interaction.response.send_message(f"✅ GIF aggiunta al database PostgreSQL!", ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"❌ Errore database: {e}", ephemeral=True)
+    else:
+        await interaction.response.send_message("❌ Errore connessione al database!", ephemeral=True)
 
 # --- COMANDO PUBBLICO: VISUALIZZA ---
 @bot.tree.command(name="petergriffin", description="Invia una gif casuale di Peter")
 async def petergriffin(interaction: discord.Interaction):
-    try:
-        # Recupero dati da Supabase
-        response = supabase.table("peter_gifs").select("url").execute()
-        
-        if not response.data:
-            return await interaction.response.send_message("⚠️ Il database è vuoto!", ephemeral=True)
+    conn = get_db_connection()
+    if conn:
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT url FROM peter_gifs")
+            rows = cur.fetchall() # Prende tutti gli URL
+            cur.close()
+            conn.close()
 
-        # Scelta casuale tra i link salvati
-        gif_data = random.choice(response.data)
-        gif_url = gif_data['url']
-        
-        # Creazione Embed
-        embed = discord.Embed(color=discord.Color.from_rgb(255, 255, 255))
-        embed.set_image(url=gif_url)
-        embed.set_footer(text="Ringraziate Killer")
-        
-        await interaction.response.send_message(embed=embed)
-    except Exception as e:
-        await interaction.response.send_message(f"❌ Errore durante il recupero: {e}", ephemeral=True)
+            if not rows:
+                return await interaction.response.send_message("⚠️ Il database delle GIF è vuoto!", ephemeral=True)
 
+            # Scegliamo una riga a caso e prendiamo l'URL (indice 0)
+            gif_url = random.choice(rows)[0]
+            
+            embed = discord.Embed(color=discord.Color.from_rgb(255, 255, 255))
+            embed.set_image(url=gif_url)
+            embed.set_footer(text="Ringraziate Killer")
+            
+            await interaction.response.send_message(embed=embed)
+        except Exception as e:
+            await interaction.response.send_message(f"❌ Errore: {e}", ephemeral=True)
+    else:
+        await interaction.response.send_message("❌ Connessione al database fallita!", ephemeral=True)
+
+# Ho inserito i tuoi link originali. 
 @bot.tree.command(name="clear", description="Elimina un numero specifico di messaggi da questo canale")
 @app_commands.describe(quantita="Numero di messaggi da eliminare (max 100)")
 async def clear(interaction: discord.Interaction, quantita: int):
