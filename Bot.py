@@ -611,7 +611,7 @@ async def peter_add(interaction: discord.Interaction, file: discord.Attachment):
     else:
         await interaction.response.send_message("❌ Errore connessione al database!", ephemeral=True)
 
-# --- COMANDO PUBBLICO: VISUALIZZA ---
+
 @bot.tree.command(name="petergriffin", description="Invia una gif casuale di Peter")
 async def petergriffin(interaction: discord.Interaction):
     conn = get_db_connection()
@@ -619,25 +619,31 @@ async def petergriffin(interaction: discord.Interaction):
         try:
             cur = conn.cursor()
             cur.execute("SELECT url FROM peter_gifs")
-            rows = cur.fetchall() # Prende tutti gli URL
+            rows = cur.fetchall()
             cur.close()
             conn.close()
 
             if not rows:
-                return await interaction.response.send_message("⚠️ Il database delle GIF è vuoto!", ephemeral=True)
+                return await interaction.response.send_message("⚠️ Il database è vuoto!", ephemeral=True)
 
-            # Scegliamo una riga a caso e prendiamo l'URL (indice 0)
+            # Scegliamo l'URL dal database
             gif_url = random.choice(rows)[0]
             
+            # Creiamo l'Embed
             embed = discord.Embed(color=discord.Color.from_rgb(255, 255, 255))
+            
+            # TRUCCO: Se l'URL è un link diretto del CDN di Discord, 
+            # lo impostiamo come immagine dell'embed. 
+            # Se il file è un formato compatibile, Discord nasconderà l'URL.
             embed.set_image(url=gif_url)
             embed.set_footer(text="Ringraziate Killer")
             
             await interaction.response.send_message(embed=embed)
+            
         except Exception as e:
             await interaction.response.send_message(f"❌ Errore: {e}", ephemeral=True)
     else:
-        await interaction.response.send_message("❌ Connessione al database fallita!", ephemeral=True)
+        await interaction.response.send_message("❌ Errore connessione DB!", ephemeral=True)
 
 # Ho inserito i tuoi link originali. 
 @bot.tree.command(name="clear", description="Elimina un numero specifico di messaggi da questo canale")
