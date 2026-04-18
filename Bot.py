@@ -2413,7 +2413,6 @@ async def leaderboard(interaction: discord.Interaction):
     embed = view.create_embed(interaction.client)
     
     await interaction.response.send_message(embed=embed, view=view)
-# --- VIEW PER LA PAGINAZIONE ---
 class ShopPaginationView(discord.ui.View):
     def __init__(self, items, interaction_user):
         super().__init__(timeout=120)
@@ -2449,14 +2448,14 @@ class ShopPaginationView(discord.ui.View):
         
         embed = discord.Embed(
             title="🛒 Catalogo Evren City",
-            description=f"Pagina `{self.current_page + 1}/{total_pages}`\nUsa i bottoni verdi per acquistare gli oggetti.",
+            description=f"Pagina `{self.current_page + 1}/{total_pages}`\nUsa i bottoni verdi per acquistare.",
             color=0x2ECC71
         )
         
         for i in page_items:
-            # Controllo se role_required esiste ed è valido
+            # Sincronizzato con colonna role_required
             role_id = i.get('role_required')
-            req = f"\n🛡️ *Richiede: <@&{role_id}>*" if role_id and role_id.lower() != "none" else ""
+            req = f"\n🛡️ *Richiede: <@&{role_id}>*" if role_id and str(role_id).lower() != "none" else ""
             
             embed.add_field(
                 name=f"📦 {i['name']}", 
@@ -2467,18 +2466,17 @@ class ShopPaginationView(discord.ui.View):
         return embed
 
     async def prev_page(self, interaction: discord.Interaction):
-        if interaction.user.id != self.user.id: return await interaction.response.send_message("❌ Non puoi cambiare pagina.", ephemeral=True)
+        if interaction.user.id != self.user.id: return await interaction.response.send_message("❌ Non puoi farlo.", ephemeral=True)
         self.current_page -= 1
         self.create_buttons()
         await interaction.response.edit_message(embed=self.create_embed(), view=self)
 
     async def next_page(self, interaction: discord.Interaction):
-        if interaction.user.id != self.user.id: return await interaction.response.send_message("❌ Non puoi cambiare pagina.", ephemeral=True)
+        if interaction.user.id != self.user.id: return await interaction.response.send_message("❌ Non puoi farlo.", ephemeral=True)
         self.current_page += 1
         self.create_buttons()
         await interaction.response.edit_message(embed=self.create_embed(), view=self)
 
-# --- BOTTONE DI ACQUISTO ---
 class ShopBuyButton(discord.ui.Button):
     def __init__(self, item):
         self.item_nome = item['name']
@@ -2487,8 +2485,8 @@ class ShopBuyButton(discord.ui.Button):
         super().__init__(label=f"$ {self.prezzo} - {self.item_nome}", style=discord.ButtonStyle.success)
 
     async def callback(self, interaction: discord.Interaction):
-        # 1. Controllo Ruolo (se presente e non "None")
-        if self.ruolo_req and self.ruolo_req.lower() != "none":
+        # Controllo Ruolo
+        if self.ruolo_req and str(self.ruolo_req).lower() != "none":
             if not any(str(r.id) == str(self.ruolo_req) for r in interaction.user.roles):
                 return await interaction.response.send_message(f"❌ Non hai il ruolo richiesto!", ephemeral=True)
 
@@ -2499,14 +2497,14 @@ class ShopBuyButton(discord.ui.Button):
             conn = get_db_connection()
             cur = conn.cursor(cursor_factory=RealDictCursor)
             
-            # 2. Controllo Soldi (Usa colonna 'bank' come da tuo schema)
+            # Controllo Soldi su colonna 'bank'
             cur.execute("SELECT bank FROM users WHERE user_id = %s", (str(interaction.user.id),))
             res = cur.fetchone()
 
             if not res or res['bank'] < self.prezzo:
                 return await interaction.followup.send("❌ Fondi insufficienti in Banca!", ephemeral=True)
 
-            # 3. Transazione (Aggiorna banca e aggiunge all'inventario)
+            # Transazione
             cur.execute("UPDATE users SET bank = bank - %s WHERE user_id = %s", (self.prezzo, str(interaction.user.id)))
             cur.execute("""
                 INSERT INTO inventory (user_id, item_name, quantity) 
@@ -2516,39 +2514,35 @@ class ShopBuyButton(discord.ui.Button):
             """, (str(interaction.user.id), self.item_nome))
             
             conn.commit()
-            await interaction.followup.send(f"✅ Hai acquistato **{self.item_nome}** per **{self.prezzo}$**!", ephemeral=True)
+            await interaction.followup.send(f"✅ Acquisto completato: **{self.item_nome}**!", ephemeral=True)
             
         except Exception as e:
-            await interaction.followup.send(f"⚠️ Errore durante l'acquisto: {e}", ephemeral=True)
+            await interaction.followup.send(f"⚠️ Errore: {e}", ephemeral=True)
         finally:
             if conn: cur.close(); conn.close()
 
-# --- COMANDO SHOP ---
-@bot.tree.command(name="shop", description="Visualizza il catalogo del negozio")
+@bot.tree.command(name="shop", description="Apri il catalogo")
 async def shop(interaction: discord.Interaction):
-    await interaction.response.defer() # Evita "L'applicazione non ha risposto"
+    await interaction.response.defer()
     
     conn = None
     try:
         conn = get_db_connection()
         cur = conn.cursor(cursor_factory=RealDictCursor)
-        
-        # Seleziona gli item ordinandoli per prezzo
+        # Sincronizzato con tabella items
         cur.execute("SELECT name, description, price, role_required FROM items ORDER BY price ASC")
         items = cur.fetchall()
         
         if not items:
-            return await interaction.followup.send("🛒 Il negozio è attualmente vuoto.")
+            return await interaction.followup.send("🛒 Il catalogo è vuoto.")
 
         view = ShopPaginationView(items, interaction.user)
         await interaction.followup.send(embed=view.create_embed(), view=view)
         
     except Exception as e:
-        await interaction.followup.send(f"❌ Errore nel caricamento del catalogo: `{e}`")
+        await interaction.followup.send(f"❌ Errore: `{e}`")
     finally:
         if conn: cur.close(); conn.close()
-
-
 
 @bot.tree.command(name="compra", description="Compra un oggetto")
 async def compra(interaction: Interaction, nome: str, quantita: int = 1):
