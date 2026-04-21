@@ -437,6 +437,45 @@ async def inizia_rapina(interaction: discord.Interaction, luogo: str):
     cur.close()
     conn.close()
 
+# --- COMANDO ADMIN: CREA CONFIGURAZIONE RAPINA ---
+@bot.tree.command(name="crea_rapina", description="Configura una nuova rapina (Solo Admin)")
+@app_commands.describe(
+    nome="Nome del luogo (es: Banca, Market)", 
+    tempo="Secondi necessari per lo scasso", 
+    paga_min="Guadagno minimo", 
+    paga_max="Guadagno massimo"
+)
+async def crea_rapina(interaction: discord.Interaction, nome: str, tempo: int, paga_min: int, paga_max: int):
+    # Controllo permessi Admin/Staff
+    if not any(role.id == RUOLO_STAFF_ID for role in interaction.user.roles):
+        return await interaction.response.send_message("❌ Permessi insufficienti per configurare rapine.", ephemeral=True)
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        # Inserisce o aggiorna se il nome esiste già (ON CONFLICT)
+        cur.execute("""
+            INSERT INTO rapine_config (nome, tempo_scasso, paga_min, paga_max)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (nome) DO UPDATE SET 
+            tempo_scasso = EXCLUDED.tempo_scasso, 
+            paga_min = EXCLUDED.paga_min, 
+            paga_max = EXCLUDED.paga_max
+        """, (nome.lower(), tempo, paga_min, paga_max))
+        
+        conn.commit()
+        cur.close()
+        conn.close()
+        
+        await interaction.response.send_message(
+            f"✅ Configurazione completata!\n"
+            f"📍 Luogo: **{nome.upper()}**\n"
+            f"⏳ Tempo: `{tempo}s`\n"
+            f"💰 Range: `{paga_min}€` - `{paga_max}€`"
+        )
+    except Exception as e:
+        await interaction.response.send_message(f"❌ Errore durante il salvataggio nel Database: {e}", ephemeral=True)
 
 
 
