@@ -193,7 +193,77 @@ async def crea(interaction: discord.Interaction, testo: str, url_immagine: str):
     
     
     
+# --- 1. SETUP ADMIN PER I RUOLI LAVORATORI ---
+@bot.tree.command(name="setup_documenti", description="[ADMIN] Imposta i ruoli che possono usare i comandi documenti")
+@app_commands.checks.has_permissions(administrator=True)
+async def setup_documenti(interaction: discord.Interaction, 
+                           ruolo_patenti: discord.Role, 
+                           ruolo_medico: discord.Role, 
+                           ruolo_porto_armi: discord.Role, 
+                           ruolo_registrazione_armi: discord.Role):
+    conn = get_db_connection(); cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO docs_config (guild_id, role_id_patenti, role_id_medico, role_id_porto_armi, role_id_registro_armi) 
+        VALUES (%s, %s, %s, %s, %s) ON CONFLICT (guild_id) DO UPDATE SET 
+        role_id_patenti=EXCLUDED.role_id_patenti, role_id_medico=EXCLUDED.role_id_medico, 
+        role_id_porto_armi=EXCLUDED.role_id_porto_armi, role_id_registro_armi=EXCLUDED.role_id_registro_armi
+    """, (str(interaction.guild.id), str(ruolo_patenti.id), str(ruolo_medico.id), str(ruolo_porto_armi.id), str(ruolo_registrazione_armi.id)))
+    conn.commit(); cur.close(); conn.close()
+    await interaction.response.send_message("✅ Ruoli lavoratori configurati con successo!", ephemeral=True)
+
+# --- 2. LOGICA DI REGISTRAZIONE ---
+async def execute_doc_registration(interaction, cittadino, titolo, dettagli, costo, motivo, config_key, colore, emoji):
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute("SELECT * FROM docs_config WHERE guild_id = %s", (str(interaction.guild.id),))
+    config = cur.fetchone(); cur.close(); conn.close()
+
+    if not config or int(config[config_key]) not in [r.id for r in interaction.user.roles]:
+        return await interaction.response.send_message(f"❌ Non hai il ruolo autorizzato per registrare questo documento.", ephemeral=True)
+
+    embed = discord.Embed(
+        title=f"{emoji} {titolo}",
+        description=f"Documentazione ufficiale registrata per il cittadino {cittadino.mention}.",
+        color=colore,
+        timestamp=discord.utils.utcnow()
+    )
+    embed.add_field(name="👤 Soggetto", value=cittadino.mention, inline=True)
+    embed.add_field(name="👔 Operatore", value=interaction.user.mention, inline=True)
+    embed.add_field(name="💰 Costo", value=f"**{costo}**", inline=True)
+    embed.add_field(name="📋 Info", value=dettagli, inline=False)
+    embed.add_field(name="📝 Motivo", value=motivo, inline=False)
     
+    embed.set_thumbnail(url=cittadino.display_avatar.url)
+    embed.set_footer(text=f"Sistema Documentale Evren City")
+
+    # Il bot risponde pubblicamente nel canale menzionando l'utente
+    await interaction.response.send_message(content=f"📑 Registrazione completata per {cittadino.mention}", embed=embed)
+
+# --- 3. COMANDI LAVORATORI ---
+
+@bot.tree.command(name="patente", description="Registra una patente a un cittadino")
+async def patente(interaction: discord.Interaction, cittadino: discord.Member, tipo: str, costo: str, motivo: str):
+    await execute_doc_registration(interaction, cittadino, "Patente di Guida", 
+                                  f"**Categoria:** {tipo}", costo, motivo, 
+                                  'role_id_patenti', discord.Color.blue(), "🪪")
+
+@bot.tree.command(name="certificato", description="Rilascia certificato medico a un cittadino")
+async def certificato(interaction: discord.Interaction, cittadino: discord.Member, esito: str, costo: str, motivo: str):
+    await execute_doc_registration(interaction, cittadino, "Certificato Medico", 
+                                  f"**Esito:** {esito}", costo, motivo, 
+                                  'role_id_medico', discord.Color.red(), "⚕️")
+
+@bot.tree.command(name="porto_darmi", description="Registra licenza porto d'armi")
+async def porto_darmi(interaction: discord.Interaction, cittadino: discord.Member, tipo_licenza: str, costo: str, motivo: str):
+    await execute_doc_registration(interaction, cittadino, "Porto d'Armi", 
+                                  f"**Licenza:** {tipo_licenza}", costo, motivo, 
+                                  'role_id_porto_armi', discord.Color.dark_grey(), "🔫")
+
+@bot.tree.command(name="registra_arma", description="Registra matricola arma a un cittadino")
+async def registra_arma(interaction: discord.Interaction, cittadino: discord.Member, modello: str, matricola: str, costo: str, motivo: str):
+    await execute_doc_registration(interaction, cittadino, "Registrazione Arma", 
+                                  f"**Modello:** {modello}\n**Matricola:** `{matricola}`", 
+                                  costo, motivo, 'role_id_registro_armi', discord.Color.dark_red(), "⚙️")
+
 # --- 2. COMANDO AGGIUNGI BOTTONE ---
 @bot.tree.command(name="aggiungi", description="Aggiunge un bottone link a un messaggio esistente")
 @discord.app_commands.checks.has_permissions(administrator=True)
