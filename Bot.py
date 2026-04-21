@@ -1276,7 +1276,7 @@ async def rpon(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed)
 @bot.tree.command(name="sondaggio", description="Crea un sondaggio per l'orario dell'RP e avvisa tutti in DM")
 @app_commands.describe(ora="Inserisci l'orario (es. 21:30)")
-@app_commands.checks.has_role( 1465432780551753811)
+@app_commands.checks.has_role( 1253707509399683202)
 async def sondaggio(interaction: discord.Interaction, ora: str):
     # 1. Creazione dell'Embed per il canale
     embed = discord.Embed(
