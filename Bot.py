@@ -239,6 +239,66 @@ async def execute_doc_registration(interaction, cittadino, titolo, dettagli, cos
     await interaction.response.send_message(content=f"📑 Registrazione completata per {cittadino.mention}", embed=embed)
 
 # --- 3. COMANDI LAVORATORI ---
+@bot.tree.command(name="give_money", description="[STAFF] Accredita soldi a un cittadino")
+@app_commands.choices(tipo=[
+    app_commands.Choice(name="Contanti", value="wallet"),
+    app_commands.Choice(name="Banca", value="bank")
+])
+async def give_money(interaction: Interaction, utente: discord.Member, importo: int, tipo: str):
+    # Controllo Ruolo Staff
+    if not any(role.id == RUOLO_STAFF_ID for role in interaction.user.roles):
+        return await interaction.response.send_message("❌ Permessi insufficienti: non sei un membro dello Staff.", ephemeral=True)
+    
+    if importo <= 0:
+        return await interaction.response.send_message("❌ Inserisci un importo superiore a 0.", ephemeral=True)
+
+    # Aggiornamento Database
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute(f"UPDATE users SET {tipo} = {tipo} + %s WHERE user_id = %s", (importo, str(utente.id)))
+    conn.commit()
+    cur.close()
+    conn.close()
+    
+    await interaction.response.send_message(f"✅ Accreditati **{importo}$** in **{tipo}** a {utente.mention}.")
+    
+    # Log Finanziario
+    emb = discord.Embed(title="🎁 ACCREDITO STAFF", color=discord.Color.purple(), timestamp=discord.utils.utcnow())
+    emb.add_field(name="Staffer", value=interaction.user.mention)
+    emb.add_field(name="Ricevente", value=utente.mention)
+    emb.add_field(name="Importo", value=f"{importo}$ ({tipo})")
+    await invia_log_finanziario(interaction.guild, emb)
+
+
+@bot.tree.command(name="remove_money", description="[STAFF] Rimuovi soldi a un cittadino")
+@app_commands.choices(tipo=[
+    app_commands.Choice(name="Contanti", value="wallet"),
+    app_commands.Choice(name="Banca", value="bank")
+])
+async def remove_money(interaction: Interaction, utente: discord.Member, importo: int, tipo: str):
+    # Controllo Ruolo Staff
+    if not any(role.id == RUOLO_STAFF_ID for role in interaction.user.roles):
+        return await interaction.response.send_message("❌ Permessi insufficienti: non sei un membro dello Staff.", ephemeral=True)
+    
+    if importo <= 0:
+        return await interaction.response.send_message("❌ Inserisci un importo superiore a 0.", ephemeral=True)
+
+    # Aggiornamento Database
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute(f"UPDATE users SET {tipo} = {tipo} - %s WHERE user_id = %s", (importo, str(utente.id)))
+    conn.commit()
+    cur.close()
+    conn.close()
+    
+    await interaction.response.send_message(f"⚠️ Rimossi **{importo}$** dai **{tipo}** di {utente.mention}.")
+    
+    # Log Finanziario
+    emb = discord.Embed(title="🚫 RIMOZIONE STAFF", color=discord.Color.dark_grey(), timestamp=discord.utils.utcnow())
+    emb.add_field(name="Staffer", value=interaction.user.mention)
+    emb.add_field(name="Soggetto", value=utente.mention)
+    emb.add_field(name="Importo", value=f"{importo}$ ({tipo})")
+    await invia_log_finanziario(interaction.guild, emb)
 
 @bot.tree.command(name="patente", description="Registra una patente a un cittadino")
 async def patente(interaction: discord.Interaction, cittadino: discord.Member, tipo: str, costo: str, motivo: str):
