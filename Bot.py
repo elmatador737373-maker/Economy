@@ -2244,15 +2244,16 @@ class CitizenView(discord.ui.View):
         self.add_item(CitizenSelect(options, original_interaction))
 
 # --- COMANDO RICERCA AGGIORNATO ---
-@bot.tree.command(name="ricerca_cittadino", description="Ricerca avanzata con selezione multipla")
+@bot.tree.command(name="ricerca_cittadino", description="Ricerca avanzata nel database statale")
 @app_commands.describe(
     cittadino="Tagga l'utente (opzionale)",
     nome="Nome o parte del nome (opzionale)",
     cognome="Cognome o parte del cognome (opzionale)"
 )
 async def ricerca(interaction: discord.Interaction, cittadino: discord.Member = None, nome: str = None, cognome: str = None):
+    # Controllo Ruolo Polizia (Sostituisci POLIZIA_ROLE_ID con la tua variabile o ID)
     if not any(role.id == POLIZIA_ROLE_ID for role in interaction.user.roles):
-        return await interaction.response.send_message("❌ Accesso negato.", ephemeral=True)
+        return await interaction.response.send_message("❌ Accesso negato: Solo le forze dell'ordine possono consultare il database.", ephemeral=True)
     
     await interaction.response.defer()
 
@@ -2261,11 +2262,12 @@ async def ricerca(interaction: discord.Interaction, cittadino: discord.Member = 
         from psycopg2.extras import RealDictCursor
         cur = conn.cursor(cursor_factory=RealDictCursor)
 
+        # 1. Ricerca diretta tramite Tag
         if cittadino:
-            cur.close()
-            conn.close()
+            cur.close(); conn.close()
             return await mostra_fascicolo(interaction, str(cittadino.id))
 
+        # 2. Ricerca tramite Nome/Cognome
         if nome or cognome:
             search_nome = f"%{nome}%" if nome else "%"
             search_cognome = f"%{cognome}%" if cognome else "%"
@@ -2277,17 +2279,15 @@ async def ricerca(interaction: discord.Interaction, cittadino: discord.Member = 
             """, (search_nome, search_cognome))
             
             results = cur.fetchall()
-            cur.close()
-            conn.close()
+            cur.close(); conn.close()
 
             if not results:
-                return await interaction.followup.send("❌ Nessun cittadino trovato.")
+                return await interaction.followup.send("❌ Nessun cittadino trovato con questi dati.")
             
             if len(results) == 1:
-                # Un solo risultato, vai diretto
                 return await mostra_fascicolo(interaction, results[0]['user_id'])
             
-            # Più risultati: crea il menu a tendina
+            # Menu a tendina per risultati multipli
             options = [
                 discord.SelectOption(
                     label=f"{r['nome']} {r['cognome']}", 
@@ -2296,18 +2296,17 @@ async def ricerca(interaction: discord.Interaction, cittadino: discord.Member = 
                 ) for r in results
             ]
             
-            view = CitizenView(options, interaction)
-            await interaction.followup.send("🔎 Ho trovato più persone. Seleziona quella corretta:", view=view)
+            view = CitizenView(options, interaction) # Assicurati che CitizenView sia definita
+            await interaction.followup.send("🔎 Trovati più profili. Seleziona quello corretto:", view=view)
         else:
-            return await interaction.followup.send("⚠️ Inserisci un TAG o un Nome/Cognome.")
+            return await interaction.followup.send("⚠️ Specifica un cittadino (Tag) o un Nome/Cognome.")
 
     except Exception as e:
         print(f"Errore ricerca: {e}")
-        await interaction.followup.send("❌ Errore nel database.")
+        await interaction.followup.send("❌ Errore critico durante la ricerca nel database.")
 
-# --- FUNZIONE HELPER PER MOSTRARE IL FASCICOLO ---
+# --- FUNZIONE HELPER PER MOSTRARE IL FASCICOLO INTEGRALE ---
 async def mostra_fascicolo(interaction, target_id, original_interaction=None):
-    # original_interaction serve se stiamo rispondendo a una selezione dal menu
     ctx = interaction if not original_interaction else original_interaction
     
     try:
@@ -2315,7 +2314,7 @@ async def mostra_fascicolo(interaction, target_id, original_interaction=None):
         from psycopg2.extras import RealDictCursor
         cur = conn.cursor(cursor_factory=RealDictCursor)
 
-        # Query dati (Documenti, Veicoli, Multe, Arresti)
+        # QUERY DATI BASE
         cur.execute("SELECT * FROM documenti WHERE user_id = %s", (target_id,))
         doc = cur.fetchone()
         cur.execute("SELECT targa, modello, sequestrato FROM veicoli WHERE owner_id = %s", (target_id,))
@@ -2324,42 +2323,68 @@ async def mostra_fascicolo(interaction, target_id, original_interaction=None):
         multe = cur.fetchall()
         cur.execute("SELECT * FROM arresti WHERE user_id = %s ORDER BY id_arresto DESC LIMIT 5", (target_id,))
         arresti = cur.fetchall()
-        cur.close()
-        conn.close()
+
+        # QUERY NUOVE REGISTRAZIONI (PATENTI, MEDICI, ARMI)
+        cur.execute("SELECT tipo, costo FROM patenti_registrate WHERE user_id = %s", (target_id,))
+        patenti = cur.fetchall()
+        cur.execute("SELECT esito, costo FROM certificati_medici WHERE user_id = %s", (target_id,))
+        certificati = cur.fetchall()
+        cur.execute("SELECT tipo, motivo FROM licenze_armi WHERE user_id = %s", (target_id,))
+        licenze = cur.fetchall()
+        cur.execute("SELECT modello, matricola, motivo FROM registro_armi WHERE user_id = %s", (target_id,))
+        armi = cur.fetchall()
+
+        cur.close(); conn.close()
 
         target_member = ctx.guild.get_member(int(target_id))
-        nome_display = f"{doc['nome']} {doc['cognome']}" if doc else "Sconosciuto"
+        nome_display = f"{doc['nome']} {doc['cognome']}" if doc else "Soggetto Ignoto"
         
-        embed = discord.Embed(title=f"📁 FASCICOLO: {nome_display}", color=discord.Color.dark_blue())
-        embed.description = f"**ID Discord:** `{target_id}`"
-        
+        embed = discord.Embed(title=f"📁 FASCICOLO STATALE: {nome_display}", color=discord.Color.dark_blue())
         if target_member:
             embed.set_thumbnail(url=target_member.display_avatar.url)
-
+        
+        # --- ANAGRAFICA ---
         if doc:
-            embed.add_field(name="🪪 Anagrafica", value=f"Nascita: {doc['data_nascita']} ({doc['luogo_nascita']})\nSesso: {doc['genere']} | H: {doc['altezza']}cm", inline=False)
+            embed.add_field(name="🪪 Anagrafica", value=f"Nascita: {doc['data_nascita']} ({doc['luogo_nascita']})\nGenere: {doc['genere']} | Altezza: {doc['altezza']}cm", inline=False)
         
+        # --- LICENZE E CERTIFICATI (INTEGRATI) ---
+        lic_list = []
+        if patenti: [lic_list.append(f"• **Patente {p['tipo']}** (Pagato: {p['costo']})") for p in patenti]
+        if certificati: [lic_list.append(f"• **Cert. Medico:** {c['esito']} (Pagato: {c['costo']})") for c in certificati]
+        if licenze: [lic_list.append(f"• **Porto d'Armi:** {l['tipo']} (Motivo: {l['motivo']})") for l in licenze]
+        
+        if lic_list:
+            embed.add_field(name="📜 Licenze e Abilitazioni", value="\n".join(lic_list), inline=False)
+
+        # --- REGISTRO ARMI E MATRICOLE ---
+        if armi:
+            armi_list = "\n".join([f"• `{a['matricola']}` | {a['modello']} (Motivo: {a['motivo']})" for a in armi])
+            embed.add_field(name="⚙️ Registro Matricole Armi", value=armi_list, inline=False)
+
+        # --- VEICOLI ---
         if veicoli:
-            v_list = "\n".join([f"• `{v['targa']}` - {v['modello']} {'(🚫)' if v['sequestrato'] else ''}" for v in veicoli])
-            embed.add_field(name="🚘 Veicoli", value=v_list, inline=False)
+            v_list = "\n".join([f"• `{v['targa']}` - {v['modello']} {'(🚫 Sequestrato)' if v['sequestrato'] else ''}" for v in veicoli])
+            embed.add_field(name="🚘 Parco Veicoli", value=v_list, inline=False)
         
-        if multe:
-            m_list = "\n".join([f"• {m['ammontare']}€ - {m['motivo']}" for m in multe])
-            embed.add_field(name="⚠️ Multe", value=m_list, inline=False)
+        # --- FEDINA PENALE (MULTE + ARRESTI) ---
+        fedina = []
+        if multe: [fedina.append(f"• Multe: {m['ammontare']}€ - {m['motivo']}") for m in multe]
+        if arresti: [fedina.append(f"• Arresto: {a['data']} - {a['motivo']}") for a in arresti]
+        
+        if fedina:
+            embed.add_field(name="⚖️ Precedenti e Sanzioni", value="\n".join(fedina), inline=False)
 
-        if arresti:
-            a_list = "\n".join([f"• {a['data']}: {a['motivo']}" for a in arresti])
-            embed.add_field(name="🚔 Arresti", value=a_list, inline=False)
-
-        # Se veniamo dal menu, dobbiamo usare followup.send o edit_original_response
+        # Invio Risposta
         if original_interaction:
-            await interaction.followup.send(embed=embed)
+            await interaction.response.send_message(embed=embed)
         else:
             await ctx.followup.send(embed=embed)
 
     except Exception as e:
         print(f"Errore mostra_fascicolo: {e}")
-
+        error_msg = "❌ Errore durante il recupero del fascicolo."
+        if original_interaction: await interaction.response.send_message(error_msg, ephemeral=True)
+        else: await ctx.followup.send(error_msg)
 
 
 
