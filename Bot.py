@@ -15,7 +15,7 @@ import time
 # ================= CONFIGURAZIONE =================
 TOKEN = os.environ.get("TOKEN")
 DATABASE_URL = os.environ.get("DATABASE_URL")
-RUOLO_STAFF_ID = 1465432780551753811
+RUOLO_STAFF_ID = 1253460150141059198
 
 intents = discord.Intents.default()
 intents.members = True
@@ -397,7 +397,7 @@ async def on_app_command_error(interaction: discord.Interaction, error: discord.
 @bot.tree.command(name="lista_anonimi", description="Mostra la lista di tutti i nickname anonimi associati agli utenti")
 async def lista_anonimi(interaction: discord.Interaction):
     # Controllo se l'utente è staff o admin per evitare che tutti vedano i nomi
-    ID_RUOLO_STAFF = 1465432780551753811 # tuo ID ruolo staff
+    ID_RUOLO_STAFF =  1253460150141059198 # tuo ID ruolo staff
     is_staff = any(r.id == ID_RUOLO_STAFF for r in interaction.user.roles) or interaction.user.guild_permissions.administrator
     
     if not is_staff:
@@ -650,7 +650,7 @@ async def petergriffin(interaction: discord.Interaction):
 @app_commands.describe(quantita="Numero di messaggi da eliminare (max 100)")
 async def clear(interaction: discord.Interaction, quantita: int):
     # ID del ruolo autorizzato
-    ID_RUOLO_AUTORIZZATO = 1465432780551753811
+    ID_RUOLO_AUTORIZZATO = 1253460150141059198
     
     # Controllo se l'utente ha il ruolo richiesto
     role = interaction.guild.get_role(RUOLO_STAFF_ID)
@@ -1113,7 +1113,7 @@ async def anonimo(interaction: discord.Interaction, messaggio: str, nickname: st
 @bot.event
 async def on_raw_reaction_add(payload):
     # 1. Configurazione ID Ruolo Staff
-    ID_RUOLO_STAFF = 1465432780551753811
+    ID_RUOLO_STAFF = 1253460150141059198
      
     
     # 2. Filtro: solo l'emoji corretta e non il bot stesso
@@ -1868,7 +1868,7 @@ async def set_ricetta_error(interaction: discord.Interaction, error: app_command
     if isinstance(error, app_commands.MissingRole):
         await interaction.response.send_message("❌ Solo lo Staff può gestire le ricette.", ephemeral=True)
 
-POLIZIA_ROLE_ID = 1359569600198611104
+POLIZIA_ROLE_ID = 1363487988570521670
 
 # --- FUNZIONE DI CONTROLLO POLIZIA ---
 def is_polizia(interaction: discord.Interaction):
@@ -2068,7 +2068,7 @@ async def pagamulta(interaction: discord.Interaction):
 )
 async def arresto(interaction: discord.Interaction, utente: discord.Member, tempo_minuti: int, motivo: str):
     # Controllo se l'utente è un poliziotto
-    if not any(role.id == 1359569600198611104 for role in interaction.user.roles):
+    if not any(role.id ==  1363487988570521670 for role in interaction.user.roles):
 
         return await interaction.response.send_message("❌ Non hai i permessi per effettuare un arresto.", ephemeral=True)
 
