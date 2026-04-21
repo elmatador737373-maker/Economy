@@ -333,6 +333,226 @@ class RapinaStaffView(discord.ui.View):
         await interaction.response.send_modal(ModificaBottinoModal(self.user_id, self.luogo))
 
 # --- COMANDO SETTAGGIO CANALE (SOLO ADMIN) ---
+# --- SISTEMA ECONOMICO UNIFICATO CON LOGGING ---
+
+# Funzione Helper per inviare i log finanziari nel canale settato
+async def invia_log_finanziario(guild, embed):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("SELECT setting_value FROM server_settings WHERE setting_name = 'log_finanze'")
+        res = cur.fetchone()
+        cur.close(); conn.close()
+        if res:
+            canale = guild.get_channel(int(res['setting_value']))
+            if canale: await canale.send(embed=embed)
+    except Exception as e:
+        print(f"Errore log finanziario: {e}")
+
+# --- COMANDI AMMINISTRATIVI ---
+
+@bot.tree.command(name="set_log_finanze", description="[ADMIN] Imposta il canale per i log economici del server")
+@app_commands.checks.has_permissions(administrator=True)
+async def set_log_finanze(interaction: Interaction, canale: discord.TextChannel):
+    conn = get_db_connection(); cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO server_settings (setting_name, setting_value) 
+        VALUES ('log_finanze', %s) 
+        ON CONFLICT (setting_name) DO UPDATE SET setting_value = EXCLUDED.setting_value
+    """, (str(canale.id),))
+    conn.commit(); cur.close(); conn.close()
+    await interaction.response.send_message(f"✅ Canale log finanziari impostato su {canale.mention}", ephemeral=True)
+
+# --- ECONOMIA PERSONALE (PORTAFOGLIO E BANCA) ---
+
+@bot.tree.command(name="deposita", description="Sposta i tuoi contanti in banca")
+async def deposita(interaction: Interaction, importo: int):
+    u = get_user_data(interaction.user.id)
+    if importo <= 0 or u['wallet'] < importo:
+        return await interaction.response.send_message("❌ Importo non valido o contanti insufficienti.")
+    
+    conn = get_db_connection(); cur = conn.cursor()
+    cur.execute("UPDATE users SET wallet = wallet - %s, bank = bank + %s WHERE user_id = %s", (importo, importo, str(interaction.user.id)))
+    conn.commit(); cur.close(); conn.close()
+    
+    await interaction.response.send_message(f"🏦 **{interaction.user.display_name}** ha depositato **{importo}$** in banca.")
+    
+    emb = discord.Embed(title="📥 LOG DEPOSITO PERSONALE", color=discord.Color.light_grey(), timestamp=discord.utils.utcnow())
+    emb.add_field(name="Utente", value=interaction.user.mention); emb.add_field(name="Importo", value=f"{importo}$")
+    await invia_log_finanziario(interaction.guild, emb)
+
+@bot.tree.command(name="preleva", description="Preleva soldi dal tuo conto bancario")
+async def preleva(interaction: Interaction, importo: int):
+    u = get_user_data(interaction.user.id)
+    if importo <= 0 or u['bank'] < importo:
+        return await interaction.response.send_message("❌ Importo non valido o fondi bancari insufficienti.")
+    
+    conn = get_db_connection(); cur = conn.cursor()
+    cur.execute("UPDATE users SET bank = bank - %s, wallet = wallet + %s WHERE user_id = %s", (importo, importo, str(interaction.user.id)))
+    conn.commit(); cur.close(); conn.close()
+    
+    await interaction.response.send_message(f"💸 **{interaction.user.display_name}** ha prelevato **{importo}$**.")
+    
+    emb = discord.Embed(title="📤 LOG PRELIEVO PERSONALE", color=discord.Color.orange(), timestamp=discord.utils.utcnow())
+    emb.add_field(name="Utente", value=interaction.user.mention); emb.add_field(name="Importo", value=f"{importo}$")
+    await invia_log_finanziario(interaction.guild, emb)
+
+@bot.tree.command(name="paga", description="Consegna contanti a un altro cittadino (mano a mano)")
+async def paga(interaction: Interaction, utente: discord.Member, importo: int):
+    if utente.id == interaction.user.id: return await interaction.response.send_message("❌ Non puoi pagare te stesso.")
+    u = get_user_data(interaction.user.id)
+    if importo <= 0 or u['wallet'] < importo: return await interaction.response.send_message("❌ Non hai abbastanza contanti.")
+    
+    conn = get_db_connection(); cur = conn.cursor()
+    cur.execute("UPDATE users SET wallet = wallet - %s WHERE user_id = %s", (importo, str(interaction.user.id)))
+    cur.execute("UPDATE users SET wallet = wallet + %s WHERE user_id = %s", (importo, str(utente.id)))
+    conn.commit(); cur.close(); conn.close()
+    
+    await interaction.response.send_message(f"🤝 **{interaction.user.display_name}** ha consegnato **{importo}$** a **{utente.mention}**.")
+    
+    emb = discord.Embed(title="💵 LOG SCAMBIO CONTANTI", color=discord.Color.green(), timestamp=discord.utils.utcnow())
+    emb.add_field(name="Mittente", value=interaction.user.mention); emb.add_field(name="Destinatario", value=utente.mention); emb.add_field(name="Importo", value=f"{importo}$")
+    await invia_log_finanziario(interaction.guild, emb)
+
+@bot.tree.command(name="bonifico", description="Invia un bonifico bancario a un altro cittadino")
+async def bonifico(interaction: Interaction, utente: discord.Member, importo: int):
+    if utente.id == interaction.user.id: return await interaction.response.send_message("❌ Non puoi fare un bonifico a te stesso.")
+    u = get_user_data(interaction.user.id)
+    if importo <= 0 or u['bank'] < importo: return await interaction.response.send_message("❌ Fondi bancari insufficienti per il bonifico.")
+    
+    conn = get_db_connection(); cur = conn.cursor()
+    cur.execute("UPDATE users SET bank = bank - %s WHERE user_id = %s", (importo, str(interaction.user.id)))
+    cur.execute("UPDATE users SET bank = bank + %s WHERE user_id = %s", (importo, str(utente.id)))
+    conn.commit(); cur.close(); conn.close()
+    
+    await interaction.response.send_message(f"🏛️ Bonifico bancario di **{importo}$** inviato con successo a **{utente.display_name}**.")
+    
+    emb = discord.Embed(title="🏛️ LOG BONIFICO BANCARIO", color=discord.Color.blue(), timestamp=discord.utils.utcnow())
+    emb.add_field(name="Mittente", value=interaction.user.mention); emb.add_field(name="Destinatario", value=utente.mention); emb.add_field(name="Importo", value=f"{importo}$")
+    await invia_log_finanziario(interaction.guild, emb)
+
+# --- ECONOMIA FAZIONI E AZIENDE ---
+
+@bot.tree.command(name="deposita_soldi_fazione", description="Deposita contanti nel fondo della fazione")
+async def deposita_soldi_fazione(interaction: Interaction, importo: int):
+    await interaction.response.defer()
+    miei_ruoli = await get_miei_ruoli_fazione(interaction)
+    if not miei_ruoli: return await interaction.followup.send("❌ Non fai parte di nessuna fazione autorizzata.")
+    u = get_user_data(interaction.user.id)
+    if importo <= 0 or u['wallet'] < importo: return await interaction.followup.send("❌ Non hai abbastanza contanti nel portafoglio.")
+
+    async def procedi(inter, rid):
+        conn = get_db_connection(); cur = conn.cursor()
+        cur.execute("UPDATE users SET wallet = wallet - %s WHERE user_id = %s", (importo, str(inter.user.id)))
+        cur.execute("UPDATE depositi SET money = money + %s WHERE role_id = %s", (importo, rid))
+        conn.commit(); cur.close(); conn.close()
+        r_obj = inter.guild.get_role(int(rid))
+        await inter.followup.send(f"✅ Hai depositato **{importo}$** nel fondo di: **{r_obj.name}**.")
+        
+        emb = discord.Embed(title="🏢 LOG DEPOSITO FAZIONE", color=discord.Color.dark_green(), timestamp=discord.utils.utcnow())
+        emb.add_field(name="Utente", value=inter.user.mention); emb.add_field(name="Fazione", value=r_obj.name); emb.add_field(name="Importo", value=f"{importo}$")
+        await invia_log_finanziario(inter.guild, emb)
+
+    if len(miei_ruoli) == 1: await procedi(interaction, str(miei_ruoli[0].id))
+    else:
+        view = discord.ui.View()
+        sel = discord.ui.Select(options=[discord.SelectOption(label=r.name, value=str(r.id)) for r in miei_ruoli])
+        async def call(i): await i.response.defer(); await procedi(i, sel.values[0])
+        sel.callback = call; view.add_item(sel)
+        await interaction.followup.send("In quale fazione desideri depositare?", view=view, ephemeral=True)
+
+@bot.tree.command(name="preleva_soldi_fazione", description="Preleva soldi dal fondo della fazione")
+async def preleva_soldi_fazione(interaction: Interaction, importo: int):
+    await interaction.response.defer()
+    miei_ruoli = await get_miei_ruoli_fazione(interaction)
+    if not miei_ruoli: return await interaction.followup.send("❌ Non hai i permessi fazione necessari.")
+
+    async def procedi(inter, rid):
+        conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("SELECT money FROM depositi WHERE role_id = %s", (rid,))
+        res = cur.fetchone()
+        if not res or res['money'] < importo: return await inter.followup.send("❌ Il fondo fazione non dispone di tale cifra.")
+        cur.execute("UPDATE depositi SET money = money - %s WHERE role_id = %s", (importo, rid))
+        cur.execute("UPDATE users SET wallet = wallet + %s WHERE user_id = %s", (importo, str(inter.user.id)))
+        conn.commit(); cur.close(); conn.close()
+        r_obj = inter.guild.get_role(int(rid))
+        await inter.followup.send(f"💸 Hai prelevato **{importo}$** dal fondo di: **{r_obj.name}**.")
+        
+        emb = discord.Embed(title="🏢 LOG PRELIEVO FAZIONE", color=discord.Color.dark_red(), timestamp=discord.utils.utcnow())
+        emb.add_field(name="Utente", value=inter.user.mention); emb.add_field(name="Fazione", value=r_obj.name); emb.add_field(name="Importo", value=f"{importo}$")
+        await invia_log_finanziario(inter.guild, emb)
+
+    if len(miei_ruoli) == 1: await procedi(interaction, str(miei_ruoli[0].id))
+    else:
+        view = discord.ui.View()
+        sel = discord.ui.Select(options=[discord.SelectOption(label=r.name, value=str(r.id)) for r in miei_ruoli])
+        async def call(i): await i.response.defer(); await procedi(i, sel.values[0])
+        sel.callback = call; view.add_item(sel)
+        await interaction.followup.send("Da quale fazione desideri prelevare?", view=view, ephemeral=True)
+
+# --- PAGAMENTO SANZIONI E FATTURE ---
+
+@bot.tree.command(name="pagamulta", description="Saldare l'ultima multa pendente")
+async def pagamulta(interaction: Interaction):
+    await interaction.response.defer(ephemeral=True)
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute("SELECT * FROM multe WHERE user_id = %s LIMIT 1", (str(interaction.user.id),))
+    m = cur.fetchone()
+    if not m: return await interaction.followup.send("✅ Non risultano multe pendenti a tuo carico.")
+    
+    cur.execute("SELECT wallet FROM users WHERE user_id = %s", (str(interaction.user.id),))
+    w = cur.fetchone()
+    if not w or w['wallet'] < m['ammontare']: return await interaction.followup.send(f"❌ Contanti insufficienti. La multa è di {m['ammontare']}$.")
+
+    cur.execute("UPDATE users SET wallet = wallet - %s WHERE user_id = %s", (m['ammontare'], str(interaction.user.id)))
+    cur.execute("INSERT INTO depositi (role_id, money) VALUES (%s, %s) ON CONFLICT (role_id) DO UPDATE SET money = depositi.money + EXCLUDED.money", (m['id_azienda'], m['ammontare']))
+    cur.execute("DELETE FROM multe WHERE id_multa = %s", (m['id_multa'],))
+    conn.commit(); cur.close(); conn.close()
+
+    await interaction.followup.send(f"✅ Hai pagato la sanzione di **{m['ammontare']}$**. I fondi sono stati trasferiti al dipartimento.")
+    
+    emb = discord.Embed(title="⚖️ LOG PAGAMENTO MULTA", color=discord.Color.red(), timestamp=discord.utils.utcnow())
+    emb.add_field(name="Cittadino", value=interaction.user.mention); emb.add_field(name="Importo", value=f"{m['ammontare']}$")
+    await invia_log_finanziario(interaction.guild, emb)
+
+class PagaFatturaView(discord.ui.View):
+    def __init__(self, user_id, fatture):
+        super().__init__(timeout=180)
+        self.user_id = user_id
+        options = [discord.SelectOption(label=f"Fattura {f['id_fattura']}", description=f"Importo: {f['prezzo']}$", value=f"{f['id_fattura']}|{f['prezzo']}|{f['id_azienda']}") for f in fatture]
+        self.select = discord.ui.Select(placeholder="Scegli la fattura da saldare...", options=options)
+        self.select.callback = self.select_callback
+        self.add_item(self.select)
+
+    async def select_callback(self, interaction: Interaction):
+        await interaction.response.defer(ephemeral=True)
+        id_f, prezzo, id_az = self.select.values[0].split('|')
+        conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("SELECT wallet FROM users WHERE user_id = %s", (str(interaction.user.id),))
+        u_wallet = cur.fetchone()
+        
+        if not u_wallet or u_wallet['wallet'] < int(prezzo): return await interaction.followup.send("❌ Non hai abbastanza contanti nel portafoglio.", ephemeral=True)
+
+        cur.execute("UPDATE users SET wallet = wallet - %s WHERE user_id = %s", (int(prezzo), str(interaction.user.id)))
+        cur.execute("INSERT INTO depositi (role_id, money) VALUES (%s, %s) ON CONFLICT (role_id) DO UPDATE SET money = depositi.money + EXCLUDED.money", (id_az, int(prezzo)))
+        cur.execute("UPDATE fatture SET stato = 'Pagata' WHERE id_fattura = %s", (id_f,))
+        conn.commit(); cur.close(); conn.close()
+
+        await interaction.edit_original_response(content=f"✅ Fattura `{id_f}` di **{prezzo}$** saldata correttamente.", view=None)
+        
+        emb = discord.Embed(title="🧾 LOG PAGAMENTO FATTURA", color=discord.Color.gold(), timestamp=discord.utils.utcnow())
+        emb.add_field(name="Cliente", value=interaction.user.mention); emb.add_field(name="Importo", value=f"{prezzo}$"); emb.add_field(name="Azienda ID", value=id_az)
+        await invia_log_finanziario(interaction.guild, emb)
+
+@bot.tree.command(name="pagafattura", description="Visualizza e paga le fatture aziendali in sospeso")
+async def pagafattura(interaction: Interaction):
+    await interaction.response.defer(ephemeral=True)
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute("SELECT * FROM fatture WHERE id_cliente = %s AND stato = 'Pendente'", (str(interaction.user.id),))
+    f = cur.fetchall()
+    cur.close(); conn.close()
+    if not f: return await interaction.followup.send("✅ Non hai fatture pendenti da pagare.", ephemeral=True)
+    await interaction.followup.send("Seleziona la fattura da saldare:", view=PagaFatturaView(interaction.user.id, f), ephemeral=True)
 
 @bot.tree.command(name="set_canale_rapine", description="Imposta il canale per le approvazioni rapine (Solo Admin)")
 @app_commands.checks.has_permissions(administrator=True)
@@ -1490,36 +1710,7 @@ async def portafoglio(interaction: discord.Interaction):
 
     await interaction.response.send_message(embed=embed)
 
-@bot.tree.command(name="deposita", description="Metti soldi in banca")
-async def deposita(interaction: Interaction, importo: int):
-    u = get_user_data(interaction.user.id)
-    if importo <= 0 or u['wallet'] < importo:
-        return await interaction.response.send_message("❌ Importo non valido o contanti insufficienti.")
-    conn = get_db_connection(); cur = conn.cursor()
-    cur.execute("UPDATE users SET wallet = wallet - %s, bank = bank + %s WHERE user_id = %s", (importo, importo, str(interaction.user.id)))
-    conn.commit(); cur.close(); conn.close()
-    await interaction.response.send_message(f"🏦 **{interaction.user.display_name}** ha depositato **{importo}$** in banca.")
 
-@bot.tree.command(name="preleva", description="Preleva dalla banca")
-async def preleva(interaction: Interaction, importo: int):
-    u = get_user_data(interaction.user.id)
-    if importo <= 0 or u['bank'] < importo:
-        return await interaction.response.send_message("❌ Importo non valido o banca vuota.")
-    conn = get_db_connection(); cur = conn.cursor()
-    cur.execute("UPDATE users SET bank = bank - %s, wallet = wallet + %s WHERE user_id = %s", (importo, importo, str(interaction.user.id)))
-    conn.commit(); cur.close(); conn.close()
-    await interaction.response.send_message(f"💸 **{interaction.user.display_name}** ha prelevato **{importo}$**.")
-
-@bot.tree.command(name="dai_soldi", description="Dai soldi a un altro utente")
-async def dai_soldi(interaction: Interaction, utente: discord.Member, importo: int):
-    if utente.id == interaction.user.id: return await interaction.response.send_message("❌ Non puoi darti soldi da solo.")
-    u = get_user_data(interaction.user.id)
-    if importo <= 0 or u['wallet'] < importo: return await interaction.response.send_message("❌ Fondi insufficienti.")
-    conn = get_db_connection(); cur = conn.cursor()
-    cur.execute("UPDATE users SET wallet = wallet - %s WHERE user_id = %s", (importo, str(interaction.user.id)))
-    cur.execute("UPDATE users SET wallet = wallet + %s WHERE user_id = %s", (importo, str(utente.id)))
-    conn.commit(); cur.close(); conn.close()
-    await interaction.response.send_message(f"🤝 **{interaction.user.display_name}** ha dato **{importo}$** a **{utente.mention}**.")
 # --- COMANDO PER CREARE IL DOCUMENTO ---
 @bot.tree.command(name="crea_documento", description="Registra il tuo documento d'identità")
 @app_commands.choices(genere=[
@@ -2129,46 +2320,7 @@ async def multa(interaction: discord.Interaction, utente: discord.Member, ammont
         await interaction.followup.send("❌ Errore nel database.")
 
 # --- COMANDO /PAGAMULTA ---
-@bot.tree.command(name="pagamulta", description="Paga le tue sanzioni pendenti")
-async def pagamulta(interaction: discord.Interaction):
-    await interaction.response.defer(ephemeral=True)
-    try:
-        conn = get_db_connection()
-        from psycopg2.extras import RealDictCursor
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        
-        # Cerchiamo l'ultima multa pendente dell'utente
-        cur.execute("SELECT * FROM multe WHERE user_id = %s LIMIT 1", (str(interaction.user.id),))
-        multa = cur.fetchone()
-        
-        if not multa:
-            return await interaction.followup.send("✅ Non hai multe da pagare.")
 
-        # Controllo se ha i soldi nel wallet (tabella users)
-        cur.execute("SELECT wallet FROM users WHERE user_id = %s", (str(interaction.user.id),))
-        user_wallet = cur.fetchone()
-
-        if not user_wallet or user_wallet['wallet'] < multa['ammontare']:
-            return await interaction.followup.send(f"❌ Non hai abbastanza contanti! Ti servono {multa['ammontare']}$.")
-
-        # TRANSAZIONE: Scala wallet -> Aggiungi a depositi fazione -> Elimina multa
-        cur.execute("UPDATE users SET wallet = wallet - %s WHERE user_id = %s", (multa['ammontare'], str(interaction.user.id)))
-        
-        cur.execute("""
-            INSERT INTO depositi (role_id, money) VALUES (%s, %s)
-            ON CONFLICT (role_id) DO UPDATE SET money = depositi.money + EXCLUDED.money
-        """, (multa['id_azienda'], multa['ammontare']))
-        
-        cur.execute("DELETE FROM multe WHERE id_multa = %s", (multa['id_multa'],))
-        
-        conn.commit()
-        cur.close()
-        conn.close()
-
-        await interaction.followup.send(f"✅ Hai pagato la multa di {multa['ammontare']}$. I soldi sono andati al dipartimento.")
-    except Exception as e:
-        print(f"Errore pagamulta: {e}")
-        await interaction.followup.send("❌ Errore nel pagamento.")
 @bot.tree.command(name="arresto", description="Registra un arresto nel database e annuncialo in chat")
 @app_commands.describe(
     utente="Il cittadino da arrestare",
@@ -2553,78 +2705,6 @@ async def usa(interaction: discord.Interaction, nome: str):
 
 # 1. DEFINIZIONE DELLA CLASSE (Deve stare sopra il comando)
 # ==========================================
-# 1. CLASSE PER IL PAGAMENTO (PagaFatturaView)
-# ==========================================
-class PagaFatturaView(discord.ui.View):
-    def __init__(self, user_id, fatture):
-        super().__init__(timeout=180)
-        self.user_id = user_id
-        
-        options = []
-        for f in fatture:
-            # Salviamo: ID Fattura | Prezzo | ID Azienda (Ruolo)
-            options.append(discord.SelectOption(
-                label=f"Fattura {f['id_fattura']}",
-                description=f"Importo: {f['prezzo']}$",
-                value=f"{f['id_fattura']}|{f['prezzo']}|{f['id_azienda']}"
-            ))
-            
-        self.select = discord.ui.Select(placeholder="Scegli la fattura da saldare...", options=options)
-        self.select.callback = self.select_callback
-        self.add_item(self.select)
-
-    async def select_callback(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
-        
-        # Spacchettiamo i dati
-        data = self.select.values[0].split('|')
-        id_f = data[0]
-        prezzo = int(data[1])
-        id_azienda = data[2] # Questo è l'ID numerico del ruolo
-
-        try:
-            conn = get_db_connection()
-            from psycopg2.extras import RealDictCursor
-            cur = conn.cursor(cursor_factory=RealDictCursor)
-            
-            # 1. Controllo se il cittadino ha i soldi nel wallet
-            cur.execute("SELECT wallet FROM users WHERE user_id = %s", (str(interaction.user.id),))
-            user_data = cur.fetchone()
-            
-            if not user_data or user_data['wallet'] < prezzo:
-                cur.close()
-                conn.close()
-                return await interaction.followup.send("❌ Non hai abbastanza contanti nel wallet!", ephemeral=True)
-
-            # --- TRANSAZIONE ECONOMICA ---
-            # A. Sottrazione soldi al cittadino
-            cur.execute("UPDATE users SET wallet = wallet - %s WHERE user_id = %s", (prezzo, str(interaction.user.id)))
-            
-            # B. Accredito nel deposito fazione (Usa l'ID del ruolo)
-            cur.execute("""
-                INSERT INTO depositi (role_id, money) 
-                VALUES (%s, %s) 
-                ON CONFLICT (role_id) 
-                DO UPDATE SET money = depositi.money + EXCLUDED.money
-            """, (str(id_azienda), prezzo))
-            
-            # C. Aggiornamento stato fattura
-            cur.execute("UPDATE fatture SET stato = 'Pagata' WHERE id_fattura = %s", (id_f,))
-            
-            conn.commit()
-            cur.close()
-            conn.close()
-
-            self.select.disabled = True
-            await interaction.edit_original_response(
-                content=f"✅ Fattura `{id_f}` pagata! **{prezzo}$** accreditati nel deposito fazione.", 
-                view=self
-            )
-
-        except Exception as e:
-            print(f"ERRORE SQL PAGAMENTO: {e}")
-            await interaction.followup.send("❌ Errore durante il trasferimento dei fondi.", ephemeral=True)
-
 # ==========================================
 # 2. COMANDO PER EMETTERE FATTURA (/fattura)
 # ==========================================
@@ -2665,29 +2745,6 @@ async def fattura(interaction: discord.Interaction, cliente: discord.Member, azi
 # ==========================================
 # 3. COMANDO PER VISUALIZZARE FATTURE (/pagafattura)
 # ==========================================
-@bot.tree.command(name="pagafattura", description="Paga le tue fatture pendenti")
-async def pagafattura(interaction: discord.Interaction):
-    await interaction.response.defer(ephemeral=True)
-    try:
-        conn = get_db_connection()
-        from psycopg2.extras import RealDictCursor
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute("SELECT * FROM fatture WHERE id_cliente = %s AND stato = 'Pendente'", (str(interaction.user.id),))
-        mie_fatture = cur.fetchall()
-        cur.close()
-        conn.close()
-
-        if not mie_fatture:
-            return await interaction.followup.send("✅ Non hai fatture in sospeso.", ephemeral=True)
-
-        view = PagaFatturaView(interaction.user.id, mie_fatture)
-        await interaction.followup.send("Seleziona la fattura da pagare:", view=view, ephemeral=True)
-    except Exception as e:
-        print(f"ERRORE CARICAMENTO: {e}")
-        await interaction.followup.send("❌ Errore nel caricamento dei dati.", ephemeral=True)
-
-
-
 ID_RUOLO_CONCESSIONARIO = 1253460178305679433
 
 @bot.tree.command(name="registra_veicolo", description="Registra la vendita e salva i dati nel database motorizzazione")
@@ -2889,57 +2946,6 @@ async def deposito_fazione(interaction: Interaction):
         sel.callback = call; view.add_item(sel)
         await interaction.followup.send("Quale deposito vuoi aprire?", view=view, ephemeral=True)
 
-@bot.tree.command(name="deposita_soldi_fazione", description="Deposita soldi in fazione")
-async def deposita_soldi_fazione(interaction: Interaction, importo: int):
-    await interaction.response.defer()
-    miei_ruoli = await get_miei_ruoli_fazione(interaction)
-    if not miei_ruoli: return await interaction.followup.send("❌ No Fazione.")
-    u = get_user_data(interaction.user.id)
-    if importo <= 0 or u['wallet'] < importo: return await interaction.followup.send("❌ Fondi insufficienti.")
-
-    async def procedi(inter, rid):
-        conn = get_db_connection(); cur = conn.cursor()
-        cur.execute("UPDATE users SET wallet = wallet - %s WHERE user_id = %s", (importo, str(inter.user.id)))
-        cur.execute("UPDATE depositi SET money = money + %s WHERE role_id = %s", (importo, rid))
-        conn.commit(); cur.close(); conn.close()
-        r_obj = inter.guild.get_role(int(rid))
-        await inter.followup.send(f"✅ **{inter.user.display_name}** ha depositato **{importo}$** in **{r_obj.name}**.")
-
-    if len(miei_ruoli) == 1: await procedi(interaction, str(miei_ruoli[0].id))
-    else:
-        view = discord.ui.View()
-        sel = discord.ui.Select(options=[discord.SelectOption(label=r.name, value=str(r.id)) for r in miei_ruoli])
-        async def call(i): 
-            for it in view.children: it.disabled = True
-            await i.response.edit_message(view=view); await procedi(i, sel.values[0])
-        sel.callback = call; view.add_item(sel)
-        await interaction.followup.send("In quale fazione depositi?", view=view, ephemeral=True)
-
-@bot.tree.command(name="preleva_soldi_fazione", description="Preleva soldi dalla fazione")
-async def preleva_soldi_fazione(interaction: Interaction, importo: int):
-    await interaction.response.defer()
-    miei_ruoli = await get_miei_ruoli_fazione(interaction)
-    if not miei_ruoli: return await interaction.followup.send("❌ No Fazione.")
-
-    async def procedi(inter, rid):
-        conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute("SELECT money FROM depositi WHERE role_id = %s", (rid,))
-        if cur.fetchone()['money'] < importo: return await inter.followup.send("❌ Fondo fazione insufficiente.")
-        cur.execute("UPDATE depositi SET money = money - %s WHERE role_id = %s", (importo, rid))
-        cur.execute("UPDATE users SET wallet = wallet + %s WHERE user_id = %s", (importo, str(inter.user.id)))
-        conn.commit(); cur.close(); conn.close()
-        r_obj = inter.guild.get_role(int(rid))
-        await inter.followup.send(f"💸 **{inter.user.display_name}** ha prelevato **{importo}$** da **{r_obj.name}**.")
-
-    if len(miei_ruoli) == 1: await procedi(interaction, str(miei_ruoli[0].id))
-    else:
-        view = discord.ui.View()
-        sel = discord.ui.Select(options=[discord.SelectOption(label=r.name, value=str(r.id)) for r in miei_ruoli])
-        async def call(i):
-            for it in view.children: it.disabled = True
-            await i.response.edit_message(view=view); await procedi(i, sel.values[0])
-        sel.callback = call; view.add_item(sel)
-        await interaction.followup.send("Da quale fazione prelevi?", view=view, ephemeral=True)
 
 @bot.tree.command(name="deposita_item_fazione", description="Metti un item in fazione")
 async def deposita_item_fazione(interaction: Interaction, nome: str, quantita: int = 1):
@@ -3453,25 +3459,6 @@ def is_staff(interaction: discord.Interaction):
 
 # --- COMANDI SOLDI ---
 
-@bot.tree.command(name="aggiungisoldi", description="STAFF - Regala soldi")
-async def aggiungisoldi(interaction: Interaction, utente: discord.Member, importo: int):
-    if not is_staff(interaction):
-        return await interaction.response.send_message("❌ Permessi insufficienti.", ephemeral=True)
-    
-    conn = get_db_connection(); cur = conn.cursor()
-    cur.execute("UPDATE users SET wallet = wallet + %s WHERE user_id = %s", (importo, str(utente.id)))
-    conn.commit(); cur.close(); conn.close()
-    await interaction.response.send_message(f"✅ Admin ha aggiunto **{importo}$** a {utente.mention}")
-
-@bot.tree.command(name="rimuovisoldi", description="STAFF - Togli soldi")
-async def rimuovisoldi(interaction: Interaction, utente: discord.Member, importo: int):
-    if not is_staff(interaction):
-        return await interaction.response.send_message("❌ Permessi insufficienti.", ephemeral=True)
-    
-    conn = get_db_connection(); cur = conn.cursor()
-    cur.execute("UPDATE users SET wallet = GREATEST(0, wallet - %s) WHERE user_id = %s", (importo, str(utente.id)))
-    conn.commit(); cur.close(); conn.close()
-    await interaction.response.send_message(f"✅ Admin ha rimosso **{importo}$** a {utente.mention}")
 
 # --- COMANDI ITEM ---
 
