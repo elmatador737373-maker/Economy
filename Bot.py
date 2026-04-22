@@ -219,6 +219,7 @@ async def check_stato_permission(interaction, tipo):
     if not res: return False
     return any(role.id == int(res['role_id']) for role in interaction.user.roles)
 
+# --- COMANDO 
 # --- COMANDO STATO WHITELIST ---
 @bot.tree.command(name="stato_whitelist", description="Cambia lo stato delle whitelist")
 @app_commands.choices(stato=[
@@ -230,17 +231,19 @@ async def stato_whitelist(interaction: discord.Interaction, stato: str):
         return await interaction.response.send_message("❌ Permessi insufficienti.", ephemeral=True)
     
     embed = discord.Embed(timestamp=discord.utils.utcnow())
-    if stato == "on":
-        embed.title = "🟢 WHITELIST ONLINE"
-        embed.description = "Le sessioni di whitelist sono ora **APERTE**. Entra in attesa assistenza!"
-        embed.color = discord.Color.green()
-        embed.set_image(url="https://cdn.discordapp.com/attachments/1494346414812299377/1496569274775638127/copy_B543E7B5-3498-4A14-AE02-B7CFF62064BA.mov")
-    else:
-        embed.title = "🔴 WHITELIST OFFLINE"
-        embed.description = "Le sessioni di whitelist sono ora **CHIUSE**. Segui i canali per i prossimi orari."
-        embed.color = discord.Color.red()
-        embed.set_image(url="https://cdn.discordapp.com/attachments/1494346414812299377/1496569283914895490/copy_DC99F0D0-0464-4AE3-BD5C-6BCA514A3E70.mov")
     
+    if stato == "on":
+        video_url = "https://cdn.discordapp.com/attachments/1494346414812299377/1496569274775638127/copy_B543E7B5-3498-4A14-AE02-B7CFF62064BA.mov"
+        embed.title = "🟢 WHITELIST ONLINE"
+        embed.description = "Le sessioni di whitelist sono ora **APERTE**!\nEntra in attesa assistenza per il colloquio."
+        embed.color = discord.Color.green()
+    else:
+        video_url = "https://cdn.discordapp.com/attachments/1494346414812299377/1496569283914895490/copy_DC99F0D0-0464-4AE3-BD5C-6BCA514A3E70.mov"
+        embed.title = "🔴 WHITELIST OFFLINE"
+        embed.description = "Le sessioni di whitelist sono ora **CHIUSE**.\nControlla il canale orari per la prossima sessione."
+        embed.color = discord.Color.red()
+
+    embed.set_image(url=video_url)
     await interaction.response.send_message(embed=embed)
 
 # --- COMANDO STATO ASSISTENZA ---
@@ -254,17 +257,19 @@ async def stato_assistenza(interaction: discord.Interaction, stato: str):
         return await interaction.response.send_message("❌ Permessi insufficienti.", ephemeral=True)
     
     embed = discord.Embed(timestamp=discord.utils.utcnow())
-    if stato == "on":
-        embed.title = "🛠️ ASSISTENZA ATTIVA"
-        embed.description = "Lo staff è ora disponibile per assistenza. Apri un ticket o entra nei canali vocali!"
-        embed.color = discord.Color.blue()
-        embed.set_image(url="https://media.discordapp.net/attachments/1494346414812299377/1496569289753235496/copy_FD01942D-B60D-4CCA-8A3B-3981D8195F35.mov")
-    else:
-        embed.title = "💤 ASSISTENZA CHIUSA"
-        embed.description = "L'assistenza è attualmente chiusa. Per casi urgenti, apri un ticket e attendi risposta."
-        embed.color = discord.Color.dark_grey()
-        embed.set_image(url="https://media.discordapp.net/attachments/1494346414812299377/1496569298062151750/copy_40885F54-F706-4F76-9066-A90A8879F04B.mov")
     
+    if stato == "on":
+        video_url = "https://media.discordapp.net/attachments/1494346414812299377/1496569289753235496/copy_FD01942D-B60D-4CCA-8A3B-3981D8195F35.mov"
+        embed.title = "🛠️ ASSISTENZA ATTIVA"
+        embed.description = "Lo staff è ora disponibile!\nEntra nei canali vocali o apri un ticket."
+        embed.color = discord.Color.blue()
+    else:
+        video_url = "https://media.discordapp.net/attachments/1494346414812299377/1496569298062151750/copy_40885F54-F706-4F76-9066-A90A8879F04B.mov"
+        embed.title = "💤 ASSISTENZA CHIUSA"
+        embed.description = "L'assistenza è attualmente chiusa.\nSi prega di attendere la riapertura."
+        embed.color = discord.Color.dark_grey()
+
+    embed.set_image(url=video_url)
     await interaction.response.send_message(embed=embed)
 
 # --- COMANDO STATO BANDI ---
@@ -278,17 +283,19 @@ async def stato_bandi(interaction: discord.Interaction, stato: str):
         return await interaction.response.send_message("❌ Permessi insufficienti.", ephemeral=True)
     
     embed = discord.Embed(timestamp=discord.utils.utcnow())
-    if stato == "on":
-        embed.title = "📝 BANDI APERTI"
-        embed.description = "I bandi per entrare nello staff o nelle fazioni sono **APERTI**! Inviate le vostre candidature."
-        embed.color = discord.Color.gold()
-        embed.set_image(url="https://media.discordapp.net/attachments/1494346414812299377/1496569305066635305/copy_BB5B70E0-C5D6-42CE-A9AD-5948F4FC3244.mov")
-    else:
-        embed.title = "🚫 BANDI CHIUSI"
-        embed.description = "I bandi sono attualmente **CHIUSI**. Grazie a tutti i partecipanti."
-        embed.color = discord.Color.dark_red()
-        embed.set_image(url="https://media.discordapp.net/attachments/1494346414812299377/1496570730530213908/copy_B633C26F-A6B2-49CA-82A8-4127E64F60C0.mov")
     
+    if stato == "on":
+        video_url = "https://media.discordapp.net/attachments/1494346414812299377/1496569305066635305/copy_BB5B70E0-C5D6-42CE-A9AD-5948F4FC3244.mov"
+        embed.title = "📝 BANDI APERTI"
+        embed.description = "I bandi sono ufficialmente **APERTI**!\nCandidati subito per entrare nel team."
+        embed.color = discord.Color.gold()
+    else:
+        video_url = "https://media.discordapp.net/attachments/1494346414812299377/1496570730530213908/copy_B633C26F-A6B2-49CA-82A8-4127E64F60C0.mov"
+        embed.title = "🚫 BANDI CHIUSI"
+        embed.description = "I bandi sono attualmente **CHIUSI**.\nGrazie a tutti coloro che hanno partecipato."
+        embed.color = discord.Color.dark_red()
+
+    embed.set_image(url=video_url)
     await interaction.response.send_message(embed=embed)
 
     
