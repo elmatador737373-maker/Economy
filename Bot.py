@@ -192,6 +192,81 @@ async def crea(interaction: discord.Interaction, testo: str, url_immagine: str):
     
     
     
+# --- COMANDO ADMIN PER SETTARE I RUOLI PERMESSI ---
+@bot.tree.command(name="set_permessi_stato", description="[ADMIN] Imposta quale ruolo può usare i comandi stato")
+@app_commands.choices(tipo=[
+    app_commands.Choice(name="Whitelist", value="whitelist"),
+    app_commands.Choice(name="Assistenza", value="assistenza"),
+    app_commands.Choice(name="Bandi", value="bandi")
+])
+async def set_permessi_stato(interaction: discord.Interaction, tipo: str, ruolo: discord.Role):
+    if not interaction.user.guild_permissions.administrator:
+        return await interaction.response.send_message("❌ Solo un amministratore può farlo.", ephemeral=True)
+    
+    conn = get_db_connection(); cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO permessi_stati (tipo_stato, role_id) VALUES (%s, %s)
+        ON CONFLICT (tipo_stato) DO UPDATE SET role_id = EXCLUDED.role_id
+    """, (tipo, str(ruolo.id)))
+    conn.commit(); cur.close(); conn.close()
+    await interaction.response.send_message(f"✅ Il comando `{tipo}` ora può essere usato dal ruolo {ruolo.mention}", ephemeral=True)
+
+# --- FUNZIONE HELPER CONTROLLO RUOLI ---
+async def check_stato_permission(interaction, tipo):
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute("SELECT role_id FROM permessi_stati WHERE tipo_stato = %s", (tipo,))
+    res = cur.fetchone(); cur.close(); conn.close()
+    if not res: return False
+    return any(role.id == int(res['role_id']) for role in interaction.user.roles)
+
+# --- COMANDO STATO WHITELIST ---
+@bot.tree.command(name="stato_whitelist", description="Cambia lo stato delle whitelist")
+@app_commands.choices(stato=[
+    app_commands.Choice(name="Online", value="on"),
+    app_commands.Choice(name="Offline", value="off")
+])
+async def stato_whitelist(interaction: discord.Interaction, stato: str):
+    if not await check_stato_permission(interaction, "whitelist"):
+        return await interaction.response.send_message("❌ Non hai il ruolo staff necessario per questo comando.", ephemeral=True)
+    
+    links = {
+        "on": "https://cdn.discordapp.com/attachments/1494346414812299377/1496569274775638127/copy_B543E7B5-3498-4A14-AE02-B7CFF62064BA.mov?ex=69ea5c40&is=69e90ac0&hm=8a1567e60f0016975f37bb612cd3f4e51b21608aa6a642d8a5891a609a195744&",
+        "off": "https://cdn.discordapp.com/attachments/1494346414812299377/1496569283914895490/copy_DC99F0D0-0464-4AE3-BD5C-6BCA514A3E70.mov?ex=69ea5c42&is=69e90ac2&hm=acfa9d94dcaf4ebc35060166a7ca1eefba6306cf1dd8db40d4795404a7563748&"
+    }
+    await interaction.response.send_message(links[stato])
+
+# --- COMANDO STATO ASSISTENZA ---
+@bot.tree.command(name="stato_assistenza", description="Cambia lo stato dell'assistenza")
+@app_commands.choices(stato=[
+    app_commands.Choice(name="Online", value="on"),
+    app_commands.Choice(name="Offline", value="off")
+])
+async def stato_assistenza(interaction: discord.Interaction, stato: str):
+    if not await check_stato_permission(interaction, "assistenza"):
+        return await interaction.response.send_message("❌ Non hai il ruolo staff necessario per questo comando.", ephemeral=True)
+    
+    links = {
+        "on": "https://media.discordapp.net/attachments/1494346414812299377/1496569289753235496/copy_FD01942D-B60D-4CCA-8A3B-3981D8195F35.mov?ex=69ea5c43&is=69e90ac3&hm=9b1ab81a3d67b8f905e386a77dc2a8da4a7751ac4e105a84173a5edd319a8ed1&",
+        "off": "https://media.discordapp.net/attachments/1494346414812299377/1496569298062151750/copy_40885F54-F706-4F76-9066-A90A8879F04B.mov?ex=69ea5c45&is=69e90ac5&hm=d9d396588e91fa0a222d2b2bbe431d47c8e1d674d42491cb023454a874b4f42f&"
+    }
+    await interaction.response.send_message(links[stato])
+
+# --- COMANDO STATO BANDI ---
+@bot.tree.command(name="stato_bandi", description="Cambia lo stato dei bandi")
+@app_commands.choices(stato=[
+    app_commands.Choice(name="Aperti", value="on"),
+    app_commands.Choice(name="Chiusi", value="off")
+])
+async def stato_bandi(interaction: discord.Interaction, stato: str):
+    if not await check_stato_permission(interaction, "bandi"):
+        return await interaction.response.send_message("❌ Non hai il ruolo staff necessario per questo comando.", ephemeral=True)
+    
+    links = {
+        "on": "https://media.discordapp.net/attachments/1494346414812299377/1496569305066635305/copy_BB5B70E0-C5D6-42CE-A9AD-5948F4FC3244.mov?ex=69ea5c47&is=69e90ac7&hm=74850ebbb5ccc25164919b5f6097909a730ff3283383e0be19ed493a145ce29e&",
+        "off": "https://media.discordapp.net/attachments/1494346414812299377/1496570730530213908/copy_B633C26F-A6B2-49CA-82A8-4127E64F60C0.mov?ex=69ea5d9b&is=69e90c1b&hm=1a14812f36ea1894722c19a6db02548a956de705bfb414e971169656a62d4147&"
+    }
+    await interaction.response.send_message(links[stato])
+
     
 # --- 1. SETUP ADMIN PER I RUOLI LAVORATORI ---
 @bot.tree.command(name="setup_documenti", description="[ADMIN] Imposta i ruoli che possono usare i comandi documenti")
