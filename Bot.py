@@ -227,13 +227,21 @@ async def check_stato_permission(interaction, tipo):
 ])
 async def stato_whitelist(interaction: discord.Interaction, stato: str):
     if not await check_stato_permission(interaction, "whitelist"):
-        return await interaction.response.send_message("❌ Non hai il ruolo staff necessario per questo comando.", ephemeral=True)
+        return await interaction.response.send_message("❌ Permessi insufficienti.", ephemeral=True)
     
-    links = {
-        "on": "https://cdn.discordapp.com/attachments/1494346414812299377/1496569274775638127/copy_B543E7B5-3498-4A14-AE02-B7CFF62064BA.mov?ex=69ea5c40&is=69e90ac0&hm=8a1567e60f0016975f37bb612cd3f4e51b21608aa6a642d8a5891a609a195744&",
-        "off": "https://cdn.discordapp.com/attachments/1494346414812299377/1496569283914895490/copy_DC99F0D0-0464-4AE3-BD5C-6BCA514A3E70.mov?ex=69ea5c42&is=69e90ac2&hm=acfa9d94dcaf4ebc35060166a7ca1eefba6306cf1dd8db40d4795404a7563748&"
-    }
-    await interaction.response.send_message(links[stato])
+    embed = discord.Embed(timestamp=discord.utils.utcnow())
+    if stato == "on":
+        embed.title = "🟢 WHITELIST ONLINE"
+        embed.description = "Le sessioni di whitelist sono ora **APERTE**. Entra in attesa assistenza!"
+        embed.color = discord.Color.green()
+        embed.set_image(url="https://cdn.discordapp.com/attachments/1494346414812299377/1496569274775638127/copy_B543E7B5-3498-4A14-AE02-B7CFF62064BA.mov")
+    else:
+        embed.title = "🔴 WHITELIST OFFLINE"
+        embed.description = "Le sessioni di whitelist sono ora **CHIUSE**. Segui i canali per i prossimi orari."
+        embed.color = discord.Color.red()
+        embed.set_image(url="https://cdn.discordapp.com/attachments/1494346414812299377/1496569283914895490/copy_DC99F0D0-0464-4AE3-BD5C-6BCA514A3E70.mov")
+    
+    await interaction.response.send_message(embed=embed)
 
 # --- COMANDO STATO ASSISTENZA ---
 @bot.tree.command(name="stato_assistenza", description="Cambia lo stato dell'assistenza")
@@ -243,13 +251,21 @@ async def stato_whitelist(interaction: discord.Interaction, stato: str):
 ])
 async def stato_assistenza(interaction: discord.Interaction, stato: str):
     if not await check_stato_permission(interaction, "assistenza"):
-        return await interaction.response.send_message("❌ Non hai il ruolo staff necessario per questo comando.", ephemeral=True)
+        return await interaction.response.send_message("❌ Permessi insufficienti.", ephemeral=True)
     
-    links = {
-        "on": "https://media.discordapp.net/attachments/1494346414812299377/1496569289753235496/copy_FD01942D-B60D-4CCA-8A3B-3981D8195F35.mov?ex=69ea5c43&is=69e90ac3&hm=9b1ab81a3d67b8f905e386a77dc2a8da4a7751ac4e105a84173a5edd319a8ed1&",
-        "off": "https://media.discordapp.net/attachments/1494346414812299377/1496569298062151750/copy_40885F54-F706-4F76-9066-A90A8879F04B.mov?ex=69ea5c45&is=69e90ac5&hm=d9d396588e91fa0a222d2b2bbe431d47c8e1d674d42491cb023454a874b4f42f&"
-    }
-    await interaction.response.send_message(links[stato])
+    embed = discord.Embed(timestamp=discord.utils.utcnow())
+    if stato == "on":
+        embed.title = "🛠️ ASSISTENZA ATTIVA"
+        embed.description = "Lo staff è ora disponibile per assistenza. Apri un ticket o entra nei canali vocali!"
+        embed.color = discord.Color.blue()
+        embed.set_image(url="https://media.discordapp.net/attachments/1494346414812299377/1496569289753235496/copy_FD01942D-B60D-4CCA-8A3B-3981D8195F35.mov")
+    else:
+        embed.title = "💤 ASSISTENZA CHIUSA"
+        embed.description = "L'assistenza è attualmente chiusa. Per casi urgenti, apri un ticket e attendi risposta."
+        embed.color = discord.Color.dark_grey()
+        embed.set_image(url="https://media.discordapp.net/attachments/1494346414812299377/1496569298062151750/copy_40885F54-F706-4F76-9066-A90A8879F04B.mov")
+    
+    await interaction.response.send_message(embed=embed)
 
 # --- COMANDO STATO BANDI ---
 @bot.tree.command(name="stato_bandi", description="Cambia lo stato dei bandi")
@@ -259,13 +275,21 @@ async def stato_assistenza(interaction: discord.Interaction, stato: str):
 ])
 async def stato_bandi(interaction: discord.Interaction, stato: str):
     if not await check_stato_permission(interaction, "bandi"):
-        return await interaction.response.send_message("❌ Non hai il ruolo staff necessario per questo comando.", ephemeral=True)
+        return await interaction.response.send_message("❌ Permessi insufficienti.", ephemeral=True)
     
-    links = {
-        "on": "https://media.discordapp.net/attachments/1494346414812299377/1496569305066635305/copy_BB5B70E0-C5D6-42CE-A9AD-5948F4FC3244.mov?ex=69ea5c47&is=69e90ac7&hm=74850ebbb5ccc25164919b5f6097909a730ff3283383e0be19ed493a145ce29e&",
-        "off": "https://media.discordapp.net/attachments/1494346414812299377/1496570730530213908/copy_B633C26F-A6B2-49CA-82A8-4127E64F60C0.mov?ex=69ea5d9b&is=69e90c1b&hm=1a14812f36ea1894722c19a6db02548a956de705bfb414e971169656a62d4147&"
-    }
-    await interaction.response.send_message(links[stato])
+    embed = discord.Embed(timestamp=discord.utils.utcnow())
+    if stato == "on":
+        embed.title = "📝 BANDI APERTI"
+        embed.description = "I bandi per entrare nello staff o nelle fazioni sono **APERTI**! Inviate le vostre candidature."
+        embed.color = discord.Color.gold()
+        embed.set_image(url="https://media.discordapp.net/attachments/1494346414812299377/1496569305066635305/copy_BB5B70E0-C5D6-42CE-A9AD-5948F4FC3244.mov")
+    else:
+        embed.title = "🚫 BANDI CHIUSI"
+        embed.description = "I bandi sono attualmente **CHIUSI**. Grazie a tutti i partecipanti."
+        embed.color = discord.Color.dark_red()
+        embed.set_image(url="https://media.discordapp.net/attachments/1494346414812299377/1496570730530213908/copy_B633C26F-A6B2-49CA-82A8-4127E64F60C0.mov")
+    
+    await interaction.response.send_message(embed=embed)
 
     
 # --- 1. SETUP ADMIN PER I RUOLI LAVORATORI ---
