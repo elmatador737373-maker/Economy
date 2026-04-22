@@ -454,52 +454,128 @@ async def aggiungi(interaction: discord.Interaction, id_messaggio: str, testo_bo
         await interaction.response.send_message(f"❌ Errore: {e}", ephemeral=True)
 # --- LOGICA STAFF: VIEW E MODAL PER APPROVAZIONE ---
 
+import discord
+from discord import app_commands, Interaction
+
+# --- MODAL PER LA MODIFICA DELL'IMPORTO ---
 class ModificaBottinoModal(discord.ui.Modal, title="Modifica Bottino Rapina"):
-    nuovo_importo = discord.ui.TextInput(label="Nuovo Ammontare (€)", placeholder="Inserisci la cifra...")
+    nuovo_importo = discord.ui.TextInput(label="Nuovo Ammontare (€)", placeholder="Inserisci la cifra...", required=True)
     
-    def __init__(self, user_id, luogo):
+    def __init__(self, user_id, luogo, msg_utente_id, canale_utente_id):
         super().__init__()
         self.user_id = user_id
         self.luogo = luogo
+        self.msg_utente_id = msg_utente_id
+        self.canale_utente_id = canale_utente_id
 
     async def on_submit(self, interaction: discord.Interaction):
         try:
             valore = int(self.nuovo_importo.value)
+            
+            # Aggiornamento Database
             conn = get_db_connection()
             cur = conn.cursor()
-            cur.execute("UPDATE users SET wallet = wallet + %s WHERE user_id = %s", (valore, self.user_id))
+            cur.execute("UPDATE users SET wallet = wallet + %s WHERE user_id = %s", (valore, str(self.user_id)))
             conn.commit()
-            cur.close()
-            conn.close()
+            cur.close(); conn.close()
             
-            await interaction.response.edit_message(content=f"✍️ **BOTTINO MODIFICATO**: Accreditati **{valore}€** a <@{self.user_id}> per la rapina a **{self.luogo}**.", embed=None, view=None)
+            # 1. Aggiorna Embed Utente nel canale rapina
+            await self.aggiorna_messaggio_utente(interaction, valore, "⚠️ **BOTTINO MODIFICATO**", discord.Color.orange())
+            
+            # 2. Invia DM all'utente
+            await self.invia_dm_esito(interaction, f"⚠️ Lo staff ha modificato e approvato il tuo bottino per la rapina a **{self.luogo}**. Ricevuti: **{valore}€**")
+
+            await interaction.response.edit_message(content=f"✍️ **BOTTINO MODIFICATO**: Accreditati **{valore}€** a <@{self.user_id}>.", embed=None, view=None)
         except ValueError:
             await interaction.response.send_message("❌ Inserisci un numero valido!", ephemeral=True)
 
+    async def aggiorna_messaggio_utente(self, interaction, valore, esito_testo, colore):
+        try:
+            canale = interaction.guild.get_channel(self.canale_utente_id)
+            msg = await canale.fetch_message(self.msg_utente_id)
+            embed = msg.embeds[0]
+            embed.color = colore
+            embed.set_field_at(0, name="Stato", value=esito_testo)
+            embed.add_field(name="Importo Finale", value=f"**{valore}€**", inline=False)
+            await msg.edit(embed=embed)
+        except: pass
+
+    async def invia_dm_esito(self, interaction, testo):
+        try:
+            user = await interaction.guild.fetch_member(int(self.user_id))
+            if user: await user.send(testo)
+        except: pass
+
+
+# --- VIEW PER LO STAFF ---
 class RapinaStaffView(discord.ui.View):
-    def __init__(self, user_id, ammontare, luogo):
+    def __init__(self, user_id, ammontare, luogo, msg_utente_id, canale_utente_id):
         super().__init__(timeout=None)
         self.user_id = user_id
         self.ammontare = ammontare
         self.luogo = luogo
+        self.msg_utente_id = msg_utente_id
+        self.canale_utente_id = canale_utente_id
+
+    async def aggiorna_originale(self, interaction, esito, colore, finale=None):
+        """Helper per aggiornare l'embed che vede il cittadino"""
+        try:
+            canale = interaction.guild.get_channel(self.canale_utente_id)
+            msg = await canale.fetch_message(self.msg_utente_id)
+            embed = msg.embeds[0]
+            embed.color = colore
+            embed.set_field_at(0, name="Stato", value=esito)
+            if finale:
+                embed.add_field(name="Importo Ricevuto", value=f"**{finale}€**", inline=False)
+            await msg.edit(embed=embed)
+        except: pass
+
+    async def notificami(self, interaction, testo):
+        """Helper per inviare il DM"""
+        try:
+            user = await interaction.guild.fetch_member(int(self.user_id))
+            if user: await user.send(testo)
+        except: pass
 
     @discord.ui.button(label="Conferma", style=discord.ButtonStyle.success)
     async def conferma(self, interaction: discord.Interaction, button: discord.ui.Button):
         conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute("UPDATE users SET wallet = wallet + %s WHERE user_id = %s", (self.ammontare, self.user_id))
+        cur.execute("UPDATE users SET wallet = wallet + %s WHERE user_id = %s", (self.ammontare, str(self.user_id)))
         conn.commit()
-        cur.close()
-        conn.close()
-        await interaction.response.edit_message(content=f"✅ **PAGAMENTO APPROVATO**: {self.ammontare}€ accreditati a <@{self.user_id}>.", embed=None, view=None)
+        cur.close(); conn.close()
+        
+        await self.aggiorna_originale(interaction, "✅ **BOTTINO APPROVATO**", discord.Color.green(), self.ammontare)
+        await self.notificami(interaction, f"✅ Il tuo bottino per la rapina a **{self.luogo}** è stato approvato! Ricevuti: **{self.ammontare}€**")
+
+        await interaction.response.edit_message(content=f"✅ **APPROVATA**: {self.ammontare}€ a <@{self.user_id}>.", embed=None, view=None)
 
     @discord.ui.button(label="Annulla", style=discord.ButtonStyle.danger)
     async def annulla(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.edit_message(content=f"❌ **RAPINA ANNULLATA**: Il colpo di <@{self.user_id}> è stato invalidato.", embed=None, view=None)
+        await self.aggiorna_originale(interaction, "❌ **RAPINA ANNULLATA**", discord.Color.red())
+        await self.notificami(interaction, f"❌ La tua rapina a **{self.luogo}** è stata annullata dallo staff.")
+
+        await interaction.response.edit_message(content=f"❌ **RIFIUTATA**: Colpo di <@{self.user_id}> invalidato.", embed=None, view=None)
 
     @discord.ui.button(label="Modifica Importo", style=discord.ButtonStyle.secondary)
     async def modifica(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(ModificaBottinoModal(self.user_id, self.luogo))
+        # Passiamo tutti i dati necessari al Modal
+        await interaction.response.send_modal(ModificaBottinoModal(self.user_id, self.luogo, self.msg_utente_id, self.canale_utente_id))
+
+
+# --- ESEMPIO DI INVIO NEL COMANDO RAPINA ---
+# Quando invii il messaggio all'utente nel comando:
+# embed.add_field(name="Stato", value="⌛ In attesa di approvazione staff...")
+# msg_utente = await interaction.followup.send(embed=embed)
+# 
+# view_staff = RapinaStaffView(
+#     user_id=str(interaction.user.id),
+#     ammontare=paga_casuale,
+#     luogo=luogo,
+#     msg_utente_id=msg_utente.id,
+#     canale_utente_id=interaction.channel.id
+# )
+# await canale_staff.send(embed=embed_staff, view=view_staff)
 
 # --- COMANDO SETTAGGIO CANALE (SOLO ADMIN) ---
 # --- SISTEMA ECONOMICO UNIFICATO CON LOGGING ---
