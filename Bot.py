@@ -2862,7 +2862,7 @@ async def inventory_autocomplete(interaction: discord.Interaction, current: str)
     return [app_commands.Choice(name=f"{item['item_name']}", value=item['item_name']) for item in items]
 
 # --- COMANDO: DAI ITEM ---
-@bot.tree.command(name="dai_item", description="Passa un oggetto dal tuo inventario a un altro utente")
+@bot.tree.command(name="passa", description="Passa un oggetto dal tuo inventario a un altro utente")
 @app_commands.describe(
     utente="L'utente a cui dare l'oggetto", 
     nome="Seleziona l'oggetto dal tuo inventario", 
