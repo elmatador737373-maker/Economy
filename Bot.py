@@ -386,6 +386,68 @@ async def chiamata_911(
     await canale_dest.send(content=f"🔔 **NOTIFICA EMERGENZA** {tag_msg}", embed=embed)
 
     await interaction.followup.send(f"✅ Chiamata inoltrata con successo a `{servizio.upper()}`.")
+# --- FUNZIONE DI AUTOCOMPLETE PER I BOTTONI ---
+async def bottoni_autocomplete(interaction: Interaction, current: str):
+    # Recuperiamo l'ID del messaggio dal parametro già inserito nel comando (se presente)
+    msg_id = interaction.namespace.id_messaggio
+    if not msg_id:
+        return []
+
+    try:
+        canale = interaction.channel
+        messaggio = await canale.fetch_message(int(msg_id))
+        
+        choices = []
+        if messaggio.components:
+            for riga in messaggio.components:
+                for comp in riga.children:
+                    # Filtra i bottoni in base a ciò che l'utente sta scrivendo
+                    if current.lower() in comp.label.lower():
+                        choices.append(app_commands.Choice(name=comp.label, value=comp.label))
+        return choices
+    except:
+        return []
+
+# --- 4. COMANDO ELIMINA BOTTONE SINGOLO (Solo Admin) ---
+@tree.command(name="elimina_bottone", description="Scegli un bottone specifico da rimuovere")
+@app_commands.checks.has_permissions(administrator=True)
+@app_commands.autocomplete(nome_bottone=bottoni_autocomplete)
+async def elimina_bottone(interaction: Interaction, id_messaggio: str, nome_bottone: str):
+    canale = interaction.channel
+    messaggio = await canale.fetch_message(int(id_messaggio))
+    
+    if not messaggio.components:
+        return await interaction.response.send_message("❌ Questo messaggio non ha bottoni.", ephemeral=True)
+
+    nuova_view = View()
+    trovato = False
+
+    # Ricostruiamo la View escludendo il bottone selezionato
+    for riga in messaggio.components:
+        for comp in riga.children:
+            if comp.label == nome_bottone:
+                trovato = True
+                continue  # Salta il bottone da eliminare
+            
+            nuova_view.add_item(Button(
+                label=comp.label, 
+                url=comp.url, 
+                emoji=comp.emoji
+            ))
+
+    if trovato:
+        # Se non rimangono bottoni, passiamo None, altrimenti la nuova view
+        await messaggio.edit(view=nuova_view if len(nuova_view.children) > 0 else None)
+        await interaction.response.send_message(f"✅ Bottone '{nome_bottone}' rimosso!", ephemeral=True)
+    else:
+        await interaction.response.send_message(f"❌ Bottone '{nome_bottone}' non trovato.", ephemeral=True)
+
+# --- GESTIONE ERRORI ---
+@elimina_bottone.error
+async def elimina_error(interaction: Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, app_commands.MissingPermissions):
+        await interaction.response.send_message("❌ Permessi insufficienti.", ephemeral=True)
+
 # --- COMANDO ADMIN: SETUP 911 ---
 @bot.tree.command(name="setup_911", description="[ADMIN] Configura i dettagli per i servizi d'emergenza")
 @app_commands.choices(servizio=[
