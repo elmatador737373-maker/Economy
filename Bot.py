@@ -409,7 +409,7 @@ async def bottoni_autocomplete(interaction: Interaction, current: str):
         return []
 
 # --- 4. COMANDO ELIMINA BOTTONE SINGOLO (Solo Admin) ---
-@tree.command(name="elimina_bottone", description="Scegli un bottone specifico da rimuovere")
+@bot.tree.command(name="elimina_bottone", description="Scegli un bottone specifico da rimuovere")
 @app_commands.checks.has_permissions(administrator=True)
 @app_commands.autocomplete(nome_bottone=bottoni_autocomplete)
 async def elimina_bottone(interaction: Interaction, id_messaggio: str, nome_bottone: str):
