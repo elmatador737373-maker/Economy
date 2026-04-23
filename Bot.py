@@ -386,6 +386,59 @@ async def chiamata_911(
     await canale_dest.send(content=f"🔔 **NOTIFICA EMERGENZA** {tag_msg}", embed=embed)
 
     await interaction.followup.send(f"✅ Chiamata inoltrata con successo a `{servizio.upper()}`.")
+# --- COMANDO ADMIN: SETUP 911 ---
+@bot.tree.command(name="setup_911", description="[ADMIN] Configura i dettagli per i servizi d'emergenza")
+@app_commands.choices(servizio=[
+    app_commands.Choice(name="Police", value="police"),
+    app_commands.Choice(name="Ambulance", value="ambulance"),
+    app_commands.Choice(name="Firefighter", value="fire")
+])
+@app_commands.describe(
+    servizio="Il dipartimento da configurare",
+    canale="Il canale dove arriveranno le chiamate per questo servizio",
+    ruolo="Il ruolo da taggare alla ricezione di una chiamata",
+    logo_url="Link (URL) del logo della fazione (es. da Imgur)"
+)
+async def setup_911(
+    interaction: discord.Interaction, 
+    servizio: str, 
+    canale: discord.TextChannel, 
+    ruolo: discord.Role,
+    logo_url: str
+):
+    # Controllo permessi amministratore
+    if not interaction.user.guild_permissions.administrator:
+        return await interaction.response.send_message("❌ Non hai i permessi per configurare il sistema.", ephemeral=True)
+
+    await interaction.response.defer(ephemeral=True)
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    # Assicurati che la tabella abbia la colonna logo_url (esegui la query SQL se necessario)
+    # ALTER TABLE setup_911 ADD COLUMN IF NOT EXISTS logo_url TEXT;
+    
+    cur.execute("""
+        INSERT INTO setup_911 (servizio, canale_id, ruolo_id, logo_url) 
+        VALUES (%s, %s, %s, %s)
+        ON CONFLICT (servizio) 
+        DO UPDATE SET 
+            canale_id = EXCLUDED.canale_id, 
+            ruolo_id = EXCLUDED.ruolo_id,
+            logo_url = EXCLUDED.logo_url
+    """, (servizio, str(canale.id), str(ruolo.id), logo_url))
+    
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    embed = discord.Embed(title="⚙️ CONFIGURAZIONE 911 COMPLETATA", color=discord.Color.green())
+    embed.add_field(name="Dipartimento", value=servizio.upper(), inline=False)
+    embed.add_field(name="Canale", value=canale.mention, inline=True)
+    embed.add_field(name="Ruolo", value=ruolo.mention, inline=True)
+    embed.set_thumbnail(url=logo_url)
+    
+    await interaction.followup.send(embed=embed)
 
 # --- 1. COMANDO CREA ---
 @bot.tree.command(name="crea", description="Invia l'embed base con immagine")
