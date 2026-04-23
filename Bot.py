@@ -318,6 +318,74 @@ async def instagram(
     
     # Aggiunta reazione
     await message.add_reaction("❤️")
+# --- COMANDO PUBBLICO: 911 (TESTO LIBERO) ---
+@bot.tree.command(name="911", description="Effettua una chiamata d'emergenza ai servizi cittadini")
+@app_commands.choices(servizio=[
+    app_commands.Choice(name="Police (LSPD)", value="police"),
+    app_commands.Choice(name="Ambulance (EMS)", value="ambulance"),
+    app_commands.Choice(name="Firefighter (VVF)", value="fire")
+])
+@app_commands.describe(
+    servizio="Seleziona il dipartimento da contattare",
+    nominativo="Il tuo Nome e Cognome IC",
+    motivo="Descrivi brevemente l'emergenza (es: Sparatoria, Incidente)",
+    posizione="Via o zona dell'evento",
+    messaggio="Ulteriori dettagli per le unità in arrivo"
+)
+async def chiamata_911(
+    interaction: discord.Interaction, 
+    servizio: str, 
+    nominativo: str, 
+    motivo: str, 
+    posizione: str, 
+    messaggio: str = "Nessun dettaglio aggiuntivo"
+):
+    await interaction.response.defer(ephemeral=True)
+
+    # Recupero configurazione dal DB
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute("SELECT canale_id, ruolo_id FROM setup_911 WHERE servizio = %s", (servizio,))
+    config = cur.fetchone()
+    cur.close(); conn.close()
+
+    if not config:
+        return await interaction.followup.send("❌ Servizio non configurato dall'amministrazione.", ephemeral=True)
+
+    canale_dest = interaction.guild.get_channel(int(config['canale_id']))
+    ruolo_tag = interaction.guild.get_role(int(config['ruolo_id']))
+
+    if not canale_dest:
+        return await interaction.followup.send("❌ Canale di ricezione non trovato.", ephemeral=True)
+
+    # Configurazione Estetica (Loghi e Colori)
+    info_servizi = {
+        "police": {"colore": discord.Color.blue(), "logo": "URL_LOGO_POLIZIA"},
+        "ambulance": {"colore": discord.Color.red(), "logo": "URL_LOGO_EMS"},
+        "fire": {"colore": discord.Color.orange(), "logo": "URL_LOGO_VVF"}
+    }
+    
+    data = info_servizi.get(servizio)
+    
+    # Creazione Embed
+    embed = discord.Embed(
+        title=f"🚨 RICHIESTA DI INTERVENTO: {servizio.upper()}",
+        color=data["colore"],
+        timestamp=discord.utils.utcnow()
+    )
+    
+    embed.set_thumbnail(url=data["logo"])
+    embed.add_field(name="👤 Segnalante", value=f"**{nominativo}**", inline=True)
+    embed.add_field(name="📍 Posizione", value=f"**{posizione}**", inline=True)
+    embed.add_field(name="⚠️ Motivo Chiamata", value=f"**{motivo}**", inline=False)
+    embed.add_field(name="💬 Info Extra", value=messaggio, inline=False)
+    
+    embed.set_footer(text="Centrale Operativa 911 • Dispatcher")
+
+    # Invio
+    tag_msg = ruolo_tag.mention if ruolo_tag else "@everyone"
+    await canale_dest.send(content=f"🔔 **NOTIFICA EMERGENZA** {tag_msg}", embed=embed)
+
+    await interaction.followup.send(f"✅ Chiamata inoltrata con successo a `{servizio.upper()}`.")
 
 # --- 1. COMANDO CREA ---
 @bot.tree.command(name="crea", description="Invia l'embed base con immagine")
