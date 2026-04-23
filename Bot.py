@@ -267,6 +267,57 @@ async def riprendi(interaction: discord.Interaction, item: str, prova_posizione:
     
     # Invia la conferma all'utente
     await interaction.followup.send(f"✅ Hai recuperato **{quantita}x {item}**! Inventario aggiornato.", embed=embed_log)
+# --- COMANDO INSTAGRAM POST (FOTO & VIDEO) ---
+@bot.tree.command(name="instagram", description="Crea un post in stile Instagram (Foto o Video)")
+@app_commands.describe(
+    titolo="Il titolo del post",
+    descrizione="Il testo del post (facoltativo)",
+    tag="Tag o Hashtag (facoltativo)",
+    media="Allega la foto o il video del post"
+)
+async def instagram(
+    interaction: discord.Interaction, 
+    titolo: str, 
+    media: discord.Attachment, 
+    descrizione: str = None, 
+    tag: str = None
+):
+    # Supportiamo immagini, gif e video
+    formati_ammessi = ['image', 'video', 'gif']
+    if not media.content_type or not any(x in media.content_type for x in formati_ammessi):
+        return await interaction.response.send_message("❌ Puoi allegare solo Foto, GIF o Video!", ephemeral=True)
+
+    await interaction.response.defer()
+
+    # Creazione Embed
+    embed = discord.Embed(
+        title=f"📸 New Post from {interaction.user.display_name}",
+        description=f"### {titolo}",
+        color=discord.Color.from_rgb(225, 48, 108)
+    )
+
+    if descrizione:
+        embed.description += f"\n\n{descrizione}"
+    
+    if tag:
+        embed.add_field(name="📌 Tags", value=tag, inline=False)
+
+    embed.set_footer(text="Instagram • Like to support")
+    embed.timestamp = discord.utils.utcnow()
+
+    # GESTIONE MEDIA
+    is_video = 'video' in media.content_type or media.filename.endswith(('.mp4', '.mov', '.webm'))
+
+    if is_video:
+        # Se è un video, lo mandiamo come content per l'autoplay, l'embed sta sotto
+        message = await interaction.followup.send(content=f"{media.url}", embed=embed)
+    else:
+        # Se è una foto/gif, la mettiamo dentro l'embed
+        embed.set_image(url=media.url)
+        message = await interaction.followup.send(embed=embed)
+    
+    # Aggiunta reazione
+    await message.add_reaction("❤️")
 
 # --- 1. COMANDO CREA ---
 @bot.tree.command(name="crea", description="Invia l'embed base con immagine")
