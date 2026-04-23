@@ -235,6 +235,55 @@ async def nascondi(interaction: discord.Interaction, item: str, quantita: int, f
     embed.set_footer(text="Usa /riprendi per recuperarlo fornendo la prova.")
     
     await interaction.followup.send("✅ Hai nascosto l'oggetto con successo!", embed=embed)
+# --- COMANDO CLONA / INVIA (Solo Admin) ---
+@bot.tree.command(name="clona_messaggio", description="Copia un messaggio esistente e lo reinvia come nuovo")
+@discord.app_commands.checks.has_permissions(administrator=True)
+async def clona_messaggio(interaction: discord.Interaction, id_messaggio: str):
+    # Usiamo il defer con ephemeral=True così l'utente vede il caricamento, 
+    # ma il comando finale non apparirà come una risposta pubblica.
+    await interaction.response.defer(ephemeral=True)
+
+    try:
+        canale = interaction.channel
+        messaggio_vecchio = await canale.fetch_message(int(id_messaggio))
+        
+        # 1. Recuperiamo gli Embed
+        embeds_da_copiare = messaggio_vecchio.embeds
+        
+        # 2. Recuperiamo i Bottoni (View)
+        nuova_view = discord.ui.View()
+        ha_bottoni = False
+        
+        if messaggio_vecchio.components:
+            for riga in messaggio_vecchio.components:
+                for comp in riga.children:
+                    # Copiamo ogni bottone link esistente
+                    nuova_view.add_item(discord.ui.Button(
+                        label=comp.label, 
+                        url=comp.url, 
+                        emoji=comp.emoji,
+                        style=comp.style
+                    ))
+                    ha_bottoni = True
+
+        # 3. Invio del nuovo messaggio nel canale
+        # Se non ci sono bottoni, passiamo None alla view
+        await canale.send(
+            embeds=embeds_da_copiare, 
+            view=nuova_view if ha_bottoni else None
+        )
+
+        # Conferma solo a te che l'operazione è riuscita
+        await interaction.followup.send("✅ Messaggio clonato e inviato correttamente!", ephemeral=True)
+            
+    except Exception as e:
+        await interaction.followup.send(f"❌ Errore durante la clonazione: {e}", ephemeral=True)
+
+# Gestione errore permessi
+@clona_messaggio.error
+async def clona_error(interaction: discord.Interaction, error: discord.app_commands.AppCommandError):
+    if isinstance(error, discord.app_commands.ChecksFailure):
+        await interaction.response.send_message("❌ Non hai i permessi per clonare messaggi.", ephemeral=True)
 
 # --- COMANDO RIPRENDI ---
 @bot.tree.command(name="riprendi", description="Recupera un oggetto che avevi nascosto")
