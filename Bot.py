@@ -284,6 +284,67 @@ async def clona_messaggio(interaction: discord.Interaction, id_messaggio: str):
 async def clona_error(interaction: discord.Interaction, error: discord.app_commands.AppCommandError):
     if isinstance(error, discord.app_commands.ChecksFailure):
         await interaction.response.send_message("❌ Non hai i permessi per clonare messaggi.", ephemeral=True)
+@bot.tree.command(name="esito_bando", description="[STAFF] Dai l'esito a una candidatura e assegna il ruolo")
+@app_commands.choices(esito=[
+    app_commands.Choice(name="✅ Accettato", value="accettato"),
+    app_commands.Choice(name="❌ Rifiutato", value="rifiutato")
+])
+@app_commands.describe(
+    utente="Il cittadino che ha fatto il bando",
+    esito="L'esito della candidatura",
+    ruolo_lavoro="Il ruolo da assegnare in caso di accettazione",
+    motivo="Specifica il motivo (soprattutto in caso di rifiuto)"
+)
+async def esito_bando(
+    interaction: discord.Interaction, 
+    utente: discord.Member, 
+    esito: str, 
+    ruolo_lavoro: discord.Role,
+    motivo: str = "Non specificato"
+):
+    # Controllo permessi Staff tramite la variabile già definita
+    staff_role = interaction.guild.get_role(RUOLO_STAFF_ID)
+    if staff_role not in interaction.user.roles and not interaction.user.guild_permissions.administrator:
+        return await interaction.response.send_message("❌ Non hai i permessi necessari per gestire i bandi.", ephemeral=True)
+
+    await interaction.response.defer()
+
+    embed = discord.Embed(timestamp=discord.utils.utcnow())
+    embed.set_footer(text=f"Pratica gestita da: {interaction.user.display_name}")
+
+    if esito == "accettato":
+        try:
+            # Assegnazione automatica del ruolo
+            await utente.add_roles(ruolo_lavoro)
+            
+            embed.title = "📄 ESITO CANDIDATURA: ACCETTATA"
+            embed.color = discord.Color.green()
+            embed.description = (
+                f"Ottime notizie {utente.mention}!\n\n"
+                f"La tua candidatura per entrare nel dipartimento è stata **ACCETTATA**.\n\n"
+                f"**Ruolo ottenuto:** {ruolo_lavoro.mention}\n"
+                f"**Motivazione:** {motivo}"
+            )
+            # Immagine di successo (opzionale)
+            embed.set_thumbnail(url="https://i.imgur.com/vH6QW2L.png") 
+            
+        except Exception as e:
+            return await interaction.followup.send(f"❌ Errore tecnico nell'assegnazione del ruolo: {e}", ephemeral=True)
+            
+    else: # Caso: Rifiutato
+        embed.title = "📄 ESITO CANDIDATURA: RIFIUTATA"
+        embed.color = discord.Color.red()
+        embed.description = (
+            f"Spiacenti {utente.mention},\n\n"
+            f"il tuo bando per il ruolo {ruolo_lavoro.mention} è stato **RIFIUTATO**.\n\n"
+            f"**Motivazione:** {motivo}\n\n"
+            f"*Potrai ripresentare la tua candidatura non appena i bandi saranno nuovamente aperti.*"
+        )
+        # Immagine di rifiuto (opzionale)
+        embed.set_thumbnail(url="https://i.imgur.com/GZ6H3L0.png")
+
+    # Invio in risposta al messaggio dell'utente (Reply)
+    await interaction.followup.send(content=utente.mention, embed=embed)
 
 # --- COMANDO RIPRENDI ---
 @bot.tree.command(name="riprendi", description="Recupera un oggetto che avevi nascosto")
