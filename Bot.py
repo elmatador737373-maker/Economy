@@ -300,61 +300,58 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-# --- LOGICHE AUTOCOMPLETE (Standard Cursor) ---
+# --- LOGICHE AUTOCOMPLETE ---
 
 async def item_inventario_autocomplete(interaction: discord.Interaction, current: str):
     conn = get_db_connection()
-    cur = conn.cursor() # Cursor standard
-    # Cerchiamo item che l'utente possiede effettivamente
+    cur = conn.cursor()
+    # Utilizzo tabella 'inventory' e colonna 'quantity' come da schema
     cur.execute(
-        "SELECT item_name FROM inventario WHERE user_id = %s AND item_name ILIKE %s AND quantita > 0", 
+        "SELECT item_name FROM inventory WHERE user_id = %s AND item_name ILIKE %s AND quantity > 0", 
         (str(interaction.user.id), f"%{current}%")
     )
-    items = cur.fetchall() # Restituisce una lista di tuple tipo [('Pane',), ('Acqua',)]
+    items = cur.fetchall()
     cur.close(); conn.close()
-    
-    # Estraiamo il primo elemento i[0] di ogni tupla
     return [app_commands.Choice(name=i[0], value=i[0]) for i in items][:25]
 
 async def item_nascosti_autocomplete(interaction: discord.Interaction, current: str):
     conn = get_db_connection()
     cur = conn.cursor()
-    # DISTINCT evita di mostrare 10 volte lo stesso nome se l'utente ha fatto 10 nascondigli diversi dello stesso item
+    # Utilizzo tabella 'item_nascosti'
     cur.execute(
         "SELECT DISTINCT item_name FROM item_nascosti WHERE user_id = %s AND item_name ILIKE %s", 
         (str(interaction.user.id), f"%{current}%")
     )
     items = cur.fetchall()
     cur.close(); conn.close()
-    
     return [app_commands.Choice(name=i[0], value=i[0]) for i in items][:25]
 
 
 # --- COMANDO NASCONDI ---
 
-@bot.tree.command(name="nascondi", description="Nascondi un oggetto in un punto della mappa allegando una foto")
+@bot.tree.command(name="nascondi", description="Nascondi un oggetto in un punto della mappa")
 @app_commands.autocomplete(item=item_inventario_autocomplete)
-@app_commands.describe(item="Oggetto da nascondere", quantita="Quantità da rimuovere dallo zaino", foto="Foto del nascondiglio")
+@app_commands.describe(item="Oggetto da nascondere", quantita="Quantità da rimuovere", foto="Foto del nascondiglio")
 async def nascondi(interaction: discord.Interaction, item: str, quantita: int, foto: discord.Attachment):
     if quantita <= 0: 
         return await interaction.response.send_message("❌ Inserisci una quantità valida.", ephemeral=True)
     
     if not foto.content_type or not foto.content_type.startswith('image'):
-        return await interaction.response.send_message("❌ Devi allegare una foto del posto!", ephemeral=True)
+        return await interaction.response.send_message("❌ Devi allegare una foto del nascondiglio!", ephemeral=True)
 
     await interaction.response.defer(ephemeral=True)
     conn = get_db_connection(); cur = conn.cursor()
     
-    # Verifica possesso (index 0 perché usiamo cursor standard)
-    cur.execute("SELECT quantita FROM inventario WHERE user_id = %s AND item_name = %s", (str(interaction.user.id), item))
+    # Controllo su tabella 'inventory'
+    cur.execute("SELECT quantity FROM inventory WHERE user_id = %s AND item_name = %s", (str(interaction.user.id), item))
     res = cur.fetchone()
     
     if not res or res[0] < quantita:
         cur.close(); conn.close()
-        return await interaction.followup.send("❌ Non hai abbastanza oggetti di questo tipo.")
+        return await interaction.followup.send("❌ Non hai abbastanza oggetti nel tuo inventario.")
 
-    # Esecuzione: Sottrai da inv e inserisci in nascosti
-    cur.execute("UPDATE inventario SET quantita = quantita - %s WHERE user_id = %s AND item_name = %s", (quantita, str(interaction.user.id), item))
+    # Transazione: UPDATE su inventory e INSERT su item_nascosti
+    cur.execute("UPDATE inventory SET quantity = quantity - %s WHERE user_id = %s AND item_name = %s", (quantita, str(interaction.user.id), item))
     cur.execute("INSERT INTO item_nascosti (user_id, item_name, quantita, foto_nascosto) VALUES (%s, %s, %s, %s)", 
                 (str(interaction.user.id), item, quantita, foto.url))
     
@@ -363,24 +360,24 @@ async def nascondi(interaction: discord.Interaction, item: str, quantita: int, f
     embed = discord.Embed(title="📦 OGGETTO NASCOSTO", color=discord.Color.dark_grey(), timestamp=discord.utils.utcnow())
     embed.add_field(name="Item", value=f"**{quantita}x {item}**", inline=True)
     embed.set_image(url=foto.url)
-    embed.set_footer(text="Recuperalo con /riprendi")
+    embed.set_footer(text="Usa /riprendi per recuperarlo.")
     
-    await interaction.followup.send("✅ Hai nascosto l'oggetto con successo!", embed=embed)
+    await interaction.followup.send("✅ Oggetto nascosto e rimosso dall'inventario!", embed=embed)
 
 
 # --- COMANDO RIPRENDI ---
 
-@bot.tree.command(name="riprendi", description="Recupera un oggetto nascosto allegando la prova fotografica attuale")
+@bot.tree.command(name="riprendi", description="Recupera un oggetto nascosto")
 @app_commands.autocomplete(item=item_nascosti_autocomplete)
 @app_commands.describe(item="Seleziona l'item nascosto", prova_posizione="Foto che prova la tua posizione attuale")
 async def riprendi(interaction: discord.Interaction, item: str, prova_posizione: discord.Attachment):
     if not prova_posizione.content_type or not prova_posizione.content_type.startswith('image'):
-        return await interaction.response.send_message("❌ Devi allegare la foto del recupero!", ephemeral=True)
+        return await interaction.response.send_message("❌ Devi allegare una foto come prova!", ephemeral=True)
 
     await interaction.response.defer(ephemeral=True)
     conn = get_db_connection(); cur = conn.cursor()
     
-    # Recupera l'ultimo inserimento di quell'item (res[0]=id, res[1]=quantita, res[2]=foto)
+    # Query su 'item_nascosti'
     cur.execute("SELECT id, quantita, foto_nascosto FROM item_nascosti WHERE user_id = %s AND item_name = %s ORDER BY data_nascosto DESC LIMIT 1", (str(interaction.user.id), item))
     res = cur.fetchone()
     
@@ -388,25 +385,24 @@ async def riprendi(interaction: discord.Interaction, item: str, prova_posizione:
         cur.close(); conn.close()
         return await interaction.followup.send("❌ Non hai nessun oggetto di questo tipo nascosto.")
 
-    hidden_id, quantita, foto_vecchia = res[0], res[1], res[2]
+    h_id, h_qty, h_foto = res[0], res[1], res[2]
     
-    # Riaggiungi all'inventario
+    # Reinserimento in 'inventory' (ON CONFLICT per user_id e item_name come da schema)
     cur.execute("""
-        INSERT INTO inventario (user_id, item_name, quantita) VALUES (%s, %s, %s) 
-        ON CONFLICT (user_id, item_name) DO UPDATE SET quantita = inventario.quantita + EXCLUDED.quantita
-    """, (str(interaction.user.id), item, quantita))
+        INSERT INTO inventory (user_id, item_name, quantity) VALUES (%s, %s, %s) 
+        ON CONFLICT (user_id, item_name) DO UPDATE SET quantity = inventory.quantity + EXCLUDED.quantity
+    """, (str(interaction.user.id), item, h_qty))
     
-    # Rimuovi dai nascosti
-    cur.execute("DELETE FROM item_nascosti WHERE id = %s", (hidden_id,))
+    cur.execute("DELETE FROM item_nascosti WHERE id = %s", (h_id,))
     
     conn.commit(); cur.close(); conn.close()
     
-    embed_log = discord.Embed(title="🔎 OGGETTO RECUPERATO", color=discord.Color.green(), timestamp=discord.utils.utcnow())
-    embed_log.add_field(name="Item", value=f"**{quantita}x {item}**", inline=True)
-    embed_log.add_field(name="🔗 Foto Originale", value=f"[Link Nascondiglio]({foto_vecchia})", inline=False)
-    embed_log.set_image(url=prova_posizione.url)
+    embed = discord.Embed(title="🔎 OGGETTO RECUPERATO", color=discord.Color.green(), timestamp=discord.utils.utcnow())
+    embed.add_field(name="Item", value=f"**{h_qty}x {item}**", inline=True)
+    embed.add_field(name="🔗 Foto Originale", value=f"[Link Nascondiglio]({h_foto})", inline=False)
+    embed.set_image(url=prova_posizione.url)
     
-    await interaction.followup.send(f"✅ Hai recuperato **{quantita}x {item}**!", embed=embed_log)
+    await interaction.followup.send(f"✅ Hai recuperato l'oggetto! Inventario aggiornato.", embed=embed)
 
 # --- COMANDO INSTAGRAM POST (FOTO & VIDEO) ---
 @bot.tree.command(name="instagram", description="Crea un post in stile Instagram (Foto o Video)")
