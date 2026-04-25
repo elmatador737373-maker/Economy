@@ -339,10 +339,12 @@ async def nascondi(interaction: discord.Interaction, item: str, quantita: int, f
     if not foto.content_type or not foto.content_type.startswith('image'):
         return await interaction.response.send_message("❌ Devi allegare una foto del nascondiglio!", ephemeral=True)
 
+    # Il defer è True per non intasare il canale con messaggi di sistema
     await interaction.response.defer(ephemeral=True)
+    
     conn = get_db_connection(); cur = conn.cursor()
     
-    # Controllo su tabella 'inventory'
+    # Verifica disponibilità item
     cur.execute("SELECT quantity FROM inventory WHERE user_id = %s AND item_name = %s", (str(interaction.user.id), item))
     res = cur.fetchone()
     
@@ -350,59 +352,97 @@ async def nascondi(interaction: discord.Interaction, item: str, quantita: int, f
         cur.close(); conn.close()
         return await interaction.followup.send("❌ Non hai abbastanza oggetti nel tuo inventario.")
 
-    # Transazione: UPDATE su inventory e INSERT su item_nascosti
+    # Esecuzione transazione (DB)
     cur.execute("UPDATE inventory SET quantity = quantity - %s WHERE user_id = %s AND item_name = %s", (quantita, str(interaction.user.id), item))
     cur.execute("INSERT INTO item_nascosti (user_id, item_name, quantita, foto_nascosto) VALUES (%s, %s, %s, %s)", 
                 (str(interaction.user.id), item, quantita, foto.url))
     
     conn.commit(); cur.close(); conn.close()
     
-    embed = discord.Embed(title="📦 OGGETTO NASCOSTO", color=discord.Color.dark_grey(), timestamp=discord.utils.utcnow())
-    embed.add_field(name="Item", value=f"**{quantita}x {item}**", inline=True)
-    embed.set_image(url=foto.url)
-    embed.set_footer(text="Usa /riprendi per recuperarlo.")
+    # Creazione Embed Pubblico
+    embed = discord.Embed(
+        title="📦 NUOVO OGGETTO NASCOSTO", 
+        description=f"{interaction.user.mention} ha nascosto **{quantita}x {item}** da qualche parte in città!",
+        color=discord.Color.dark_grey(), 
+        timestamp=discord.utils.utcnow()
+    )
     
-    await interaction.followup.send("✅ Oggetto nascosto e rimosso dall'inventario!", embed=embed)
-
+    # Aggiungiamo l'autore come campo per maggiore chiarezza visiva
+    embed.add_field(name="👤 Segnalante", value=interaction.user.display_name, inline=True)
+    embed.add_field(name="📦 Contenuto", value=f"{quantita}x {item}", inline=True)
+    
+    # Imposta la foto caricata come immagine principale
+    embed.set_image(url=foto.url)
+    embed.set_footer(text="Se trovi il posto, usa il comando /riprendi")
+    
+    # Inviato con ephemeral=False così tutti possono vederlo nel canale
+    await interaction.followup.send(embed=embed, ephemeral=False)
 
 # --- COMANDO RIPRENDI ---
-
 @bot.tree.command(name="riprendi", description="Recupera un oggetto nascosto")
 @app_commands.autocomplete(item=item_nascosti_autocomplete)
 @app_commands.describe(item="Seleziona l'item nascosto", prova_posizione="Foto che prova la tua posizione attuale")
 async def riprendi(interaction: discord.Interaction, item: str, prova_posizione: discord.Attachment):
+    # Controllo che l'allegato sia un'immagine
     if not prova_posizione.content_type or not prova_posizione.content_type.startswith('image'):
-        return await interaction.response.send_message("❌ Devi allegare una foto come prova!", ephemeral=True)
+        return await interaction.response.send_message("❌ Devi allegare una foto come prova del recupero!", ephemeral=True)
 
+    # Defer ephemeral per non mostrare lo stato di caricamento a tutti
     await interaction.response.defer(ephemeral=True)
-    conn = get_db_connection(); cur = conn.cursor()
     
-    # Query su 'item_nascosti'
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    # Query sulla tabella 'item_nascosti' (usando gli indici del cursor standard)
     cur.execute("SELECT id, quantita, foto_nascosto FROM item_nascosti WHERE user_id = %s AND item_name = %s ORDER BY data_nascosto DESC LIMIT 1", (str(interaction.user.id), item))
     res = cur.fetchone()
     
     if not res:
-        cur.close(); conn.close()
-        return await interaction.followup.send("❌ Non hai nessun oggetto di questo tipo nascosto.")
+        cur.close()
+        conn.close()
+        return await interaction.followup.send("❌ Non risultano oggetti di questo tipo nascosti da te.")
 
     h_id, h_qty, h_foto = res[0], res[1], res[2]
     
-    # Reinserimento in 'inventory' (ON CONFLICT per user_id e item_name come da schema)
-    cur.execute("""
-        INSERT INTO inventory (user_id, item_name, quantity) VALUES (%s, %s, %s) 
-        ON CONFLICT (user_id, item_name) DO UPDATE SET quantity = inventory.quantity + EXCLUDED.quantity
-    """, (str(interaction.user.id), item, h_qty))
+    try:
+        # Reinserimento in 'inventory' (ON CONFLICT somma la quantità se l'item esiste già)
+        cur.execute("""
+            INSERT INTO inventory (user_id, item_name, quantity) VALUES (%s, %s, %s) 
+            ON CONFLICT (user_id, item_name) DO UPDATE SET quantity = inventory.quantity + EXCLUDED.quantity
+        """, (str(interaction.user.id), item, h_qty))
+        
+        # Eliminazione dal database degli oggetti nascosti
+        cur.execute("DELETE FROM item_nascosti WHERE id = %s", (h_id,))
+        
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        cur.close()
+        conn.close()
+        return await interaction.followup.send(f"❌ Errore durante il recupero: {e}")
+
+    cur.close()
+    conn.close()
+
+    # Creazione Embed Pubblico
+    embed = discord.Embed(
+        title="🔎 OGGETTO RECUPERATO", 
+        description=f"{interaction.user.mention} ha ritrovato il suo nascondiglio e ha recuperato **{h_qty}x {item}**!",
+        color=discord.Color.green(), 
+        timestamp=discord.utils.utcnow()
+    )
     
-    cur.execute("DELETE FROM item_nascosti WHERE id = %s", (h_id,))
+    # Campi informativi
+    embed.add_field(name="👤 Cittadino", value=interaction.user.display_name, inline=True)
+    embed.add_field(name="📦 Oggetto", value=f"{h_qty}x {item}", inline=True)
+    embed.add_field(name="🔗 Foto Originale", value=f"[Link del vecchio nascondiglio]({h_foto})", inline=False)
     
-    conn.commit(); cur.close(); conn.close()
-    
-    embed = discord.Embed(title="🔎 OGGETTO RECUPERATO", color=discord.Color.green(), timestamp=discord.utils.utcnow())
-    embed.add_field(name="Item", value=f"**{h_qty}x {item}**", inline=True)
-    embed.add_field(name="🔗 Foto Originale", value=f"[Link Nascondiglio]({h_foto})", inline=False)
+    # Mostriamo la foto della prova del recupero
     embed.set_image(url=prova_posizione.url)
+    embed.set_footer(text="Recupero completato con successo.")
     
-    await interaction.followup.send(f"✅ Hai recuperato l'oggetto! Inventario aggiornato.", embed=embed)
+    # Invio pubblico (ephemeral=False)
+    await interaction.followup.send(embed=embed, ephemeral=False)
 
 # --- COMANDO INSTAGRAM POST (FOTO & VIDEO) ---
 @bot.tree.command(name="instagram", description="Crea un post in stile Instagram (Foto o Video)")
