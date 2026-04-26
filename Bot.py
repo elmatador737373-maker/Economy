@@ -305,6 +305,7 @@ from discord.ext import commands
 async def item_inventario_autocomplete(interaction: discord.Interaction, current: str):
     conn = get_db_connection()
     cur = conn.cursor()
+    # Filtriamo già per quantity > 0, ma la pulizia del DB renderà tutto più veloce
     cur.execute(
         "SELECT item_name FROM inventory WHERE user_id = %s AND item_name ILIKE %s AND quantity > 0", 
         (str(interaction.user.id), f"%{current}%")
@@ -325,7 +326,7 @@ async def item_nascosti_autocomplete(interaction: discord.Interaction, current: 
     return [app_commands.Choice(name=i[0], value=i[0]) for i in items][:25]
 
 
-# --- COMANDO NASCONDI (PUBBLICO) ---
+# --- COMANDO NASCONDI (PULIZIA x0 INCLUSA) ---
 
 @bot.tree.command(name="nascondi", description="Nascondi un oggetto in un punto della mappa")
 @app_commands.autocomplete(item=item_inventario_autocomplete)
@@ -337,7 +338,6 @@ async def nascondi(interaction: discord.Interaction, item: str, quantita: int, f
     if not foto.content_type or not foto.content_type.startswith('image'):
         return await interaction.response.send_message("❌ Devi allegare una foto del nascondiglio!", ephemeral=True)
 
-    # Defer pubblico: tutti vedranno che il bot sta elaborando
     await interaction.response.defer(ephemeral=False)
     
     conn = get_db_connection(); cur = conn.cursor()
@@ -349,11 +349,24 @@ async def nascondi(interaction: discord.Interaction, item: str, quantita: int, f
         cur.close(); conn.close()
         return await interaction.followup.send("❌ Non hai abbastanza oggetti nel tuo inventario.")
 
-    cur.execute("UPDATE inventory SET quantity = quantity - %s WHERE user_id = %s AND item_name = %s", (quantita, str(interaction.user.id), item))
-    cur.execute("INSERT INTO item_nascosti (user_id, item_name, quantita, foto_nascosto) VALUES (%s, %s, %s, %s)", 
-                (str(interaction.user.id), item, quantita, foto.url))
-    
-    conn.commit(); cur.close(); conn.close()
+    try:
+        # 1. Sottrai la quantità
+        cur.execute("UPDATE inventory SET quantity = quantity - %s WHERE user_id = %s AND item_name = %s", (quantita, str(interaction.user.id), item))
+        
+        # 2. PULIZIA: Se la quantità è 0 o meno, elimina la riga dall'inventario
+        cur.execute("DELETE FROM inventory WHERE user_id = %s AND item_name = %s AND quantity <= 0", (str(interaction.user.id), item))
+        
+        # 3. Inserisci nei nascosti
+        cur.execute("INSERT INTO item_nascosti (user_id, item_name, quantita, foto_nascosto) VALUES (%s, %s, %s, %s)", 
+                    (str(interaction.user.id), item, quantita, foto.url))
+        
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        cur.close(); conn.close()
+        return await interaction.followup.send(f"❌ Errore durante l'operazione: {e}")
+
+    cur.close(); conn.close()
     
     embed = discord.Embed(
         title="📦 NUOVO OGGETTO NASCOSTO", 
@@ -369,7 +382,7 @@ async def nascondi(interaction: discord.Interaction, item: str, quantita: int, f
     await interaction.followup.send(embed=embed)
 
 
-# --- COMANDO RIPRENDI (PUBBLICO) ---
+# --- COMANDO RIPRENDI ---
 
 @bot.tree.command(name="riprendi", description="Recupera un oggetto nascosto")
 @app_commands.autocomplete(item=item_nascosti_autocomplete)
@@ -378,7 +391,6 @@ async def riprendi(interaction: discord.Interaction, item: str, prova_posizione:
     if not prova_posizione.content_type or not prova_posizione.content_type.startswith('image'):
         return await interaction.response.send_message("❌ Devi allegare una foto come prova del recupero!", ephemeral=True)
 
-    # Defer pubblico
     await interaction.response.defer(ephemeral=False)
     
     conn = get_db_connection(); cur = conn.cursor()
@@ -397,6 +409,7 @@ async def riprendi(interaction: discord.Interaction, item: str, prova_posizione:
             INSERT INTO inventory (user_id, item_name, quantity) VALUES (%s, %s, %s) 
             ON CONFLICT (user_id, item_name) DO UPDATE SET quantity = inventory.quantity + EXCLUDED.quantity
         """, (str(interaction.user.id), item, h_qty))
+        
         cur.execute("DELETE FROM item_nascosti WHERE id = %s", (h_id,))
         conn.commit()
     except Exception as e:
