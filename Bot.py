@@ -719,29 +719,44 @@ async def set_permessi_stato(interaction: Interaction, tipo: str, ruolo: discord
     conn.commit(); cur.close(); conn.close()
     await interaction.response.send_message(f"✅ Permessi `{tipo}` impostati per: {ruolo.mention}", ephemeral=True)
 
-@bot.tree.command(name="set_media_stato", description="[ADMIN] Carica la GIF/Media per uno stato")
-@app_commands.choices(tipo=[
-    app_commands.Choice(name="Whitelist Online", value="whitelist_on"),
-    app_commands.Choice(name="Whitelist Offline", value="whitelist_off"),
-    app_commands.Choice(name="Assistenza Online", value="assistenza_on"),
-    app_commands.Choice(name="Assistenza Offline", value="assistenza_off"),
-    app_commands.Choice(name="Bandi Aperti", value="bandi_on"),
-    app_commands.Choice(name="Bandi Chiusi", value="bandi_off")
-])
-async def set_media_stato(interaction: Interaction, tipo: str, file: discord.Attachment):
+ID_CANALE_ARCHIVIO =  1498308854633594890 # Sostituisci con l'ID del tuo canale
+@bot.tree.command(name="set_media_stato", description="Imposta la GIF permanente per un tipo di stato")
+@app_commands.describe(tipo="Il tipo di stato (es. Arresto, Fattura)", file_gif="Allega la GIF da usare")
+async def set_media_stato(interaction: discord.Interaction, tipo: str, file_gif: discord.Attachment):
+    # Solo gli admin o chi ha i permessi può farlo
     if not interaction.user.guild_permissions.administrator:
-        return await interaction.response.send_message("❌ Solo un admin può farlo.", ephemeral=True)
-    
+        return await interaction.response.send_message("❌ Non hai i permessi.", ephemeral=True)
+
     await interaction.response.defer(ephemeral=True)
 
-    conn = get_db_connection(); cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO media_stati (tipo_stato, media_url) VALUES (%s, %s)
-        ON CONFLICT (tipo_stato) DO UPDATE SET media_url = EXCLUDED.media_url
-    """, (tipo, file.url))
-    conn.commit(); cur.close(); conn.close()
+    # --- STRADA C: RENDIAMO LA GIF PERMANENTE ---
+    canale_archivio = bot.get_channel(ID_CANALE_ARCHIVIO)
     
-    await interaction.followup.send(f"✅ Media per `{tipo}` salvato correttamente!")
+    # Inviamo la GIF nel canale archivio per generare un link stabile
+    msg_backup = await canale_archivio.send(
+        content=f"📂 **Backup Media Stato**: {tipo}",
+        file=await file_gif.to_file()
+    )
+    
+    # Prendiamo l'URL "sicuro" dal messaggio appena inviato
+    url_permanente = msg_backup.attachments[0].url
+    # --------------------------------------------
+
+    # Salviamo nel database (tabella media_stati)
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    cur.execute("""
+        INSERT INTO media_stati (tipo_stato, media_url) 
+        VALUES (%s, %s) 
+        ON CONFLICT (tipo_stato) 
+        DO UPDATE SET media_url = EXCLUDED.media_url
+    """, (tipo, url_permanente))
+    
+    conn.commit()
+    cur.close(); conn.close()
+
+    await interaction.followup.send(f"✅ GIF per lo stato **{tipo}** impostata correttamente e archiviata!")
 
 # --- COMANDI STATO (UTILIZZABILI DAI RUOLI CONFIGURATI) ---
 
