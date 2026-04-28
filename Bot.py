@@ -1912,9 +1912,37 @@ async def setup_background(interaction: discord.Interaction, canale_staff: disco
     await interaction.response.send_message(f"✅ Background configurato: {canale_staff.mention}", ephemeral=True)
 
 # --- 4. COMANDO BACKGROUND (UTENTI) ---
-@bot.tree.command(name="background", description="Invia il tuo background PG")
-async def background(interaction: discord.Interaction, nome: str, eta: str, psn_id: str, esperienze: str, storia: str, paure: str, obiettivi: str, regolamento: str):
+@bot.tree.command(name="background", description="Invia il tuo background PG per la revisione")
+@app_commands.describe(
+    nome="Inserisci il tuo nome reale o di gioco",
+    eta="Inserisci la tua età",
+    psn_id="Il tuo ID PlayStation Network",
+    esperienze="Descrivi le tue precedenti esperienze nel Roleplay",
+    storia="Scrivi la storia dettagliata del tuo personaggio",
+    paure="Quali sono le paure più grandi del tuo PG?",
+    obiettivi="Quali sono gli obiettivi del tuo PG in città?",
+    regolamento="Hai letto e accettato il regolamento del server?"
+)
+@app_commands.choices(regolamento=[
+    app_commands.Choice(name="Sì, accetto il regolamento", value="Sì"),
+    app_commands.Choice(name="No, non accetto il regolamento", value="No")
+])
+async def background(
+    interaction: discord.Interaction, 
+    nome: str, 
+    eta: str, 
+    psn_id: str, 
+    esperienze: str, 
+    storia: str, 
+    paure: str, 
+    obiettivi: str, 
+    regolamento: str
+):
     await interaction.response.defer(ephemeral=True)
+
+    # Controllo immediato sul regolamento
+    if regolamento == "No":
+        return await interaction.followup.send("❌ Non puoi inviare il background se non accetti il regolamento.", ephemeral=True)
 
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -1923,43 +1951,61 @@ async def background(interaction: discord.Interaction, nome: str, eta: str, psn_
     cur.close(); conn.close()
 
     if not config:
-        return await interaction.followup.send("❌ Sistema non configurato.", ephemeral=True)
+        return await interaction.followup.send("❌ Sistema non configurato dallo staff.", ephemeral=True)
 
     # Controllo Ruolo
     role_req = interaction.guild.get_role(int(config['required_role_id']))
     if role_req not in interaction.user.roles:
-        return await interaction.followup.send(f"❌ Devi avere il ruolo {role_req.mention}!", ephemeral=True)
+        return await interaction.followup.send(f"❌ Devi avere il ruolo {role_req.mention} per inviare il background!", ephemeral=True)
 
-    # Embed Integrale
-    embed = discord.Embed(title="📩 Richiesta Background", color=discord.Color.orange(), description=f"**📖 STORIA:**\n{storia}")
-    embed.add_field(name="👤 Dati", value=f"Nome: {nome}\nEtà: {eta}", inline=True)
-    embed.add_field(name="🎮 PSN ID", value=f"`{psn_id}`", inline=True)
-    embed.add_field(name="📚 Esperienze", value=esperienze, inline=False)
-    embed.add_field(name="😨 Paure/Obiettivi", value=f"P: {paure}\nO: {obiettivi}", inline=False)
-    embed.set_footer(text=f"ID Utente: {interaction.user.id}") # FONDAMENTALE PER PERSISTENZA
+    # --- CREAZIONE EMBED ORDINATO ---
+    embed = discord.Embed(
+        title="📂 NUOVA RICHIESTA BACKGROUND",
+        color=discord.Color.blue(),
+        timestamp=discord.utils.utcnow()
+    )
+    embed.set_author(name=f"{interaction.user.display_name}", icon_url=interaction.user.display_avatar.url)
+    
+    # Sezione Info Personali
+    embed.add_field(name="👤 Informazioni OOC", value=f"**Nome:** {nome}\n**Età:** {eta}\n**PSN ID:** `{psn_id}`", inline=False)
+    
+    # Sezione Esperienze
+    embed.add_field(name="📚 Esperienze Roleplay", value=f"```{esperienze}```", inline=False)
+    
+    # Sezione Storia
+    embed.add_field(name="📖 Storia del Personaggio", value=storia, inline=False)
+    
+    # Sezione Psicologia
+    embed.add_field(name="😨 Paure", value=paure, inline=True)
+    embed.add_field(name="🎯 Obiettivi", value=obiettivi, inline=True)
+    
+    # Sezione Regolamento (Dato che ora è una scelta Sì/No)
+    embed.add_field(name="📜 Regolamento", value="✅ L'utente ha dichiarato di aver letto e accettato il regolamento.", inline=False)
+
+    embed.set_footer(text=f"ID Utente: {interaction.user.id} • Sistema Background")
+    embed.set_thumbnail(url=interaction.guild.icon.url if interaction.guild.icon else None)
 
     # Invio Staff
     staff_chan = interaction.guild.get_channel(int(config['staff_channel_id']))
     if staff_chan:
+        # Tag dell'utente per notificare lo staff
+        content_staff = f"🔔 **Nuovo background ricevuto da:** {interaction.user.mention}"
+        
         view = BackgroundStaffView(user_id=interaction.user.id, psn_id=psn_id)
-        await staff_chan.send(embed=embed, view=view)
+        await staff_chan.send(content=content_staff, embed=embed, view=view)
         
         # Invio copia DM all'utente
-        try: await interaction.user.send(content="**Ecco una copia del tuo background:**", embed=embed)
-        except: pass
+        try: 
+            copy_embed = embed.copy()
+            copy_embed.title = "📄 COPIA DEL TUO BACKGROUND"
+            copy_embed.color = discord.Color.green()
+            await interaction.user.send(content="**Ecco un riepilogo del background che hai inviato:**", embed=copy_embed)
+        except: 
+            pass
 
-        await interaction.followup.send("✅ Background inviato! Hai ricevuto una copia integrale in DM.", ephemeral=True)
+        await interaction.followup.send("✅ Background inviato correttamente! Lo staff lo revisionerà al più presto.", ephemeral=True)
     else:
-        await interaction.followup.send("❌ Errore: Canale staff non trovato.", ephemeral=True)
-
-# --- 5. REGISTRAZIONE OBBLIGATORIA IN ON_READY ---
-@bot.event
-async def on_ready():
-    # Questo permette ai bottoni vecchi di funzionare dopo il riavvio
-    bot.add_view(BackgroundStaffView())
-    bot.add_view(VerificaView())
-    print(f"Bot online come {bot.user}")
-    await bot.tree.sync()
+        await interaction.followup.send("❌ Errore critico: Canale staff non configurato.", ephemeral=True)
 
 # --- COMANDI RP LEGA/SLEGA (SOLO TESTUALI) ---
 @bot.tree.command(name="lega", description="Azione RP: Lega un utente")
