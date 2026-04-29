@@ -196,7 +196,10 @@ from datetime import datetime
 # --- CONFIGURAZIONE PERCORSI DINAMICI ---
 # Questo assicura che il bot trovi il template su Render/GitHub
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-TEMPLATE_PATH = os.path.join(BASE_DIR, "template.png")
+# Cerca questa riga:
+# con questa:
+TEMPLATE_PATH = os.path.join(BASE_DIR, "IMG_0259.jpeg")
+
 
 # --- INIZIALIZZAZIONE DATABASE ---
 def init_polizia_db():
