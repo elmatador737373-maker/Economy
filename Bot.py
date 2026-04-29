@@ -234,67 +234,78 @@ async def clona_messaggio(interaction: discord.Interaction, id_messaggio: str):
 async def clona_error(interaction: discord.Interaction, error: discord.app_commands.AppCommandError):
     if isinstance(error, discord.app_commands.ChecksFailure):
         await interaction.response.send_message("❌ Non hai i permessi per clonare messaggi.", ephemeral=True)
-@bot.tree.command(name="esito_bando", description="[STAFF] Dai l'esito a una candidatura e assegna il ruolo")
+@bot.tree.command(name="esito_bando", description="[STAFF] Invia l'email ufficiale di esito candidatura")
 @app_commands.choices(esito=[
-    app_commands.Choice(name="✅ Accettato", value="accettato"),
-    app_commands.Choice(name="❌ Rifiutato", value="rifiutato")
+    app_commands.Choice(name="✅ Accettata", value="Accettata"),
+    app_commands.Choice(name="❌ Rifiutata", value="Rifiutata")
 ])
 @app_commands.describe(
-    utente="Il cittadino che ha fatto il bando",
-    esito="L'esito della candidatura",
-    ruolo_lavoro="Il ruolo da assegnare in caso di accettazione",
-    motivo="Specifica il motivo (soprattutto in caso di rifiuto)"
+    utente="Il cittadino che riceverà l'email",
+    esito="L'esito della valutazione",
+    ruolo_lavoro="La posizione lavorativa per cui si è candidato",
+    motivo="Note aggiuntive o dettagli per il cittadino"
 )
 async def esito_bando(
     interaction: discord.Interaction, 
     utente: discord.Member, 
     esito: str, 
     ruolo_lavoro: discord.Role,
-    motivo: str = "Non specificato"
+    motivo: str = "Nessun dettaglio aggiuntivo"
 ):
-    # Controllo permessi Staff tramite la variabile già definita
+    # Controllo permessi Staff
     staff_role = interaction.guild.get_role(RUOLO_STAFF_ID)
     if staff_role not in interaction.user.roles and not interaction.user.guild_permissions.administrator:
-        return await interaction.response.send_message("❌ Non hai i permessi necessari per gestire i bandi.", ephemeral=True)
+        return await interaction.response.send_message("❌ Non hai i permessi per gestire le assunzioni.", ephemeral=True)
 
     await interaction.response.defer()
 
-    embed = discord.Embed(timestamp=discord.utils.utcnow())
-    embed.set_footer(text=f"Pratica gestita da: {interaction.user.display_name}")
+    colore_email = discord.Color.green() if esito == "Accettata" else discord.Color.red()
+    
+    # Costruzione dell'Embed Email con il TUO messaggio
+    embed_email = discord.Embed(
+        title="📧 COMUNICAZIONE UFFICIALE",
+        description=(
+            f"**Oggetto:** Esito candidatura per **{ruolo_lavoro.name}**\n"
+            f"**Da:** Risorse Umane - {interaction.guild.name}\n"
+            "──────────────────────────────"
+        ),
+        color=colore_email,
+        timestamp=discord.utils.utcnow()
+    )
 
-    if esito == "accettato":
+    # IL TUO MESSAGGIO PRE-IMPOSTATO
+    corpo_email = (
+        f"Gentile **{utente.display_name}**,\n\n"
+        f"la contattiamo per l’offerta di lavoro mandata come **{ruolo_lavoro.name}**: "
+        f"le comunico che è stata **{esito}** da questo incarico, la informeremo presto per i dettagli.\n\n"
+        f"**Note:** {motivo}\n\n"
+        "Cordiali saluti,\n"
+        f"**{interaction.user.display_name}**"
+    )
+
+    embed_email.add_field(name="✉️ Messaggio", value=corpo_email, inline=False)
+    embed_email.set_thumbnail(url=interaction.guild.icon.url if interaction.guild.icon else None)
+    embed_email.set_footer(text="Email Certificata - Dipartimento Risorse Umane")
+
+    # --- LOGICA OPERATIVA ---
+    if esito == "Accettata":
         try:
-            # Assegnazione automatica del ruolo
             await utente.add_roles(ruolo_lavoro)
-            
-            embed.title = "📄 ESITO CANDIDATURA: ACCETTATA"
-            embed.color = discord.Color.green()
-            embed.description = (
-                f"Ottime notizie {utente.mention}!\n\n"
-                f"La tua candidatura per entrare nel dipartimento è stata **ACCETTATA**.\n\n"
-                f"**Ruolo ottenuto:** {ruolo_lavoro.mention}\n"
-                f"**Motivazione:** {motivo}"
-            )
-            # Immagine di successo (opzionale)
-            embed.set_thumbnail(url="https://i.imgur.com/vH6QW2L.png") 
-            
-        except Exception as e:
-            return await interaction.followup.send(f"❌ Errore tecnico nell'assegnazione del ruolo: {e}", ephemeral=True)
-            
-    else: # Caso: Rifiutato
-        embed.title = "📄 ESITO CANDIDATURA: RIFIUTATA"
-        embed.color = discord.Color.red()
-        embed.description = (
-            f"Spiacenti {utente.mention},\n\n"
-            f"il tuo bando per il ruolo {ruolo_lavoro.mention} è stato **RIFIUTATO**.\n\n"
-            f"**Motivazione:** {motivo}\n\n"
-            f"*Potrai ripresentare la tua candidatura non appena i bandi saranno nuovamente aperti.*"
-        )
-        # Immagine di rifiuto (opzionale)
-        embed.set_thumbnail(url="https://i.imgur.com/GZ6H3L0.png")
+        except:
+            pass
 
-    # Invio in risposta al messaggio dell'utente (Reply)
-    await interaction.followup.send(content=utente.mention, embed=embed)
+    # 1. Invio in DM all'utente
+    try:
+        await utente.send(embed=embed_email)
+        dm_info = "✅ Inviata anche in DM."
+    except:
+        dm_info = "⚠️ DM chiusi, inviata solo qui."
+
+    # 2. Invio nel canale (Pubblico)
+    await interaction.followup.send(content=f"{utente.mention}", embed=embed_email)
+    
+    # 3. Risposta allo Staff
+    await interaction.followup.send(content=f"📫 **Email inviata.** {dm_info}", ephemeral=True)
 
 import discord
 from discord import app_commands
