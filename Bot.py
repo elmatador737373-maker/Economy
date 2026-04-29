@@ -184,6 +184,168 @@ async def cerca_item_smart(interaction: Interaction, nome_input: str, modo="item
     await view.wait()
     return view.value
     
+import discord
+from discord import app_commands
+from discord.ext import commands
+import io
+import os
+import aiohttp
+from PIL import Image, ImageDraw, ImageFont, ImageOps
+from datetime import datetime
+
+# --- CONFIGURAZIONE PERCORSI DINAMICI ---
+# Questo assicura che il bot trovi il template su Render/GitHub
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+TEMPLATE_PATH = os.path.join(BASE_DIR, "template.png")
+
+# --- INIZIALIZZAZIONE DATABASE ---
+def init_polizia_db():
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    # Tabella Dati Agenti
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS tesserini_polizia (
+            user_id TEXT PRIMARY KEY,
+            id_seriale TEXT,
+            nome_completo TEXT,
+            grado TEXT,
+            badge_num TEXT,
+            unit TEXT,
+            data_nascita TEXT,
+            data_emissione TEXT,
+            pfp_url TEXT
+        );
+    """)
+    
+    # Tabella Configurazione
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS config_polizia (
+            guild_id TEXT PRIMARY KEY,
+            ruolo_creazione TEXT
+        );
+    """)
+    
+    conn.commit()
+    cur.close()
+    conn.close()
+
+# --- MOTORE GRAFICO (PILLOW) ---
+async def genera_immagine_tesserino(user_pfp_url, nome, grado, badge, unit, seriale, nascita, emissione):
+    # Carica il template usando il percorso dinamico
+    if not os.path.exists(TEMPLATE_PATH):
+        print(f"ERRORE: File {TEMPLATE_PATH} non trovato!")
+        return None
+
+    base = Image.open(TEMPLATE_PATH).convert("RGBA")
+    
+    # Scarica la PFP dell'utente
+    async with aiohttp.ClientSession() as session:
+        async with session.get(user_pfp_url) as resp:
+            if resp.status == 200:
+                pfp_data = io.BytesIO(await resp.read())
+                pfp = Image.open(pfp_data).convert("RGBA")
+            else:
+                pfp = Image.new("RGBA", (230, 280), (150, 150, 150))
+
+    # Adattamento PFP nel riquadro (Crop & Fill)
+    pfp = ImageOps.fit(pfp, (230, 280), centering=(0.5, 0.5))
+    base.paste(pfp, (238, 258), pfp)
+
+    draw = ImageDraw.Draw(base)
+    
+    # Font - Render usa Linux, quindi Arial potrebbe non esserci. 
+    # Usiamo il font di sistema di default se Arial fallisce.
+    try:
+        font_normale = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 20)
+        font_bold = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 20)
+    except:
+        font_normale = ImageFont.load_default()
+        font_bold = ImageFont.load_default()
+
+    colore = (17, 30, 56) # Blu scuro istituzionale
+
+    # Scrittura di tutti i campi
+    draw.text((505, 255), nome.upper(), font=font_bold, fill=colore)
+    draw.text((505, 288), grado.upper(), font=font_normale, fill=colore)
+    draw.text((530, 321), badge, font=font_normale, fill=colore)
+    draw.text((495, 353), unit.upper(), font=font_normale, fill=colore)
+    draw.text((485, 386), f"ECP-{seriale}", font=font_normale, fill=colore)
+    draw.text((505, 419), nascita, font=font_normale, fill=colore)
+    draw.text((515, 451), emissione, font=font_normale, fill=colore)
+    draw.text((520, 484), "NEVER", font=font_normale, fill=colore)
+
+    buffer = io.BytesIO()
+    base.save(buffer, format="PNG")
+    buffer.seek(0)
+    return buffer
+
+# --- COMANDI SLASH ---
+
+@bot.tree.command(name="setup_polizia", description="[ADMIN] Configura il ruolo autorizzato")
+async def setup_polizia(interaction: discord.Interaction, ruolo: discord.Role):
+    if not interaction.user.guild_permissions.administrator:
+        return await interaction.response.send_message("❌ Devi essere un Amministratore.", ephemeral=True)
+    
+    conn = get_db_connection(); cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO config_polizia (guild_id, ruolo_creazione) 
+        VALUES (%s, %s) 
+        ON CONFLICT (guild_id) DO UPDATE SET ruolo_creazione = EXCLUDED.ruolo_creazione
+    """, (str(interaction.guild.id), str(ruolo.id)))
+    conn.commit(); cur.close(); conn.close()
+    await interaction.response.send_message(f"✅ Ruolo Capo Polizia impostato su: {ruolo.mention}", ephemeral=True)
+
+@bot.tree.command(name="crea_tesserino", description="[CAPO] Genera un tesserino grafico")
+async def crea_tesserino(interaction: discord.Interaction, utente: discord.Member, nome_completo: str, grado: str, badge: str, unit: str, seriale: str, nascita: str):
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute("SELECT ruolo_creazione FROM config_polizia WHERE guild_id = %s", (str(interaction.guild.id),))
+    config = cur.fetchone()
+    
+    if not config or (int(config['ruolo_creazione']) not in [r.id for r in interaction.user.roles] and not interaction.user.guild_permissions.administrator):
+        cur.close(); conn.close()
+        return await interaction.response.send_message("❌ Non hai i permessi del Capo Polizia.", ephemeral=True)
+
+    data_oggi = datetime.now().strftime("%d/%m/%Y")
+
+    cur.execute("""
+        INSERT INTO tesserini_polizia (user_id, id_seriale, nome_completo, grado, badge_num, unit, data_nascita, data_emissione, pfp_url)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (user_id) DO UPDATE SET 
+        id_seriale = EXCLUDED.id_seriale, nome_completo = EXCLUDED.nome_completo, 
+        grado = EXCLUDED.grado, badge_num = EXCLUDED.badge_num, unit = EXCLUDED.unit,
+        data_nascita = EXCLUDED.data_nascita, pfp_url = EXCLUDED.pfp_url
+    """, (str(utente.id), seriale, nome_completo, grado, badge, unit, nascita, data_oggi, utente.display_avatar.url))
+    
+    conn.commit(); cur.close(); conn.close()
+    await interaction.response.send_message(f"✅ Tesserino registrato per {nome_completo}!", ephemeral=True)
+
+@bot.tree.command(name="mostra_tesserino", description="Mostra il tuo distintivo")
+async def mostra_tesserino(interaction: discord.Interaction):
+    await interaction.response.defer()
+    
+    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute("SELECT * FROM tesserini_polizia WHERE user_id = %s", (str(interaction.user.id),))
+    data = cur.fetchone()
+    cur.close(); conn.close()
+
+    if not data:
+        return await interaction.followup.send("❌ Non hai un tesserino registrato.")
+
+    img_buffer = await genera_immagine_tesserino(
+        data['pfp_url'], data['nome_completo'], data['grado'], 
+        data['badge_num'], data['unit'], data['id_seriale'], 
+        data['data_nascita'], data['data_emissione']
+    )
+
+    if img_buffer is None:
+        return await interaction.followup.send("❌ Errore nella generazione dell'immagine.")
+
+    file = discord.File(fp=img_buffer, filename="tesserino.png")
+    embed = discord.Embed(color=discord.Color.dark_blue())
+    embed.set_image(url="attachment://tesserino.png")
+    
+    await interaction.followup.send(content=f"Agente {interaction.user.mention} esibisce il distintivo:", file=file, embed=embed)
 
 # --- COMANDO CLONA / INVIA (Solo Admin) ---
 @bot.tree.command(name="clona_messaggio", description="Copia un messaggio esistente e lo reinvia come nuovo")
