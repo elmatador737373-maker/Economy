@@ -4,3 +4,6 @@ dnspython
 flask
 psycopg2-binary
 requests
+Pillow
+aiohttp
+
