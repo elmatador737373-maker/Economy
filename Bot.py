@@ -1379,6 +1379,15 @@ async def preleva_soldi_fazione(interaction: Interaction, importo: int):
 # --- PAGAMENTO SANZIONI E FATTURE ---
 
 
+async def rapina_autocomplete(interaction: discord.Interaction, current: str):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    # Recupera i nomi delle rapine configurate nel DB
+    cur.execute("SELECT nome FROM rapine_config WHERE nome ILIKE %s LIMIT 25", (f'%{current}%',))
+    choices = [app_commands.Choice(name=row[0].upper(), value=row[0]) for row in cur.fetchall()]
+    cur.close()
+    conn.close()
+    return choices
 # --- COMANDO INIZIA RAPINA CON SISTEMA BBC ---
 @bot.tree.command(name="inizia_rapina", description="Inizia lo scasso in un luogo configurato")
 @app_commands.autocomplete(luogo=rapina_autocomplete)
@@ -1493,8 +1502,6 @@ async def crea_rapina(interaction: discord.Interaction, nome: str, tempo: int, p
         )
     except Exception as e:
         await interaction.response.send_message(f"❌ Errore durante il salvataggio nel Database: {e}", ephemeral=True)
-
-
 
 # --- 3. COMANDO AGGIORNA CONTENUTO ---
 @bot.tree.command(name="aggiorna", description="Modifica testo o immagine dell'embed")
