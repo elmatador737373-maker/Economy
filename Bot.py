@@ -202,69 +202,117 @@ async def setup_polizia(interaction: discord.Interaction, ruolo: discord.Role):
 import asyncio
 import datetime
 
-@bot.tree.command(name="dm_all", description="[ADMIN] Invia DM a tutti con delay personalizzabile per evitare ban")
+# --- VIEW PER LA CONFERMA ---
+class ConfirmDMView(discord.ui.View):
+    def __init__(self, interaction, members, messaggio, delay, immagine_url):
+        super().__init__(timeout=60) # Scade dopo 60 secondi
+        self.interaction = interaction
+        self.members = members
+        self.messaggio = messaggio
+        self.delay = delay
+        self.immagine_url = immagine_url
+        self.value = None
+
+    @discord.ui.button(label="Conferma ed Invia", style=discord.ButtonStyle.success, emoji="✅")
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.interaction.user.id:
+            return await interaction.response.send_message("❌ Solo chi ha lanciato il comando può confermare.", ephemeral=True)
+        self.value = True
+        self.stop()
+        await interaction.response.edit_message(content="🚀 Invio confermato! Sto partendo...", view=None, embed=None)
+
+    @discord.ui.button(label="Annulla", style=discord.ButtonStyle.danger, emoji="✖️")
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.value = False
+        self.stop()
+        await interaction.response.edit_message(content="❌ Operazione annullata. Nessun DM inviato.", view=None, embed=None)
+
+# --- COMANDO PRINCIPALE ---
+@bot.tree.command(name="dm_all", description="[ADMIN] Invia DM di massa con conferma e stima")
 @app_commands.describe(
     messaggio="Il testo dell'annuncio",
-    delay="Secondi di attesa tra un utente e l'altro (consigliato: 2 o 3)",
+    delay="Secondi di attesa (consigliato 2.0+)",
+    ruolo="Invia solo a chi ha questo ruolo (opzionale)",
     immagine_url="Link opzionale a un'immagine"
 )
-async def dm_all_safe(interaction: discord.Interaction, messaggio: str, delay: float = 2.0, immagine_url: str = None):
-    # 1. Controllo Permessi Admin
+async def dm_all_safe(
+    interaction: discord.Interaction, 
+    messaggio: str, 
+    delay: float = 2.0, 
+    ruolo: discord.Role = None, 
+    immagine_url: str = None
+):
     if not interaction.user.guild_permissions.administrator:
         return await interaction.response.send_message("❌ Non hai i permessi per questa operazione.", ephemeral=True)
 
-    # Evitiamo delay troppo bassi che causano il ban
     if delay < 1.0:
-        return await interaction.response.send_message("⚠️ Per sicurezza, il delay non può essere inferiore a 1.0 secondi.", ephemeral=True)
+        return await interaction.response.send_message("⚠️ Il delay minimo è 1.0.", ephemeral=True)
 
-    # 2. Conferma iniziale
-    await interaction.response.send_message(f"🚀 Avvio invio globale (Ritardo: `{delay}s` per utente). Controlla i progressi qui sotto.", ephemeral=True)
-    
-    # Messaggio di stato che aggiorneremo
-    status_msg = await interaction.followup.send("⏳ Preparazione lista membri...", ephemeral=True)
+    await interaction.response.defer(ephemeral=False)
 
-    # 3. Setup Embed
-    embed = discord.Embed(
-        title=f"📢 COMUNICAZIONE UFFICIALE: {interaction.guild.name}",
-        description=messaggio,
-        color=discord.Color.red(),
-        timestamp=datetime.datetime.now()
-    )
-    if immagine_url:
-        embed.set_image(url=immagine_url)
-    embed.set_footer(text="Questa è una notifica automatica del server.")
+    # Selezione Membri
+    if ruolo:
+        members = [m for m in ruolo.members if not m.bot]
+        filtro_testo = f"del ruolo **@{ruolo.name}**"
+    else:
+        members = [m for m in interaction.guild.members if not m.bot]
+        filtro_testo = "di **tutto il server**"
 
-    # 4. Loop di invio con gestione errori
-    successi = 0
-    falliti = 0
-    members = [m for m in interaction.guild.members if not m.bot]
     totale = len(members)
+    if totale == 0:
+        return await interaction.followup.send("❌ Nessun membro trovato.")
 
-    for i, member in enumerate(members):
-        try:
-            await member.send(embed=embed)
-            successi += 1
-        except discord.Forbidden:
-            falliti += 1 # DM chiusi o bot bloccato
-        except discord.HTTPException as e:
-            if e.status == 429: # Too Many Requests (Rate limit critico)
-                await asyncio.sleep(10) # Pausa d'emergenza di 10 secondi
-            falliti += 1
-        except Exception:
-            falliti += 1
+    # Calcolo Stima e Rischio
+    secondi_totali = totale * delay
+    minuti_stima = secondi_totali / 60
+    rischio = "Basso 🟢" if delay >= 2.0 else ("Moderato 🟡" if delay >= 1.5 else "Alto 🔴")
 
-        # Ogni 5 utenti aggiorniamo lo stato per non sovraccaricare le API di Discord
-        if (i + 1) % 5 == 0 or (i + 1) == totale:
+    # Riepilogo prima della conferma
+    conferma_embed = discord.Embed(title="🚨 CONFERMA INVIO MASSIO", color=discord.Color.orange())
+    conferma_embed.add_field(name="Destinatari", value=f"`{totale}` membri {filtro_testo}", inline=False)
+    conferma_embed.add_field(name="Tempo Stimato", value=f"`{minuti_stima:.1f}` minuti", inline=True)
+    conferma_embed.add_field(name="Rischio Bot", value=rischio, inline=True)
+    conferma_embed.set_footer(text="Clicca Conferma per iniziare l'invio.")
+    
+    view = ConfirmDMView(interaction, members, messaggio, delay, immagine_url)
+    msg_conferma = await interaction.followup.send(embed=conferma_embed, view=view)
+
+    # Aspetta la risposta dai bottoni
+    await view.wait()
+
+    if view.value is None:
+        await interaction.followup.send("⌛ Tempo scaduto. Operazione annullata.", ephemeral=True)
+    elif view.value is True:
+        # --- PARTE INVIO (Solo se confermato) ---
+        status_msg = await interaction.followup.send("⏳ Inviando...", ephemeral=True)
+        
+        embed_dm = discord.Embed(
+            title=f"📢 Annuncio da {interaction.guild.name}",
+            description=messaggio,
+            color=discord.Color.gold(),
+            timestamp=datetime.datetime.now()
+        )
+        if immagine_url: embed_dm.set_image(url=immagine_url)
+        
+        successi = 0
+        falliti = 0
+
+        for i, member in enumerate(members):
             try:
-                await status_msg.edit(content=f"🔄 **Progresso:** `{(i + 1)}/{totale}`\n✅ Successi: `{successi}`\n❌ Falliti: `{falliti}`")
+                await member.send(embed=embed_dm)
+                successi += 1
             except:
-                pass
+                falliti += 1
 
-        # IL RITARDO CRUCIALE
-        await asyncio.sleep(delay)
+            if (i + 1) % 5 == 0 or (i + 1) == totale:
+                percentuale = ((i + 1) / totale) * 100
+                try:
+                    await status_msg.edit(content=f"🔄 **Progresso:** `{percentuale:.1f}%` ({i+1}/{totale})\n✅ OK: `{successi}` | ❌ NO: `{falliti}`")
+                except: pass
 
-    # 5. Fine operazione
-    await status_msg.edit(content=f"✅ **Operazione Completata!**\nInviati con successo: `{successi}`\nFalliti (DM OFF): `{falliti}`\nTotale processati: `{totale}`")
+            await asyncio.sleep(delay)
+
+        await status_msg.edit(content=f"✅ **Operazione completata con successo!**")
 
 
 # --- COMANDO CLONA / INVIA (Solo Admin) ---
