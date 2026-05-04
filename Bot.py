@@ -184,6 +184,51 @@ async def cerca_item_smart(interaction: Interaction, nome_input: str, modo="item
     await view.wait()
     return view.value
     
+@bot.tree.command(name="say", description="[ADMIN] Invia un messaggio tramite il bot")
+@app_commands.describe(
+    messaggio="Il testo da far dire al bot",
+    canale="Il canale dove inviare il messaggio (opzionale)",
+    titolo="Aggiungi un titolo per creare un Embed (opzionale)",
+    colore="Colore dell'Embed in HEX (es: #ff0000) (opzionale)"
+)
+async def say(
+    interaction: discord.Interaction, 
+    messaggio: str, 
+    canale: discord.TextChannel = None, 
+    titolo: str = None,
+    colore: str = None
+):
+    # 1. Controllo Permessi Admin
+    if not interaction.user.guild_permissions.administrator:
+        return await interaction.response.send_message("❌ Non hai i permessi per usare questo comando.", ephemeral=True)
+
+    # 2. Definizione del canale di destinazione
+    target_channel = canale if canale else interaction.channel
+
+    # 3. Gestione del colore (Default: Blu se non specificato)
+    embed_color = discord.Color.blue()
+    if colore:
+        try:
+            # Converte il codice HEX in colore discord
+            embed_color = discord.Color.from_str(colore)
+        except ValueError:
+            return await interaction.response.send_message("❌ Formato colore HEX non valido! Usa ad esempio `#ff0000`.", ephemeral=True)
+
+    # 4. Creazione del messaggio (Embed o Testo Semplice)
+    if titolo:
+        # Se c'è un titolo, creiamo un Embed
+        embed = discord.Embed(
+            title=titolo,
+            description=messaggio.replace("\\n", "\n"), # Permette di usare \n per andare a capo
+            color=embed_color
+        )
+        await target_channel.send(embed=embed)
+    else:
+        # Altrimenti invia testo semplice
+        await target_channel.send(messaggio.replace("\\n", "\n"))
+
+    # 5. Risposta all'admin (visibile solo a lui)
+    await interaction.response.send_message(f"✅ Messaggio inviato correttamente in {target_channel.mention}!", ephemeral=True)
 
 # --- COMANDO SETUP (ADMIN) ---
 @bot.tree.command(name="setup_polizia", description="[ADMIN] Imposta il ruolo che può gestire i tesserini")
