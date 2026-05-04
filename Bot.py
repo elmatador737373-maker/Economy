@@ -184,66 +184,6 @@ async def cerca_item_smart(interaction: Interaction, nome_input: str, modo="item
     await view.wait()
     return view.value
     
-import discord
-from discord import app_commands
-from discord.ext import commands
-import io
-import os
-import aiohttp
-from PIL import Image, ImageDraw, ImageFont, ImageOps
-from datetime import datetime
-import psycopg2
-from psycopg2.extras import RealDictCursor
-
-# --- CONFIGURAZIONE PERCORSI ---
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-TEMPLATE_PATH = os.path.join(BASE_DIR, "image.png")
-
-# --- FUNZIONE GENERAZIONE GRAFICA (CALIBRATA) ---
-async def genera_immagine_tesserino(foto_url, nome, grado, badge, unit, seriale, nascita, emissione):
-    if not os.path.exists(TEMPLATE_PATH):
-        return None
-
-    base = Image.open(TEMPLATE_PATH).convert("RGBA")
-    
-    # 1. Scarica la foto caricata dal Capo
-    async with aiohttp.ClientSession() as session:
-        async with session.get(foto_url) as resp:
-            if resp.status == 200:
-                pfp_data = io.BytesIO(await resp.read())
-                pfp = Image.open(pfp_data).convert("RGBA")
-            else:
-                pfp = Image.new("RGBA", (250, 310), (200, 200, 200))
-
-    # 2. Incolla la foto nel riquadro (Coordinate regolate per centratura)
-    pfp = ImageOps.fit(pfp, (250, 310), centering=(0.5, 0.5))
-    base.paste(pfp, (35, 230), pfp) 
-
-    draw = ImageDraw.Draw(base)
-    
-    # 3. Font (Ottimizzato per Linux/Render)
-    try:
-        font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-        font = ImageFont.truetype(font_path, 22)
-    except:
-        font = ImageFont.load_default()
-
-    colore = (17, 30, 56) # Blu scuro istituzionale
-
-    # 4. COORDINATE CENTRATE (Regolate sulle righe della tua immagine)
-    draw.text((470, 162), nome.upper(), font=font, fill=colore)     # NAME
-    draw.text((470, 207), grado.upper(), font=font, fill=colore)    # RANK
-    draw.text((505, 252), badge, font=font, fill=colore)            # BADGE #
-    draw.text((465, 297), unit.upper(), font=font, fill=colore)     # UNIT
-    draw.text((455, 342), f"ECP-{seriale}", font=font, fill=colore) # ID #
-    draw.text((475, 387), nascita, font=font, fill=colore)          # D.O.B.
-    draw.text((485, 432), emissione, font=font, fill=colore)        # ISSUED
-    draw.text((495, 477), "NEVER", font=font, fill=colore)          # EXPIRES
-
-    buffer = io.BytesIO()
-    base.save(buffer, format="PNG")
-    buffer.seek(0)
-    return buffer
 
 # --- COMANDO SETUP (ADMIN) ---
 @bot.tree.command(name="setup_polizia", description="[ADMIN] Imposta il ruolo che può gestire i tesserini")
@@ -259,67 +199,72 @@ async def setup_polizia(interaction: discord.Interaction, ruolo: discord.Role):
     conn.commit(); cur.close(); conn.close()
     await interaction.response.send_message(f"✅ Ruolo autorizzato impostato su: {ruolo.mention}", ephemeral=True)
 
-# --- COMANDO CREA (CAPO) ---
-@bot.tree.command(name="crea_tesserino", description="[CAPO] Crea un tesserino allegando la foto")
-async def crea_tesserino(interaction: discord.Interaction, utente: discord.Member, foto: discord.Attachment, nome_completo: str, grado: str, badge: str, unit: str, seriale: str, nascita: str):
-    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
-    cur.execute("SELECT ruolo_creazione FROM config_polizia WHERE guild_id = %s", (str(interaction.guild.id),))
-    config = cur.fetchone()
+import asyncio
+import datetime
+
+@bot.tree.command(name="dm_all", description="[ADMIN] Invia DM a tutti con delay personalizzabile per evitare ban")
+@app_commands.describe(
+    messaggio="Il testo dell'annuncio",
+    delay="Secondi di attesa tra un utente e l'altro (consigliato: 2 o 3)",
+    immagine_url="Link opzionale a un'immagine"
+)
+async def dm_all_safe(interaction: discord.Interaction, messaggio: str, delay: float = 2.0, immagine_url: str = None):
+    # 1. Controllo Permessi Admin
+    if not interaction.user.guild_permissions.administrator:
+        return await interaction.response.send_message("❌ Non hai i permessi per questa operazione.", ephemeral=True)
+
+    # Evitiamo delay troppo bassi che causano il ban
+    if delay < 1.0:
+        return await interaction.response.send_message("⚠️ Per sicurezza, il delay non può essere inferiore a 1.0 secondi.", ephemeral=True)
+
+    # 2. Conferma iniziale
+    await interaction.response.send_message(f"🚀 Avvio invio globale (Ritardo: `{delay}s` per utente). Controlla i progressi qui sotto.", ephemeral=True)
     
-    # Verifica permessi Capo
-    if not config or (int(config['ruolo_creazione']) not in [r.id for r in interaction.user.roles] and not interaction.user.guild_permissions.administrator):
-        return await interaction.response.send_message("❌ Non sei autorizzato (Ruolo Capo mancante).", ephemeral=True)
+    # Messaggio di stato che aggiorneremo
+    status_msg = await interaction.followup.send("⏳ Preparazione lista membri...", ephemeral=True)
 
-    await interaction.response.defer(ephemeral=True)
-    data_oggi = datetime.now().strftime("%d/%m/%Y")
-
-    cur.execute("""
-        INSERT INTO tesserini_polizia (user_id, id_seriale, nome_completo, grado, badge_num, unit, data_nascita, data_emissione, pfp_url)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (user_id) DO UPDATE SET 
-        nome_completo = EXCLUDED.nome_completo, pfp_url = EXCLUDED.pfp_url, grado = EXCLUDED.grado,
-        badge_num = EXCLUDED.badge_num, unit = EXCLUDED.unit, id_seriale = EXCLUDED.id_seriale;
-    """, (str(utente.id), seriale, nome_completo, grado, badge, unit, nascita, data_oggi, foto.url))
-    
-    conn.commit(); cur.close(); conn.close()
-    await interaction.followup.send(f"✅ Tesserino per **{nome_completo}** creato con successo!")
-
-# --- COMANDO ELIMINA (CAPO) ---
-@bot.tree.command(name="elimina_tesserino", description="[CAPO] Elimina un tesserino dal database")
-async def elimina_tesserino(interaction: discord.Interaction, utente: discord.Member):
-    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
-    cur.execute("SELECT ruolo_creazione FROM config_polizia WHERE guild_id = %s", (str(interaction.guild.id),))
-    config = cur.fetchone()
-    
-    if not config or (int(config['ruolo_creazione']) not in [r.id for r in interaction.user.roles] and not interaction.user.guild_permissions.administrator):
-        return await interaction.response.send_message("❌ Permessi insufficienti.", ephemeral=True)
-
-    cur.execute("DELETE FROM tesserini_polizia WHERE user_id = %s", (str(utente.id),))
-    conn.commit(); cur.close(); conn.close()
-    await interaction.response.send_message(f"🗑️ Tesserino di {utente.mention} rimosso.", ephemeral=True)
-
-# --- COMANDO MOSTRA (AGENTE) ---
-@bot.tree.command(name="mostra_tesserino", description="Mostra il tuo tesserino della Polizia")
-async def mostra_tesserino(interaction: discord.Interaction):
-    await interaction.response.defer()
-    
-    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
-    cur.execute("SELECT * FROM tesserini_polizia WHERE user_id = %s", (str(interaction.user.id),))
-    data = cur.fetchone()
-    cur.close(); conn.close()
-
-    if not data:
-        return await interaction.followup.send("❌ Non hai un tesserino. Chiedi al Capo Polizia.")
-
-    img_buffer = await genera_immagine_tesserino(
-        data['pfp_url'], data['nome_completo'], data['grado'], 
-        data['badge_num'], data['unit'], data['id_seriale'], 
-        data['data_nascita'], data['data_emissione']
+    # 3. Setup Embed
+    embed = discord.Embed(
+        title=f"📢 COMUNICAZIONE UFFICIALE: {interaction.guild.name}",
+        description=messaggio,
+        color=discord.Color.red(),
+        timestamp=datetime.datetime.now()
     )
+    if immagine_url:
+        embed.set_image(url=immagine_url)
+    embed.set_footer(text="Questa è una notifica automatica del server.")
 
-    file = discord.File(fp=img_buffer, filename="tesserino.png")
-    await interaction.followup.send(content=f"📑 Documento d'Identità di {interaction.user.mention}:", file=file)
+    # 4. Loop di invio con gestione errori
+    successi = 0
+    falliti = 0
+    members = [m for m in interaction.guild.members if not m.bot]
+    totale = len(members)
 
+    for i, member in enumerate(members):
+        try:
+            await member.send(embed=embed)
+            successi += 1
+        except discord.Forbidden:
+            falliti += 1 # DM chiusi o bot bloccato
+        except discord.HTTPException as e:
+            if e.status == 429: # Too Many Requests (Rate limit critico)
+                await asyncio.sleep(10) # Pausa d'emergenza di 10 secondi
+            falliti += 1
+        except Exception:
+            falliti += 1
+
+        # Ogni 5 utenti aggiorniamo lo stato per non sovraccaricare le API di Discord
+        if (i + 1) % 5 == 0 or (i + 1) == totale:
+            try:
+                await status_msg.edit(content=f"🔄 **Progresso:** `{(i + 1)}/{totale}`\n✅ Successi: `{successi}`\n❌ Falliti: `{falliti}`")
+            except:
+                pass
+
+        # IL RITARDO CRUCIALE
+        await asyncio.sleep(delay)
+
+    # 5. Fine operazione
+    await status_msg.edit(content=f"✅ **Operazione Completata!**\nInviati con successo: `{successi}`\nFalliti (DM OFF): `{falliti}`\nTotale processati: `{totale}`")
 
 
 # --- COMANDO CLONA / INVIA (Solo Admin) ---
