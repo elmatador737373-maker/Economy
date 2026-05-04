@@ -669,19 +669,24 @@ async def instagram(
     
     # Aggiunta reazione
     await message.add_reaction("❤️")
-# --- COMANDO PUBBLICO: 911 (TESTO LIBERO) ---
-@bot.tree.command(name="911", description="Effettua una chiamata d'emergenza ai servizi cittadini")
+import discord
+from discord import app_commands
+import datetime
+import asyncio
+
+# --- COMANDO PUBBLICO: 911 MESSICO ---
+@bot.tree.command(name="911", description="📞 Effettua una chiamata d'emergenza ai servizi messicani")
 @app_commands.choices(servizio=[
-    app_commands.Choice(name="Police (LSPD)", value="police"),
-    app_commands.Choice(name="Ambulance (EMS)", value="ambulance"),
-    app_commands.Choice(name="Firefighter (VVF)", value="fire")
+    app_commands.Choice(name="Guardia Nacional (Sicurezza)", value="gn"),
+    app_commands.Choice(name="Cruz Roja (Ambulanza)", value="cruz_roja"),
+    app_commands.Choice(name="Bomberos (Vigili del Fuoco)", value="bomberos")
 ])
 @app_commands.describe(
-    servizio="Seleziona il dipartimento da contattare",
-    nominativo="Il tuo Nome e Cognome IC",
-    motivo="Descrivi brevemente l'emergenza (es: Sparatoria, Incidente)",
-    posizione="Via o zona dell'evento",
-    messaggio="Ulteriori dettagli per le unità in arrivo"
+    servizio="Seleziona il servizio di emergenza da contattare",
+    nominativo="Inserisci il tuo Nome e Cognome (IC)",
+    motivo="Descrivi brevemente l'emergenza",
+    posizione="Indica la via o la zona dell'evento",
+    messaggio="Dettagli aggiuntivi per le unità (opzionale)"
 )
 async def chiamata_911(
     interaction: discord.Interaction, 
@@ -693,162 +698,101 @@ async def chiamata_911(
 ):
     await interaction.response.defer(ephemeral=True)
 
-    # Recupero configurazione dal DB
-    conn = get_db_connection(); cur = conn.cursor(cursor_factory=RealDictCursor)
+    # Recupero dati dal Database
+    conn = get_db_connection()
+    from psycopg2.extras import RealDictCursor
+    cur = conn.cursor(cursor_factory=RealDictCursor)
     cur.execute("SELECT canale_id, ruolo_id FROM setup_911 WHERE servizio = %s", (servizio,))
     config = cur.fetchone()
     cur.close(); conn.close()
 
     if not config:
-        return await interaction.followup.send("❌ Servizio non configurato dall'amministrazione.", ephemeral=True)
+        return await interaction.followup.send("❌ Questo servizio non è ancora stato configurato dall'amministrazione.", ephemeral=True)
 
     canale_dest = interaction.guild.get_channel(int(config['canale_id']))
     ruolo_tag = interaction.guild.get_role(int(config['ruolo_id']))
 
     if not canale_dest:
-        return await interaction.followup.send("❌ Canale di ricezione non trovato.", ephemeral=True)
+        return await interaction.followup.send("❌ Errore: Canale di ricezione non trovato.", ephemeral=True)
 
-    # Configurazione Estetica (Loghi e Colori)
-    info_servizi = {
-        "police": {"colore": discord.Color.blue(), "logo": "URL_LOGO_POLIZIA"},
-        "ambulance": {"colore": discord.Color.red(), "logo": "URL_LOGO_EMS"},
-        "fire": {"colore": discord.Color.orange(), "logo": "URL_LOGO_VVF"}
+    # Configurazione Colori e Nomi Display
+    nomi_servizi = {
+        "gn": {"nome": "Guardia Nacional", "color": discord.Color.from_rgb(31, 55, 45)}, # Verde Messico
+        "cruz_roja": {"nome": "Cruz Roja Mexicana", "color": discord.Color.red()},
+        "bomberos": {"nome": "Bomberos (Protección Civil)", "color": discord.Color.orange()}
     }
     
-    data = info_servizi.get(servizio)
+    info = nomi_servizi.get(servizio)
     
-    # Creazione Embed
+    # Creazione Embed Dispatcher
     embed = discord.Embed(
-        title=f"🚨 RICHIESTA DI INTERVENTO: {servizio.upper()}",
-        color=data["colore"],
+        title=f"🇲🇽 CENTRALE OPERATIVA: {info['nome']}",
+        color=info['color'],
         timestamp=discord.utils.utcnow()
     )
     
-    embed.set_thumbnail(url=data["logo"])
     embed.add_field(name="👤 Segnalante", value=f"**{nominativo}**", inline=True)
     embed.add_field(name="📍 Posizione", value=f"**{posizione}**", inline=True)
-    embed.add_field(name="⚠️ Motivo Chiamata", value=f"**{motivo}**", inline=False)
-    embed.add_field(name="💬 Info Extra", value=messaggio, inline=False)
+    embed.add_field(name="⚠️ Emergenza", value=f"**{motivo}**", inline=False)
+    embed.add_field(name="💬 Dettagli Report", value=messaggio, inline=False)
     
-    embed.set_footer(text="Centrale Operativa 911 • Dispatcher")
+    embed.set_footer(text="Sistema Nazionale di Emergenza 911 • Messico")
 
-    # Invio
-    tag_msg = ruolo_tag.mention if ruolo_tag else "@everyone"
-    await canale_dest.send(content=f"🔔 **NOTIFICA EMERGENZA** {tag_msg}", embed=embed)
+    # Tag del ruolo configurato
+    menzione = ruolo_tag.mention if ruolo_tag else "@everyone"
+    
+    await canale_dest.send(
+        content=f"🚨 **NUOVA CHIAMATA PER {menzione}**", 
+        embed=embed
+    )
 
-    await interaction.followup.send(f"✅ Chiamata inoltrata con successo a `{servizio.upper()}`.")
-# --- AUTOCOMPLETE ---
-async def bottoni_autocomplete(interaction: Interaction, current: str):
-    try:
-        msg_id = interaction.namespace.id_messaggio
-        if not msg_id: return []
-
-        canale = interaction.channel
-        messaggio = await canale.fetch_message(int(msg_id))
-        
-        choices = []
-        if messaggio.components:
-            for riga in messaggio.components:
-                for comp in riga.children:
-                    if current.lower() in comp.label.lower():
-                        choices.append(app_commands.Choice(name=comp.label, value=comp.label))
-        return choices[:25]
-    except:
-        return []
-
-# --- COMANDO ELIMINA ---
-@bot.tree.command(name="elimina_bottone", description="Rimuove un bottone specifico")
-@app_commands.checks.has_permissions(administrator=True)
-@app_commands.autocomplete(nome_bottone=bottoni_autocomplete)
-async def elimina_bottone(interaction: Interaction, id_messaggio: str, nome_bottone: str):
-    # 1. DEFER: Questo impedisce l'errore "L'applicazione non ha risposto"
-    await interaction.response.defer(ephemeral=True)
-
-    try:
-        canale = interaction.channel
-        messaggio = await canale.fetch_message(int(id_messaggio))
-        
-        if not messaggio.components:
-            return await interaction.followup.send("❌ Questo messaggio non ha bottoni.")
-
-        nuova_view = View()
-        trovato = False
-
-        for riga in messaggio.components:
-            for comp in riga.children:
-                if comp.label == nome_bottone:
-                    trovato = True
-                    continue
-                
-                nuova_view.add_item(Button(
-                    label=comp.label, 
-                    url=comp.url, 
-                    emoji=comp.emoji
-                ))
-
-        if trovato:
-            view_finale = nuova_view if len(nuova_view.children) > 0 else None
-            await messaggio.edit(view=view_finale)
-            # Usiamo followup perché abbiamo fatto il defer prima
-            await interaction.followup.send(f"✅ Bottone '{nome_bottone}' rimosso!")
-        else:
-            await interaction.followup.send(f"❌ Bottone '{nome_bottone}' non trovato.")
-            
-    except Exception as e:
-        await interaction.followup.send(f"❌ Errore: {e}")
+    await interaction.followup.send(f"✅ La tua segnalazione è stata inoltrata con successo alla **{info['nome']}**.")
 
 # --- COMANDO ADMIN: SETUP 911 ---
-@bot.tree.command(name="setup_911", description="[ADMIN] Configura i dettagli per i servizi d'emergenza")
+@bot.tree.command(name="setup_911", description="[ADMIN] Configura i canali e i ruoli per il 911")
 @app_commands.choices(servizio=[
-    app_commands.Choice(name="Police", value="police"),
-    app_commands.Choice(name="Ambulance", value="ambulance"),
-    app_commands.Choice(name="Firefighter", value="fire")
+    app_commands.Choice(name="Guardia Nacional", value="gn"),
+    app_commands.Choice(name="Cruz Roja", value="cruz_roja"),
+    app_commands.Choice(name="Bomberos", value="bomberos")
 ])
 @app_commands.describe(
     servizio="Il dipartimento da configurare",
-    canale="Il canale dove arriveranno le chiamate per questo servizio",
-    ruolo="Il ruolo da taggare alla ricezione di una chiamata",
-    logo_url="Link (URL) del logo della fazione (es. da Imgur)"
+    canale="Il canale dove verranno inviati i messaggi di emergenza",
+    ruolo="Il ruolo che riceverà il tag (notifica) per ogni chiamata"
 )
 async def setup_911(
     interaction: discord.Interaction, 
     servizio: str, 
     canale: discord.TextChannel, 
-    ruolo: discord.Role,
-    logo_url: str
+    ruolo: discord.Role
 ):
-    # Controllo permessi amministratore
+    # Controllo permessi
     if not interaction.user.guild_permissions.administrator:
-        return await interaction.response.send_message("❌ Non hai i permessi per configurare il sistema.", ephemeral=True)
+        return await interaction.response.send_message("❌ Non hai i permessi necessari per configurare il sistema.", ephemeral=True)
 
     await interaction.response.defer(ephemeral=True)
 
     conn = get_db_connection()
     cur = conn.cursor()
-    
-    # Assicurati che la tabella abbia la colonna logo_url (esegui la query SQL se necessario)
-    # ALTER TABLE setup_911 ADD COLUMN IF NOT EXISTS logo_url TEXT;
-    
     cur.execute("""
-        INSERT INTO setup_911 (servizio, canale_id, ruolo_id, logo_url) 
-        VALUES (%s, %s, %s, %s)
+        INSERT INTO setup_911 (servizio, canale_id, ruolo_id) 
+        VALUES (%s, %s, %s)
         ON CONFLICT (servizio) 
         DO UPDATE SET 
             canale_id = EXCLUDED.canale_id, 
-            ruolo_id = EXCLUDED.ruolo_id,
-            logo_url = EXCLUDED.logo_url
-    """, (servizio, str(canale.id), str(ruolo.id), logo_url))
+            ruolo_id = EXCLUDED.ruolo_id
+    """, (servizio, str(canale.id), str(ruolo.id)))
     
-    conn.commit()
-    cur.close()
-    conn.close()
+    conn.commit(); cur.close(); conn.close()
 
-    embed = discord.Embed(title="⚙️ CONFIGURAZIONE 911 COMPLETATA", color=discord.Color.green())
-    embed.add_field(name="Dipartimento", value=servizio.upper(), inline=False)
-    embed.add_field(name="Canale", value=canale.mention, inline=True)
-    embed.add_field(name="Ruolo", value=ruolo.mention, inline=True)
-    embed.set_thumbnail(url=logo_url)
-    
+    embed = discord.Embed(
+        title="✅ CONFIGURAZIONE COMPLETATA",
+        description=f"Il servizio **{servizio.upper()}** è stato configurato correttamente.",
+        color=discord.Color.green()
+    )
+    embed.add_field(name="Canale Operativo", value=canale.mention, inline=True)
+    embed.add_field(name="Ruolo Notificato", value=ruolo.mention, inline=True)
+
     await interaction.followup.send(embed=embed)
 
 # --- 1. COMANDO CREA ---
