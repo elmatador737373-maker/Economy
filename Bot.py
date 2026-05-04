@@ -2632,7 +2632,7 @@ async def mostra_documento(interaction: discord.Interaction, cittadino: discord.
     if not doc:
         return await interaction.followup.send(f"❌ {target.display_name} non ha un documento registrato.")
 
-    template_url = "https://imgur.com/a/cHBgZMB" # Incolla qui il link dell'immagine caricata
+    template_url = "https://imgur.com/a/cHBgZMB.png" # Incolla qui il link dell'immagine caricata
     
     try:
         # 1. Scarica Immagini
