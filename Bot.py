@@ -2542,96 +2542,149 @@ async def portafoglio(interaction: discord.Interaction):
 
     await interaction.response.send_message(embed=embed)
 
+import discord
+from discord import app_commands
+from PIL import Image, ImageDraw, ImageFont
+import io
+import requests
+from datetime import datetime
 
-# --- COMANDO PER CREARE IL DOCUMENTO ---
-@bot.tree.command(name="crea_documento", description="Registra il tuo documento d'identità")
-@app_commands.choices(genere=[
-    app_commands.Choice(name="Maschio", value="Maschio"),
-    app_commands.Choice(name="Femmina", value="Femmina")
+# --- HELPER: CALCOLO DATE ---
+def calcola_date_id(data_nascita_str):
+    oggi = datetime.now()
+    data_emissione = oggi.strftime("%d/%m/%Y")
+    
+    # Prende GG/MM dalla nascita e imposta la scadenza a +10 anni
+    try:
+        giorno_mese = data_nascita_str[:5] 
+        anno_scadenza = oggi.year + 10
+        data_scadenza = f"{giorno_mese}/{anno_scadenza}"
+    except:
+        data_scadenza = "DATA ERRATA"
+    
+    return data_emissione, data_scadenza
+
+# --- COMANDO CREA DOCUMENTO (TIPO STATICO) ---
+@bot.tree.command(name="crea_documento", description="Registra la tua carta d'identità messicana")
+@app_commands.choices(sesso=[
+    app_commands.Choice(name="Maschio", value="M"),
+    app_commands.Choice(name="Femmina", value="F")
 ])
+@app_commands.describe(
+    nome="Il tuo nome IC",
+    cognome="Il tuo cognome IC",
+    data_nascita="Formato GG/MM/AAAA",
+    luogo_nascita="Città di nascita",
+    nazionalita="Esempio: Messicana",
+    stato="Stato federale di emissione",
+    foto="Carica la tua foto fototessera"
+)
 async def crea_documento(
     interaction: discord.Interaction, 
     nome: str, 
     cognome: str, 
-    data_di_nascita: str, 
-    luogo_di_nascita: str, 
-    altezza: int, 
-    genere: app_commands.Choice[str]
+    data_nascita: str, 
+    luogo_nascita: str,
+    nazionalita: str,
+    sesso: app_commands.Choice[str],
+    stato: str, 
+    foto: discord.Attachment
 ):
     await interaction.response.defer(ephemeral=True)
     
+    if not foto.content_type.startswith("image/"):
+        return await interaction.followup.send("❌ Devi allegare un'immagine valida!", ephemeral=True)
+
+    emissione, scadenza = calcola_date_id(data_nascita)
+
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        
-        # Inserisce o aggiorna se esiste già (così uno può rifarsi il documento)
         cur.execute("""
-            INSERT INTO documenti (user_id, nome, cognome, data_nascita, luogo_nascita, altezza, genere)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO documenti (user_id, nome, cognome, data_nascita, luogo_nascita, sesso, nazionalita, data_emissione, data_scadenza, stato, foto_url, tipo_documento)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (user_id) DO UPDATE SET
-                nome = EXCLUDED.nome,
-                cognome = EXCLUDED.cognome,
-                data_nascita = EXCLUDED.data_nascita,
-                luogo_nascita = EXCLUDED.luogo_nascita,
-                altezza = EXCLUDED.altezza,
-                genere = EXCLUDED.genere
-        """, (str(interaction.user.id), nome, cognome, data_di_nascita, luogo_di_nascita, altezza, genere.value))
+                nome=EXCLUDED.nome, cognome=EXCLUDED.cognome, data_nascita=EXCLUDED.data_nascita,
+                luogo_nascita=EXCLUDED.luogo_nascita, sesso=EXCLUDED.sesso, nazionalita=EXCLUDED.nazionalita,
+                data_emissione=EXCLUDED.data_emissione, data_scadenza=EXCLUDED.data_scadenza,
+                stato=EXCLUDED.stato, foto_url=EXCLUDED.foto_url, tipo_documento=EXCLUDED.tipo_documento
+        """, (str(interaction.user.id), nome, cognome, data_nascita, luogo_nascita, sesso.value, nazionalita, emissione, scadenza, stato, foto.url, "CARTA DI IDENTITÀ"))
         
         conn.commit()
-        cur.close()
-        conn.close()
-        
-        await interaction.followup.send("✅ Documento creato con successo! Usa `/mostra_documento` per vederlo.", ephemeral=True)
-        
+        cur.close(); conn.close()
+        await interaction.followup.send("✅ Documento creato! Usa `/mostra_documento` per vederlo.", ephemeral=True)
     except Exception as e:
-        print(f"ERRORE CREAZIONE DOCUMENTO: {e}")
-        await interaction.followup.send("❌ Errore durante la creazione del documento.", ephemeral=True)
+        await interaction.followup.send(f"❌ Errore durante il salvataggio: {e}", ephemeral=True)
 
-# --- COMANDO PER MOSTRARE IL DOCUMENTO ---
-@bot.tree.command(name="mostra_documento", description="Mostra il tuo documento o quello di un altro cittadino")
+# --- COMANDO MOSTRA DOCUMENTO ---
+@bot.tree.command(name="mostra_documento", description="Mostra graficamente il tuo documento")
 async def mostra_documento(interaction: discord.Interaction, cittadino: discord.Member = None):
     await interaction.response.defer()
-    
-    # Se non specifichi un utente, mostra il tuo
     target = cittadino if cittadino else interaction.user
+
+    conn = get_db_connection()
+    from psycopg2.extras import RealDictCursor
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute("SELECT * FROM documenti WHERE user_id = %s", (str(target.id),))
+    doc = cur.fetchone()
+    cur.close(); conn.close()
+
+    if not doc:
+        return await interaction.followup.send(f"❌ {target.display_name} non ha un documento registrato.")
+
+    template_url = "https://imgur.com/a/cHBgZMB" # Incolla qui il link dell'immagine caricata
     
     try:
-        conn = get_db_connection()
-        from psycopg2.extras import RealDictCursor
-        cur = conn.cursor(cursor_factory=RealDictCursor)
+        # 1. Scarica Immagini
+        resp_tpl = requests.get(template_url)
+        img = Image.open(io.BytesIO(resp_tpl.content)).convert("RGBA")
+        draw = ImageDraw.Draw(img)
         
-        cur.execute("SELECT * FROM documenti WHERE user_id = %s", (str(target.id),))
-        doc = cur.fetchone()
-        
-        cur.close()
-        conn.close()
-        
-        if not doc:
-            msg = "Non hai ancora un documento. Crealo con `/crea_documento`!" if target == interaction.user else f"{target.display_name} non ha ancora un documento."
-            return await interaction.followup.send(msg)
+        # 2. Carica Font Arial (Assicurati che arial.ttf sia nella cartella del bot)
+        try:
+            font_arial = ImageFont.truetype("arial.ttf", 20)
+            font_id_type = ImageFont.truetype("arial.ttf", 18)
+        except:
+            font_arial = ImageFont.load_default()
+            font_id_type = ImageFont.load_default()
 
-        # Creazione dell'Embed stile Carta d'Identità
-        embed = discord.Embed(
-            title="🪪 CARTA D'IDENTITÀ",
-            color=discord.Color.dark_red() if doc['genere'] == "Maschio" else discord.Color.magenta()
+        # 3. Posizionamento Testi (Basati sulle righe del template)
+        # Colonna Sinistra
+        draw.text((496, 284), doc['tipo_documento'].upper(), fill=(60, 60, 60), font=font_id_type)
+        draw.text((494, 361), doc['cognome'].upper(), fill="black", font=font_arial)
+        draw.text((480, 436), doc['nome'].upper(), fill="black", font=font_arial)
+        draw.text((504, 512), doc['data_nascita'], fill="black", font=font_arial)
+        draw.text((507, 588), doc['sesso'], fill="black", font=font_arial)
+        draw.text((478, 661), doc['nazionalita'].upper(), fill="black", font=font_arial)
+        
+        # Colonna Destra
+        draw.text((992, 390), doc['luogo_nascita'].upper(), fill="black", font=font_arial)
+        draw.text((976, 490), doc['data_emissione'], fill="black", font=font_arial)
+        draw.text((961, 580), doc['data_scadenza'], fill="black", font=font_arial)
+        draw.text((959, 690), doc['stato'].upper(), fill="black", font=font_arial)
+
+        # 4. Incolla Foto Utente
+        foto_res = requests.get(doc['foto_url'])
+        user_img = Image.open(io.BytesIO(foto_res.content)).convert("RGBA")
+        user_img = user_img.resize((306, 387)) # Adattamento al riquadro
+        img.paste(user_img, (149, 311), user_img)
+
+        # 5. Invio Risultato
+        buffer = io.BytesIO()
+        img.save(buffer, format="PNG")
+        buffer.seek(0)
+        file = discord.File(buffer, filename=f"documento_{target.id}.png")
+        
+        await interaction.followup.send(
+            content=f"***{interaction.user.display_name}** mostra la propria carta d'identità messicana.*", 
+            file=file
         )
-        embed.set_thumbnail(url=target.display_avatar.url)
-        embed.add_field(name="Nome", value=doc['nome'], inline=True)
-        embed.add_field(name="Cognome", value=doc['cognome'], inline=True)
-        embed.add_field(name="Sesso", value=doc['genere'], inline=True)
-        embed.add_field(name="Data di Nascita", value=doc['data_nascita'], inline=True)
-        embed.add_field(name="Luogo di Nascita", value=doc['luogo_nascita'], inline=True)
-        embed.add_field(name="Altezza", value=f"{doc['altezza']} cm", inline=True)
-        embed.set_footer(text=f"ID Cittadino: {target.id}")
-        
-        # Messaggio di Roleplay
-        testo_rp = f"***{interaction.user.display_name}** estrae il documento e lo mostra.*"
-        await interaction.followup.send(content=testo_rp, embed=embed)
-        
+
     except Exception as e:
-        print(f"ERRORE MOSTRA DOCUMENTO: {e}")
-        await interaction.followup.send("❌ Errore nel recupero del documento.")
-    # --- COMANDO INIZIO TURNO (Ruolo Libero) ---
+        await interaction.followup.send(f"❌ Errore grafico: {e}")
+
+
+ # --- COMANDO INIZIO TURNO (Ruolo Libero) ---
 # --- MODAL PER MODIFICA STIPENDIO ---
 class ModificaStipendioModal(discord.ui.Modal, title="Modifica Stipendio Turno"):
     nuovo_importo = discord.ui.TextInput(label="Nuovo Totale (€)", placeholder="Inserisci la cifra corretta...")
