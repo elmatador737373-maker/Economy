@@ -337,16 +337,16 @@ async def mostra_documento(interaction: discord.Interaction, cittadino: discord.
         # Colonna Sinistra
         draw.text((496, 284), doc['tipo_documento'].upper(), fill=(60, 60, 60), font=font_id_type)
         draw.text((494, 361), doc['cognome'].upper(), fill="black", font=font_arial)
-        draw.text((480, 436), doc['nome'].upper(), fill="black", font=font_arial)
+        draw.text((523, 431), doc['nome'].upper(), fill="black", font=font_arial)
         draw.text((504, 512), doc['data_nascita'], fill="black", font=font_arial)
         draw.text((507, 588), doc['sesso'], fill="black", font=font_arial)
-        draw.text((478, 661), doc['nazionalita'].upper(), fill="black", font=font_arial)
+        draw.text((520, 644), doc['nazionalita'].upper(), fill="black", font=font_arial)
         
         # Colonna Destra
         draw.text((992, 390), doc['luogo_nascita'].upper(), fill="black", font=font_arial)
         draw.text((976, 490), doc['data_emissione'], fill="black", font=font_arial)
-        draw.text((961, 580), doc['data_scadenza'], fill="black", font=font_arial)
-        draw.text((959, 690), doc['stato'].upper(), fill="black", font=font_arial)
+        draw.text((984, 580), doc['data_scadenza'], fill="black", font=font_arial)
+        draw.text((1000, 679), doc['stato'].upper(), fill="black", font=font_arial)
 
         # 4. Scarica e Incolla Foto Utente
         headers = {'User-Agent': 'Mozilla/5.0'}
