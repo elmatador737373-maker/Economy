@@ -337,9 +337,9 @@ async def mostra_documento(interaction: discord.Interaction, cittadino: discord.
         # Colonna Sinistra
         draw.text((496, 284), doc['tipo_documento'].upper(), fill=(60, 60, 60), font=font_id_type)
         draw.text((494, 361), doc['cognome'].upper(), fill="black", font=font_arial)
-        draw.text((523, 431), doc['nome'].upper(), fill="black", font=font_arial)
+        draw.text((493, 436), doc['nome'].upper(), fill="black", font=font_arial)
         draw.text((504, 512), doc['data_nascita'], fill="black", font=font_arial)
-        draw.text((507, 588), doc['sesso'], fill="black", font=font_arial)
+        draw.text((531, 652), doc['sesso'], fill="black", font=font_arial)
         draw.text((520, 644), doc['nazionalita'].upper(), fill="black", font=font_arial)
         
         # Colonna Destra
