@@ -327,8 +327,8 @@ async def mostra_documento(interaction: discord.Interaction, cittadino: discord.
         
         # 2. Carica Font Arial
         try:
-            font_arial = ImageFont.truetype("arial.ttf", 20)
-            font_id_type = ImageFont.truetype("arial.ttf", 18)
+            font_arial = ImageFont.truetype("arial.ttf", 30)
+            font_id_type = ImageFont.truetype("arial.ttf", 27)
         except:
             font_arial = ImageFont.load_default()
             font_id_type = ImageFont.load_default()
