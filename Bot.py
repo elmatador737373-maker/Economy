@@ -414,6 +414,82 @@ class ConfirmDMView(discord.ui.View):
         self.value = False
         self.stop()
         await interaction.response.edit_message(content="❌ Operazione annullata. Nessun DM inviato.", view=None, embed=None)
+# Classe per il menu di selezione dei permessi
+class CategoryPermsSelect(discord.ui.Select):
+    def __init__(self, role: discord.Role, category: discord.CategoryChannel):
+        self.role = role
+        self.category = category
+        
+        # Lista dei permessi principali tra cui scegliere
+        options = [
+            discord.SelectOption(label="Visualizzare Canali", value="view_channel", description="Permette di vedere la categoria"),
+            discord.SelectOption(label="Inviare Messaggi", value="send_messages", description="Permette di scrivere nei canali testo"),
+            discord.SelectOption(label="Gestire Canali", value="manage_channels", description="Permette di modificare i canali"),
+            discord.SelectOption(label="Collegarsi", value="connect", description="Permette di entrare nei canali vocali"),
+            discord.SelectOption(label="Parlare", value="speak", description="Permette di parlare nei canali vocali"),
+            discord.SelectOption(label="Allegare File", value="attach_files", description="Permette di inviare immagini/file"),
+            discord.SelectOption(label="Aggiungere Reazioni", value="add_reactions", description="Permette di aggiungere emoji"),
+            discord.SelectOption(label="Menzionare Everyone", value="mention_everyone", description="Permette di usare tag globali")
+        ]
+
+        super().__init__(
+            placeholder="Scegli i permessi (min 1, max 5)...",
+            min_values=1,
+            max_values=5,
+            options=options
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        # Creiamo il dizionario dei permessi (True per quelli selezionati)
+        overwrites_dict = {perm: True for perm in self.values}
+        
+        await interaction.response.defer(ephemeral=True)
+        
+        try:
+            # Applica i permessi alla categoria
+            await self.category.set_permissions(self.role, **overwrites_dict)
+            
+            # Sincronizza i canali interni alla categoria
+            for channel in self.category.channels:
+                await channel.set_permissions(self.role, **overwrites_dict)
+            
+            await interaction.followup.send(
+                f"✅ Configurazione completata!\n**Ruolo:** {self.role.mention}\n**Categoria:** {self.category.name}\n**Permessi:** `{', '.join(self.values)}`",
+                ephemeral=True
+            )
+        except discord.Forbidden:
+            await interaction.followup.send("❌ Non ho i permessi necessari per modificare questo ruolo o categoria.", ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Errore: {e}", ephemeral=True)
+
+# Classe View che contiene il menu
+class CategoryPermsView(discord.ui.View):
+    def __init__(self, role: discord.Role, category: discord.CategoryChannel):
+        super().__init__(timeout=60)
+        self.add_item(CategoryPermsSelect(role, category))
+
+# COMANDO SLASH
+@bot.tree.command(name="set_category_perms", description="Configura i permessi di una categoria per un ruolo (Max 5)")
+@app_commands.checks.has_permissions(administrator=True)
+@app_commands.describe(categoria_id="Inserisci l'ID della categoria", ruolo="Seleziona il ruolo")
+async def set_category_perms(interaction: discord.Interaction, categoria_id: str, ruolo: discord.Role):
+    # Verifica validità ID categoria
+    try:
+        cat_id = int(categoria_id)
+        category = interaction.guild.get_channel(cat_id)
+    except ValueError:
+        return await interaction.response.send_message("L'ID fornito non è un numero valido.", ephemeral=True)
+
+    if not category or not isinstance(category, discord.CategoryChannel):
+        return await interaction.response.send_message("ID non trovato o non corrisponde a una Categoria.", ephemeral=True)
+
+    # Invia la View con il menu di selezione
+    view = CategoryPermsView(ruolo, category)
+    await interaction.response.send_message(
+        f"Seleziona quali permessi concedere a {ruolo.mention} nella categoria **{category.name}**:",
+        view=view,
+        ephemeral=True
+    )
 
 # --- COMANDO PRINCIPALE ---
 @bot.tree.command(name="dm_all", description="[ADMIN] Invia DM di massa con conferma e stima")
