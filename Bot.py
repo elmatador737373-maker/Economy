@@ -260,7 +260,7 @@ import requests
 import os
 
 # --- CONFIGURAZIONE ---
-ID_CANALE_ARCHIVIO = 123456789012345678  # Sostituisci con l'ID del tuo canale archivio
+ID_CANALE_ARCHIVIO =  1501928095865896990 # Sostituisci con l'ID del tuo canale archivio
 
 # --- COMANDO 1: CREA DOCUMENTO ---
 @bot.tree.command(name="crea_documento", description="Registra la tua carta d'identità messicana")
