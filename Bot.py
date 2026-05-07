@@ -293,8 +293,8 @@ def calcola_date_id(data_nascita):
 # --- COMANDO 1: CREA DOCUMENTO ---
 @bot.tree.command(name="crea_documento", description="Registra la tua carta d'identità messicana")
 @app_commands.choices(sesso=[
-    app_commands.Choice(name="Maschio", value="M"),
-    app_commands.Choice(name="Femmina", value="F")
+    app_commands.Choice(name="Maschio", value="Maschio"),
+    app_commands.Choice(name="Femmina", value="Femmina")
 ])
 @app_commands.describe(
     nome="Il tuo nome IC",
@@ -410,7 +410,7 @@ async def mostra_documento(interaction: discord.Interaction, cittadino: discord.
         draw.text((992, 390), doc['luogo_nascita'].upper(), fill="black", font=font_arial)
         draw.text((976, 490), doc['data_emissione'], fill="black", font=font_arial)
         draw.text((984, 580), doc['data_scadenza'], fill="black", font=font_arial)
-        draw.text((983, 669), "Messico", fill="black", font=font_arial)
+        draw.text((983, 693), "Messico", fill="black", font=font_arial)
 
 
         # Download Foto dall'Archivio
