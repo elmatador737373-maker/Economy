@@ -302,7 +302,6 @@ def calcola_date_id(data_nascita):
     data_nascita="Formato GG/MM/AAAA",
     luogo_nascita="Città di nascita",
     nazionalita="Esempio: Messicana",
-    stato="Stato federale di emissione",
     foto="Carica la tua foto fototessera"
 )
 async def crea_documento(
@@ -313,7 +312,6 @@ async def crea_documento(
     luogo_nascita: str,
     nazionalita: str,
     sesso: app_commands.Choice[str],
-    stato: str, 
     foto: discord.Attachment
 ):
     await interaction.response.defer(ephemeral=True)
@@ -412,7 +410,7 @@ async def mostra_documento(interaction: discord.Interaction, cittadino: discord.
         draw.text((992, 390), doc['luogo_nascita'].upper(), fill="black", font=font_arial)
         draw.text((976, 490), doc['data_emissione'], fill="black", font=font_arial)
         draw.text((984, 580), doc['data_scadenza'], fill="black", font=font_arial)
-        draw.text((1000, 695), doc['stato'].upper(), fill="black", font=font_arial)
+        draw.text((1000, 695), Messico, fill="black", font=font_arial)
 
         # Download Foto dall'Archivio
         headers = {'User-Agent': 'Mozilla/5.0'}
@@ -1686,10 +1684,23 @@ async def inizia_rapina(interaction: discord.Interaction, luogo: str):
     tempo_rimanente = config['tempo_scasso']
     paga_casuale = random.randint(config['paga_min'], config['paga_max'])
     
-    embed = discord.Embed(title="🚨 RAPINA IN CORSO", description=f"Sede: **{luogo.upper()}**", color=discord.Color.red())
-    embed.add_field(name="Progresso", value=f"⏳ Scasso in corso: `{tempo_rimanente}s`")
-    
-    msg = await interaction.followup.send(embed=embed)
+    # --- PARTE FINALE COMANDO RAPINA ---
+
+  RUOLO_NOTIFICA_ID = 1363487988570521670
+
+ # Creazione Embed
+embed = discord.Embed(
+    title="🚨 RAPINA IN CORSO", 
+    description=f"Sede: **{luogo.upper()}**", 
+    color=discord.Color.red()
+)
+embed.add_field(name="Progresso", value=f"⏳ Scasso in corso: `{tempo_rimanente}s`")
+
+# Invio unico con TAG e EMBED insieme
+msg = await interaction.followup.send(
+    content=f"⚠️ Allerta <@&{RUOLO_NOTIFICA_ID}>!", 
+    embed=embed
+)
 
     # --- LOOP DEL TIMER ---
     while tempo_rimanente > 0:
