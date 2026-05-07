@@ -1686,18 +1686,18 @@ async def inizia_rapina(interaction: discord.Interaction, luogo: str):
     
     # --- PARTE FINALE COMANDO RAPINA ---
 
-  RUOLO_NOTIFICA_ID = 1363487988570521670
+    RUOLO_NOTIFICA_ID = 1363487988570521670
 
  # Creazione Embed
-  embed = discord.Embed(
+    embed = discord.Embed(
     title="🚨 RAPINA IN CORSO", 
     description=f"Sede: **{luogo.upper()}**", 
     color=discord.Color.red()
 )
-  embed.add_field(name="Progresso", value=f"⏳ Scasso in corso: `{tempo_rimanente}s`")
+    embed.add_field(name="Progresso", value=f"⏳ Scasso in corso: `{tempo_rimanente}s`")
 
 # Invio unico con TAG e EMBED insieme
-  msg = await interaction.followup.send(
+    msg = await interaction.followup.send(
     content=f"⚠️ Allerta <@&{RUOLO_NOTIFICA_ID}>!", 
     embed=embed
 )
