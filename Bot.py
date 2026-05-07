@@ -357,8 +357,8 @@ async def crea_documento(
                 nome=EXCLUDED.nome, cognome=EXCLUDED.cognome, data_nascita=EXCLUDED.data_nascita,
                 luogo_nascita=EXCLUDED.luogo_nascita, sesso=EXCLUDED.sesso, nazionalita=EXCLUDED.nazionalita,
                 data_emissione=EXCLUDED.data_emissione, data_scadenza=EXCLUDED.data_scadenza,
-                stato=EXCLUDED.stato, foto_url=EXCLUDED.foto_url, tipo_documento=EXCLUDED.tipo_documento
-        """, (str(interaction.user.id), nome, cognome, data_nascita, luogo_nascita, sesso.value, nazionalita, emissione, scadenza, stato, foto_url_permanente, "CARTA DI IDENTITÀ"))
+                foto_url=EXCLUDED.foto_url, tipo_documento=EXCLUDED.tipo_documento
+        """, (str(interaction.user.id), nome, cognome, data_nascita, luogo_nascita, sesso.value, nazionalita, emissione, scadenza, foto_url_permanente, "CARTA DI IDENTITÀ"))
         
         conn.commit()
         cur.close(); conn.close()
