@@ -183,7 +183,22 @@ async def cerca_item_smart(interaction: Interaction, nome_input: str, modo="item
     await interaction.followup.send("🤔 Più risultati, seleziona quello corretto:", view=view, ephemeral=True)
     await view.wait()
     return view.value
+def calcola_date_id(data_nascita):
+    import datetime
+    # Prende la data di oggi per l'emissione
+    oggi = datetime.date.today()
+    emissione = oggi.strftime("%d/%m/%Y")
     
+    # Calcola la scadenza (es. tra 10 anni)
+    try:
+        # Proviamo ad aggiungere 10 anni alla data odierna
+        scadenza = (oggi.replace(year=oggi.year + 10)).strftime("%d/%m/%Y")
+    except ValueError: 
+        # Gestisce il caso raro del 29 febbraio
+        scadenza = (oggi + datetime.timedelta(days=365*10)).strftime("%d/%m/%Y")
+        
+    return emissione, scadenza
+
 @bot.tree.command(name="say", description="[ADMIN] Invia un messaggio tramite il bot")
 @app_commands.describe(
     messaggio="Il testo da far dire al bot",
