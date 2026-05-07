@@ -261,6 +261,7 @@ import os
 
 # --- CONFIGURAZIONE ---
 ID_CANALE_ARCHIVIO =  1501928095865896990 # Sostituisci con l'ID del tuo canale archivio
+ # Sostituisci con l'ID del tuo canale archivio
 
 # --- COMANDO 1: CREA DOCUMENTO ---
 @bot.tree.command(name="crea_documento", description="Registra la tua carta d'identità messicana")
@@ -293,30 +294,24 @@ async def crea_documento(
     if not foto.content_type.startswith("image/"):
         return await interaction.followup.send("❌ Devi allegare un'immagine valida!", ephemeral=True)
 
-    # 1. Invio della foto al canale archivio per link permanente
+    # 1. Archiviazione della foto nel canale per link permanente
     try:
         canale_archivio = bot.get_channel(ID_CANALE_ARCHIVIO)
-        if not canale_archivio:
-            return await interaction.followup.send("❌ Canale archivio non trovato. Verifica l'ID nel codice.", ephemeral=True)
-            
-        # Trasformiamo l'attachment in un file per reinviarlo
-        file_foto = await foto.to_file()
-        msg_archivio = await canale_archivio.send(
-            content=f"🗄️ **Archivio Foto ID**\n**Utente:** {interaction.user.mention} ({interaction.user.id})\n**Nome IC:** {nome} {cognome}",
-            file=file_foto
+        msg = await canale_archivio.send(
+            content=f"Foto di {nome} {cognome} (ID: {interaction.user.id})", 
+            file=await foto.to_file()
         )
-        # Questo URL non scade mai finché il messaggio esiste nel canale
-        url_permanente = msg_archivio.attachments[0].url
+        foto_url_permanente = msg.attachments[0].url
     except Exception as e:
-        return await interaction.followup.send(f"❌ Errore nell'archiviazione della foto: {e}", ephemeral=True)
+        print(f"Errore invio foto archivio: {e}")
+        return await interaction.followup.send("❌ Errore nell'archiviazione della foto nel server.", ephemeral=True)
 
-    # 2. Calcolo date emissione/scadenza
     emissione, scadenza = calcola_date_id(data_nascita)
 
-    # 3. Salvataggio nel Database
     try:
         conn = get_db_connection()
         cur = conn.cursor()
+        # UTILIZZA ESATTAMENTE LE TUE COLONNE ORIGINALI
         cur.execute("""
             INSERT INTO documenti (user_id, nome, cognome, data_nascita, luogo_nascita, sesso, nazionalita, data_emissione, data_scadenza, stato, foto_url, tipo_documento)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
@@ -325,13 +320,14 @@ async def crea_documento(
                 luogo_nascita=EXCLUDED.luogo_nascita, sesso=EXCLUDED.sesso, nazionalita=EXCLUDED.nazionalita,
                 data_emissione=EXCLUDED.data_emissione, data_scadenza=EXCLUDED.data_scadenza,
                 stato=EXCLUDED.stato, foto_url=EXCLUDED.foto_url, tipo_documento=EXCLUDED.tipo_documento
-        """, (str(interaction.user.id), nome, cognome, data_nascita, luogo_nascita, sesso.value, nazionalita, emissione, scadenza, stato, url_permanente, "CARTA DI IDENTITÀ"))
+        """, (str(interaction.user.id), nome, cognome, data_nascita, luogo_nascita, sesso.value, nazionalita, emissione, scadenza, stato, foto_url_permanente, "CARTA DI IDENTITÀ"))
         
         conn.commit()
         cur.close(); conn.close()
-        await interaction.followup.send("✅ Documento creato con successo! Foto salvata permanentemente nell'archivio.", ephemeral=True)
+        await interaction.followup.send("✅ Documento creato con successo! Usa `/mostra_documento` per vederlo.", ephemeral=True)
     except Exception as e:
-        await interaction.followup.send(f"❌ Errore DB: {e}", ephemeral=True)
+        print(f"Errore DB: {e}")
+        await interaction.followup.send(f"❌ Errore durante il salvataggio: {e}", ephemeral=True)
 
 # --- COMANDO 2: MOSTRA DOCUMENTO ---
 @bot.tree.command(name="mostra_documento", description="Mostra graficamente il tuo documento")
@@ -350,11 +346,9 @@ async def mostra_documento(interaction: discord.Interaction, cittadino: discord.
         return await interaction.followup.send(f"❌ {target.display_name} non ha un documento registrato.")
 
     try:
-        # 1. Carica il Template Locale
         img = Image.open("IMG_0453.png").convert("RGBA")
         draw = ImageDraw.Draw(img)
         
-        # 2. Carica Font
         try:
             font_arial = ImageFont.truetype("arial.ttf", 30)
             font_id_type = ImageFont.truetype("arial.ttf", 27)
@@ -362,8 +356,7 @@ async def mostra_documento(interaction: discord.Interaction, cittadino: discord.
             font_arial = ImageFont.load_default()
             font_id_type = ImageFont.load_default()
 
-        # 3. Posizionamento Testi (Coordinate originali mantenute)
-        # Colonna Sinistra
+        # COORDINATE ORIGINALI INVARIATE
         draw.text((496, 284), doc['tipo_documento'].upper(), fill=(60, 60, 60), font=font_id_type)
         draw.text((494, 361), doc['cognome'].upper(), fill="black", font=font_arial)
         draw.text((493, 436), doc['nome'].upper(), fill="black", font=font_arial)
@@ -371,13 +364,12 @@ async def mostra_documento(interaction: discord.Interaction, cittadino: discord.
         draw.text((559, 584), doc['sesso'], fill="black", font=font_arial)
         draw.text((524, 663), doc['nazionalita'].upper(), fill="black", font=font_arial)
         
-        # Colonna Destra
         draw.text((992, 390), doc['luogo_nascita'].upper(), fill="black", font=font_arial)
         draw.text((976, 490), doc['data_emissione'], fill="black", font=font_arial)
         draw.text((984, 580), doc['data_scadenza'], fill="black", font=font_arial)
         draw.text((1000, 695), doc['stato'].upper(), fill="black", font=font_arial)
 
-        # 4. Scarica e Incolla Foto (Recuperata dal link permanente nel DB)
+        # Scarica la foto dal link dell'archivio
         headers = {'User-Agent': 'Mozilla/5.0'}
         foto_res = requests.get(doc['foto_url'], headers=headers)
         
@@ -386,7 +378,6 @@ async def mostra_documento(interaction: discord.Interaction, cittadino: discord.
             user_img = user_img.resize((306, 387)) 
             img.paste(user_img, (149, 311), user_img) 
 
-        # 5. Invio Risultato finale
         buffer = io.BytesIO()
         img.save(buffer, format="PNG")
         buffer.seek(0)
@@ -397,10 +388,9 @@ async def mostra_documento(interaction: discord.Interaction, cittadino: discord.
             file=file
         )
 
-    except FileNotFoundError:
-        await interaction.followup.send("❌ Errore critico: Template o Font non trovati sul server.")
     except Exception as e:
-        await interaction.followup.send(f"❌ Errore grafico: {e}")
+        print(f"Errore grafico: {e}")
+        await interaction.followup.send(f"❌ Errore grafico imprevisto: {e}")
 
 # --- COMANDO SETUP (ADMIN) ---
 @bot.tree.command(name="setup_polizia", description="[ADMIN] Imposta il ruolo che può gestire i tesserini")
