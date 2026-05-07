@@ -1617,7 +1617,7 @@ async def inizia_rapina(interaction: discord.Interaction, luogo: str):
         conn.close()
         return await interaction.followup.send("❌ Canale staff rapine non impostato. Usa `/set_canale_rapine`.")
 
-    canale_staff_id = int(res_canale['setting_value'])
+    canale_staff_id = 1496214188551307356
     tempo_rimanente = config['tempo_scasso']
     paga_casuale = random.randint(config['paga_min'], config['paga_max'])
     
