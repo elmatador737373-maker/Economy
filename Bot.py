@@ -2750,46 +2750,52 @@ async def rpoff(interaction: discord.Interaction):
     )
     await interaction.response.send_message(embed=embed)
 
-# ================= COMANDI ECONOMIA BASE =================
+# ================= COMANDI ECONOMIA DIVISI =================
 
-@bot.tree.command(name="portafoglio", description="Visualizza il tuo saldo contanti e in banca")
+@bot.tree.command(name="portafoglio", description="Visualizza solo i tuoi contanti nel wallet")
 async def portafoglio(interaction: discord.Interaction):
     u = get_user_data(interaction.user.id)
     
-    # Creazione dell'Embed
     embed = discord.Embed(
-        title="💰 ESTRATTO CONTO PERSONALE",
-        color=discord.Color.gold(), # Colore oro per il tema soldi
+        title="💵 PORTAFOGLIO PERSONALE",
+        description=f"Al momento porti con te:\n## **{u['wallet']:,}$**",
+        color=discord.Color.green(),
         timestamp=datetime.datetime.now()
     )
     
-    # Imposta l'avatar dell'utente come miniatura a destra
     embed.set_thumbnail(url=interaction.user.display_avatar.url)
-    
-    # Campi per i saldi (inline=True li mette uno di fianco all'altro)
-    embed.add_field(
-        name="💵 Contanti (Wallet)", 
-        value=f"**{u['wallet']:,}$**", 
-        inline=True
-    )
-    embed.add_field(
-        name="💳 Conto Bancario", 
-        value=f"**{u['bank']:,}$**", 
-        inline=True
-    )
-    
-    # Calcolo del patrimonio totale
-    totale = u['wallet'] + u['bank']
-    embed.add_field(
-        name="📊 Patrimonio Totale", 
-        value=f"**{totale:,}$**", 
-        inline=False
-    )
-
     embed.set_footer(text=f"Richiesto da {interaction.user.display_name}")
 
     await interaction.response.send_message(embed=embed)
 
+
+@bot.tree.command(name="conto", description="Visualizza il tuo saldo in banca")
+async def conto(interaction: discord.Interaction):
+    # ID del ruolo richiesto
+    RUOLO_BANCA_ID = 1374264699331543140
+    
+    # Verifica se l'utente ha il ruolo
+    role = interaction.guild.get_role(RUOLO_BANCA_ID)
+    if role not in interaction.user.roles:
+        return await interaction.response.send_message(
+            content=f"❌ Non hai un conto aperto. Recati in banca per sbloccare l'accesso ai servizi digitali.",
+            ephemeral=True
+        )
+
+    u = get_user_data(interaction.user.id)
+    
+    embed = discord.Embed(
+        title="💳 CONTO BANCARIO",
+        description=f"Saldo disponibile sul conto corrente:\n## **{u['bank']:,}$**",
+        color=discord.Color.blue(),
+        timestamp=datetime.datetime.now()
+    )
+    
+    # Logo banca o miniatura utente
+    embed.set_thumbnail(url=interaction.user.display_avatar.url)
+    embed.set_footer(text=f"Servizio Bancario Digitale • {interaction.user.display_name}")
+
+    await interaction.response.send_message(embed=embed)
 
  # --- COMANDO INIZIO TURNO (Ruolo Libero) ---
 # --- MODAL PER MODIFICA STIPENDIO ---
