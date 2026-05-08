@@ -335,7 +335,6 @@ async def crea_documento(
         print(f"[DEBUG] 3. Foto archiviata con successo: {foto_url_permanente}")
     except Exception as e:
         print(f"[LOG ERROR] Fallimento archivio foto: {e}")
-        # Se l'archivio fallisce, usiamo il link temporaneo per non bloccare l'utente
         foto_url_permanente = foto.url
         print("[DEBUG] 3. Utilizzo URL temporaneo causa errore archivio.")
 
@@ -350,20 +349,48 @@ async def crea_documento(
         cur = conn.cursor()
         
         print("[DEBUG] 6. Esecuzione query SQL...")
+        
+        # 11 parametri corrispondenti agli 11 %s
+        valori_documento = (
+            str(interaction.user.id), 
+            nome, 
+            cognome, 
+            data_nascita, 
+            luogo_nascita, 
+            sesso.value, 
+            nazionalita, 
+            emissione, 
+            scadenza, 
+            foto_url_permanente, 
+            "CARTA DI IDENTITÀ"
+        )
+
         cur.execute("""
-            INSERT INTO documenti (user_id, nome, cognome, data_nascita, luogo_nascita, sesso, nazionalita, data_emissione, data_scadenza, stato, foto_url, tipo_documento)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO documenti (
+                user_id, nome, cognome, data_nascita, luogo_nascita, 
+                sesso, nazionalita, data_emissione, data_scadenza, 
+                foto_url, tipo_documento
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (user_id) DO UPDATE SET
-                nome=EXCLUDED.nome, cognome=EXCLUDED.cognome, data_nascita=EXCLUDED.data_nascita,
-                luogo_nascita=EXCLUDED.luogo_nascita, sesso=EXCLUDED.sesso, nazionalita=EXCLUDED.nazionalita,
-                data_emissione=EXCLUDED.data_emissione, data_scadenza=EXCLUDED.data_scadenza,
-                foto_url=EXCLUDED.foto_url, tipo_documento=EXCLUDED.tipo_documento
-        """, (str(interaction.user.id), nome, cognome, data_nascita, luogo_nascita, sesso.value, nazionalita, emissione, scadenza, foto_url_permanente, "CARTA DI IDENTITÀ"))
+                nome=EXCLUDED.nome, 
+                cognome=EXCLUDED.cognome, 
+                data_nascita=EXCLUDED.data_nascita,
+                luogo_nascita=EXCLUDED.luogo_nascita, 
+                sesso=EXCLUDED.sesso, 
+                nazionalita=EXCLUDED.nazionalita,
+                data_emissione=EXCLUDED.data_emissione, 
+                data_scadenza=EXCLUDED.data_scadenza,
+                foto_url=EXCLUDED.foto_url, 
+                tipo_documento=EXCLUDED.tipo_documento
+        """, valori_documento)
         
         conn.commit()
-        cur.close(); conn.close()
+        cur.close()
+        conn.close()
+        
         print("[DEBUG] 7. Database aggiornato correttamente!")
-        await interaction.followup.send("✅ Documento creato con successo!", ephemeral=True)
+        await interaction.followup.send("✅ Documento registrato con successo nel database!", ephemeral=True)
         
     except Exception as e:
         print(f"[LOG ERROR] Errore Database: {e}")
