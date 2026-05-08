@@ -410,7 +410,7 @@ async def mostra_documento(interaction: discord.Interaction, cittadino: discord.
         draw.text((992, 390), doc['luogo_nascita'].upper(), fill="black", font=font_arial)
         draw.text((976, 490), doc['data_emissione'], fill="black", font=font_arial)
         draw.text((984, 580), doc['data_scadenza'], fill="black", font=font_arial)
-        draw.text((983, 693), "Messico", fill="black", font=font_arial)
+        draw.text((983, 693), "MESSICO", fill="black", font=font_arial)
 
 
         # Download Foto dall'Archivio
