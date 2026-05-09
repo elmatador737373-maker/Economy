@@ -4358,49 +4358,34 @@ async def centrale(ctx):
 # Lista dei server autorizzati
 ALLOWED_GUILDS = [1383905374092005376, 1233353915559313478, 1392825183915610205]
 
-# Funzione UNIFICATA per l'avvio del bot
 @bot.event
 async def on_ready():
-    # 1. Carica le View persistenti (per i bottoni che devono sempre funzionare)
+    print(f'{"="*40}')
+    print(f'🤖 LOG IN: {bot.user}')
+    
+    # 1. Caricamento View Persistenti
+    # Inizializza tutte le classi necessarie per mantenere i bottoni attivi al riavvio
     try:
         bot.add_view(VerificaView())
-        # Se hai altre view (come quelle delle rapine o fatture), aggiungile qui
-        # bot.add_view(FattureView()) 
+        bot.add_view(RapinaStaffView())
+        bot.add_view(TurnoStaffView())
+        print('✅ Persistenza caricata: Verifica, Rapine e Turni.')
     except Exception as e:
         print(f"⚠️ Errore nel caricamento delle View: {e}")
 
-    # 2. Sincronizza i comandi Slash (incluso /cucina)
+    # 2. Sincronizzazione Comandi Slash
     try:
-        # Sincronizzazione globale
+        print("🔄 Sincronizzazione comandi slash...")
         synced = await bot.tree.sync()
-        print(f"🔄 Sincronizzati {len(synced)} comandi slash!")
+        print(f"🔄 Sincronizzati {len(synced)} comandi!")
     except Exception as e:
         print(f"❌ Errore durante la sincronizzazione: {e}")
 
-    print(f"✅ Bot Online! Loggato come: {bot.user}")
-@bot.event
-async def on_ready():
-    # 1. Rendiamo la View persistente
-    # La inizializziamo senza argomenti perché i dati sono salvati nei custom_id dei bottoni
-    bot.add_view(RapinaStaffView())
-    
-    # 2. Feedback in console
-    print(f'{"-"*30}')
-    print(f'🤖 Bot Online: {bot.user}')
-    print(f'💾 View Persistente: CARICATA')
-    print(f'{"-"*30}')
-@bot.event
-async def on_ready():
-    # Registra entrambe le View per renderle persistenti
-    bot.add_view(RapinaStaffView())
-    bot.add_view(TurnoStaffView()) # <--- Aggiunta questa
-    
-    print(f'--- BOT ONLINE COME {bot.user} ---')
-    print('✅ Persistenza Rapine caricata.')
-    print('✅ Persistenza Turni caricata.')
+    # 3. Check finale
+    print(f"✅ Bot Online e pronto all'uso!")
+    print(f'{"="*40}')
 
-
-# Controllo autorizzazione server
+# --- Controllo autorizzazione server ---
 @bot.tree.interaction_check
 async def check_guild(interaction: discord.Interaction):
     if interaction.guild_id not in ALLOWED_GUILDS:
@@ -4408,8 +4393,13 @@ async def check_guild(interaction: discord.Interaction):
         return False
     return True
 
-# Configurazione Flask per Render
+# --- Configurazione Flask per Render ---
 app = Flask("")
+
+@app.route("/")
+def home(): 
+    return "Bot Online"
+
 
 @app.route("/")
 def home(): 
