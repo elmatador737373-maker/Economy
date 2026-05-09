@@ -4309,23 +4309,33 @@ async def centrale(ctx):
     view = PoliziaView(citizens, bot.db_pool)
     await ctx.send("👮 **Database Centrale Polizia**: Seleziona un soggetto per il dossier.", view=view)
 
-
 # ================= WEB SERVER & START =================
-# Lista dei server autorizzati
+
 # Lista dei server autorizzati
 ALLOWED_GUILDS = [1383905374092005376, 1233353915559313478, 1392825183915610205]
 
-# Funzione per sincronizzare i comandi all'avvio
+# Funzione UNIFICATA per l'avvio del bot
 @bot.event
 async def on_ready():
-    await bot.tree.sync()
-    print(f"Sincronizzazione completata! Bot loggato come {bot.user}")
-@bot.event
-async def on_ready():
-    # Registra la view all'avvio del bot
-    bot.add_view(VerificaView())
-    print(f"Bot Online e View Persistente caricata!")
+    # 1. Carica le View persistenti (per i bottoni che devono sempre funzionare)
+    try:
+        bot.add_view(VerificaView())
+        # Se hai altre view (come quelle delle rapine o fatture), aggiungile qui
+        # bot.add_view(FattureView()) 
+    except Exception as e:
+        print(f"⚠️ Errore nel caricamento delle View: {e}")
 
+    # 2. Sincronizza i comandi Slash (incluso /cucina)
+    try:
+        # Sincronizzazione globale
+        synced = await bot.tree.sync()
+        print(f"🔄 Sincronizzati {len(synced)} comandi slash!")
+    except Exception as e:
+        print(f"❌ Errore durante la sincronizzazione: {e}")
+
+    print(f"✅ Bot Online! Loggato come: {bot.user}")
+
+# Controllo autorizzazione server
 @bot.tree.interaction_check
 async def check_guild(interaction: discord.Interaction):
     if interaction.guild_id not in ALLOWED_GUILDS:
@@ -4333,12 +4343,23 @@ async def check_guild(interaction: discord.Interaction):
         return False
     return True
 
+# Configurazione Flask per Render
 app = Flask("")
-@app.route("/")
-def home(): return "Bot Online"
-def run(): app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
-threading.Thread(target=run).start()
 
+@app.route("/")
+def home(): 
+    return "Bot Online"
+
+def run(): 
+    # Render usa la porta 10000 di default, os.environ.get la recupera correttamente
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
+
+# Avvio del Web Server in un thread separato
+threading.Thread(target=run, daemon=True).start()
+
+# Avvio finale del Bot
 bot.run(TOKEN)
+
 
 
