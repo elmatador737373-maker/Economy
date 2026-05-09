@@ -3022,30 +3022,31 @@ class ModificaStipendioModal(discord.ui.Modal, title="Modifica Stipendio Turno")
 
 # --- VIEW PER LO STAFF (Persistente) ---
 class TurnoStaffView(discord.ui.View):
-    def __init__(self, user_id=None, stipendio=None, ore=None, ruolo_nome=None):
+    def __init__(self):
+        # Fondamentale: timeout=None per la persistenza
         super().__init__(timeout=None)
-        
-        # Se i dati sono presenti, li iniettiamo nei bottoni
-        if user_id is not None:
-            # Formato: "user_id:stipendio:ore:ruolo"
-            data = f"{user_id}:{stipendio}:{ore}:{ruolo_nome}"
-            self.approva_btn.custom_id = f"turno_app:{data}"
-            self.rifiuta_btn.custom_id = f"turno_rif:{data}"
-            self.modifica_btn.custom_id = f"turno_mod:{data}"
 
-    def parse_data(self, custom_id):
-        # Splitta saltando il prefisso (turno_app:)
-        parts = custom_id.split(":")[1:]
-        return {
-            "user_id": int(parts[0]),
-            "stipendio": int(parts[1]),
-            "ore": float(parts[2]), # Ore potrebbero essere decimali
-            "ruolo": parts[3]
-        }
+    def parse_data_from_embed(self, embed):
+        """Estrae i dati dal footer dell'embed dello staff"""
+        try:
+            # Formato previsto nel footer: "ID: 123 | Stipendio: 500 | Ore: 2.5 | Ruolo: Polizia"
+            footer = embed.footer.text
+            parts = footer.split(" | ")
+            return {
+                "user_id": int(parts[0].replace("ID: ", "")),
+                "stipendio": int(parts[1].replace("Stipendio: ", "")),
+                "ore": float(parts[2].replace("Ore: ", "")),
+                "ruolo": parts[3].replace("Ruolo: ", "")
+            }
+        except Exception as e:
+            print(f"❌ Errore parsing turno: {e}")
+            return None
 
-    @discord.ui.button(label="Approva", style=discord.ButtonStyle.success)
+    @discord.ui.button(label="Approva", style=discord.ButtonStyle.success, custom_id="turno_staff_approva")
     async def approva_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        d = self.parse_data(button.custom_id)
+        d = self.parse_data_from_embed(interaction.message.embeds[0])
+        if not d: return await interaction.response.send_message("Errore dati.", ephemeral=True)
+
         conn = get_db_connection()
         cur = conn.cursor()
         cur.execute("UPDATE users SET bank = bank + %s, ore_lavorate = ore_lavorate + %s WHERE user_id = %s", 
@@ -3055,15 +3056,18 @@ class TurnoStaffView(discord.ui.View):
         
         await interaction.response.edit_message(content=f"✅ **APPROVATO**: {d['stipendio']}€ accreditati a <@{d['user_id']}>.", embed=None, view=None)
 
-    @discord.ui.button(label="Rifiuta", style=discord.ButtonStyle.danger)
+    @discord.ui.button(label="Rifiuta", style=discord.ButtonStyle.danger, custom_id="turno_staff_rifiuta")
     async def rifiuta_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        d = self.parse_data(button.custom_id)
+        d = self.parse_data_from_embed(interaction.message.embeds[0])
+        if not d: return
         await interaction.response.edit_message(content=f"❌ **RIFIUTATO**: Turno di <@{d['user_id']}> annullato.", embed=None, view=None)
 
-    @discord.ui.button(label="Modifica Importo", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="Modifica Importo", style=discord.ButtonStyle.secondary, custom_id="turno_staff_modifica")
     async def modifica_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        d = self.parse_data(button.custom_id)
+        d = self.parse_data_from_embed(interaction.message.embeds[0])
+        if not d: return
         await interaction.response.send_modal(ModificaStipendioModal(d['user_id'], d['ore'], d['ruolo']))
+
 
 # --- COMANDI SLASH ---
 
@@ -4368,6 +4372,7 @@ async def on_ready():
     try:
         bot.add_view(VerificaView())
         bot.add_view(RapinaStaffView())
+        bot.add_view(TurnoStaffView())
         print('✅ Persistenza caricata: Verifica, Rapine e Turni.')
     except Exception as e:
         print(f"⚠️ Errore nel caricamento delle View: {e}")
