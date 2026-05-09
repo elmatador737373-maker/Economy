@@ -1609,72 +1609,63 @@ async def aggiungi(interaction: discord.Interaction, id_messaggio: str, testo_bo
 
 import discord
 from discord import app_commands, Interaction
+import discord
 
-# --- MODAL PER LA MODIFICA DELL'IMPORTO ---
-class ModificaBottinoModal(discord.ui.Modal, title="Modifica Bottino Rapina"):
-    nuovo_importo = discord.ui.TextInput(label="Nuovo Ammontare (€)", placeholder="Inserisci la cifra...", required=True)
-    
-    def __init__(self, user_id, luogo, msg_utente_id, canale_utente_id):
-        super().__init__()
-        self.user_id = user_id
-        self.luogo = luogo
-        self.msg_utente_id = msg_utente_id
-        self.canale_utente_id = canale_utente_id
-
-    async def on_submit(self, interaction: discord.Interaction):
-        try:
-            valore = int(self.nuovo_importo.value)
-            
-            # Aggiornamento Database
-            conn = get_db_connection()
-            cur = conn.cursor()
-            cur.execute("UPDATE users SET wallet = wallet + %s WHERE user_id = %s", (valore, str(self.user_id)))
-            conn.commit()
-            cur.close(); conn.close()
-            
-            # 1. Aggiorna Embed Utente nel canale rapina
-            await self.aggiorna_messaggio_utente(interaction, valore, "⚠️ **BOTTINO MODIFICATO**", discord.Color.orange())
-            
-            # 2. Invia DM all'utente
-            await self.invia_dm_esito(interaction, f"⚠️ Lo staff ha modificato e approvato il tuo bottino per la rapina a **{self.luogo}**. Ricevuti: **{valore}€**")
-
-            await interaction.response.edit_message(content=f"✍️ **BOTTINO MODIFICATO**: Accreditati **{valore}€** a <@{self.user_id}>.", embed=None, view=None)
-        except ValueError:
-            await interaction.response.send_message("❌ Inserisci un numero valido!", ephemeral=True)
-
-    async def aggiorna_messaggio_utente(self, interaction, valore, esito_testo, colore):
-        try:
-            canale = interaction.guild.get_channel(self.canale_utente_id)
-            msg = await canale.fetch_message(self.msg_utente_id)
-            embed = msg.embeds[0]
-            embed.color = colore
-            embed.set_field_at(0, name="Stato", value=esito_testo)
-            embed.add_field(name="Importo Finale", value=f"**{valore}€**", inline=False)
-            await msg.edit(embed=embed)
-        except: pass
-
-    async def invia_dm_esito(self, interaction, testo):
-        try:
-            user = await interaction.guild.fetch_member(int(self.user_id))
-            if user: await user.send(testo)
-        except: pass
-
-
-# --- VIEW PER LO STAFF ---
 class RapinaStaffView(discord.ui.View):
-    def __init__(self, user_id, ammontare, luogo, msg_utente_id, canale_utente_id):
+    def __init__(self, user_id=None, ammontare=None, luogo=None, msg_utente_id=None, canale_utente_id=None):
         super().__init__(timeout=None)
-        self.user_id = user_id
-        self.ammontare = ammontare
-        self.luogo = luogo
-        self.msg_utente_id = msg_utente_id
-        self.canale_utente_id = canale_utente_id
+        
+        # Se i dati sono passati (nuova rapina), li usiamo per i bottoni
+        if user_id:
+            # Codifichiamo i dati nel custom_id: "prefix:user_id:ammontare:luogo:msg_id:chan_id"
+            base_id = f"{user_id}:{ammontare}:{luogo}:{msg_utente_id}:{canale_utente_id}"
+            self.conferma_btn.custom_id = f"rapina_conf:{base_id}"
+            self.annulla_btn.custom_id = f"rapina_ann:{base_id}"
+            self.modifica_btn.custom_id = f"rapina_mod:{base_id}"
 
-    async def aggiorna_originale(self, interaction, esito, colore, finale=None):
-        """Helper per aggiornare l'embed che vede il cittadino"""
+    async def parse_id(self, custom_id):
+        # Estrae i dati dal custom_id salvato nel bottone
+        parts = custom_id.split(":")
+        return {
+            "user_id": int(parts[1]),
+            "ammontare": int(parts[2]),
+            "luogo": parts[3],
+            "msg_utente_id": int(parts[4]),
+            "canale_utente_id": int(parts[5])
+        }
+
+    @discord.ui.button(label="Conferma", style=discord.ButtonStyle.success)
+    async def conferma_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        data = await self.parse_id(button.custom_id)
+        
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("UPDATE users SET wallet = wallet + %s WHERE user_id = %s", (data['ammontare'], str(data['user_id'])))
+        conn.commit()
+        cur.close(); conn.close()
+        
+        await self.aggiorna_originale(interaction, data, "✅ **BOTTINO APPROVATO**", discord.Color.green(), data['ammontare'])
+        await self.notificami(interaction, data['user_id'], f"✅ Il tuo bottino per la rapina a **{data['luogo']}** è stato approvato! Ricevuti: **{data['ammontare']}€**")
+        await interaction.response.edit_message(content=f"✅ **APPROVATA**: {data['ammontare']}€ a <@{data['user_id']}>.", embed=None, view=None)
+
+    @discord.ui.button(label="Annulla", style=discord.ButtonStyle.danger)
+    async def annulla_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        data = await self.parse_id(button.custom_id)
+        await self.aggiorna_originale(interaction, data, "❌ **RAPINA ANNULLATA**", discord.Color.red())
+        await self.notificami(interaction, data['user_id'], f"❌ La tua rapina a **{data['luogo']}** è stata annullata dallo staff.")
+        await interaction.response.edit_message(content=f"❌ **RIFIUTATA**: Colpo di <@{data['user_id']}> invalidato.", embed=None, view=None)
+
+    @discord.ui.button(label="Modifica Importo", style=discord.ButtonStyle.secondary)
+    async def modifica_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        data = await self.parse_id(button.custom_id)
+        # Passiamo i dati al Modal
+        await interaction.response.send_modal(ModificaBottinoModal(data['user_id'], data['luogo'], data['msg_utente_id'], data['canale_utente_id']))
+
+    # --- Helper Methods ---
+    async def aggiorna_originale(self, interaction, data, esito, colore, finale=None):
         try:
-            canale = interaction.guild.get_channel(self.canale_utente_id)
-            msg = await canale.fetch_message(self.msg_utente_id)
+            canale = interaction.guild.get_channel(data['canale_utente_id'])
+            msg = await canale.fetch_message(data['msg_utente_id'])
             embed = msg.embeds[0]
             embed.color = colore
             embed.set_field_at(0, name="Stato", value=esito)
@@ -1683,38 +1674,11 @@ class RapinaStaffView(discord.ui.View):
             await msg.edit(embed=embed)
         except: pass
 
-    async def notificami(self, interaction, testo):
-        """Helper per inviare il DM"""
+    async def notificami(self, interaction, user_id, testo):
         try:
-            user = await interaction.guild.fetch_member(int(self.user_id))
+            user = await interaction.guild.fetch_member(user_id)
             if user: await user.send(testo)
         except: pass
-
-    @discord.ui.button(label="Conferma", style=discord.ButtonStyle.success)
-    async def conferma(self, interaction: discord.Interaction, button: discord.ui.Button):
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute("UPDATE users SET wallet = wallet + %s WHERE user_id = %s", (self.ammontare, str(self.user_id)))
-        conn.commit()
-        cur.close(); conn.close()
-        
-        await self.aggiorna_originale(interaction, "✅ **BOTTINO APPROVATO**", discord.Color.green(), self.ammontare)
-        await self.notificami(interaction, f"✅ Il tuo bottino per la rapina a **{self.luogo}** è stato approvato! Ricevuti: **{self.ammontare}€**")
-
-        await interaction.response.edit_message(content=f"✅ **APPROVATA**: {self.ammontare}€ a <@{self.user_id}>.", embed=None, view=None)
-
-    @discord.ui.button(label="Annulla", style=discord.ButtonStyle.danger)
-    async def annulla(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.aggiorna_originale(interaction, "❌ **RAPINA ANNULLATA**", discord.Color.red())
-        await self.notificami(interaction, f"❌ La tua rapina a **{self.luogo}** è stata annullata dallo staff.")
-
-        await interaction.response.edit_message(content=f"❌ **RIFIUTATA**: Colpo di <@{self.user_id}> invalidato.", embed=None, view=None)
-
-    @discord.ui.button(label="Modifica Importo", style=discord.ButtonStyle.secondary)
-    async def modifica(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # Passiamo tutti i dati necessari al Modal
-        await interaction.response.send_modal(ModificaBottinoModal(self.user_id, self.luogo, self.msg_utente_id, self.canale_utente_id))
-
 
 # --- ESEMPIO DI INVIO NEL COMANDO RAPINA ---
 # Quando invii il messaggio all'utente nel comando:
@@ -3016,7 +2980,8 @@ async def conto(interaction: discord.Interaction):
 
     await interaction.response.send_message(embed=embed)
 
- # --- COMANDO INIZIO TURNO (Ruolo Libero) ---
+import discord
+
 # --- MODAL PER MODIFICA STIPENDIO ---
 class ModificaStipendioModal(discord.ui.Modal, title="Modifica Stipendio Turno"):
     nuovo_importo = discord.ui.TextInput(label="Nuovo Totale (€)", placeholder="Inserisci la cifra corretta...")
@@ -3035,10 +3000,10 @@ class ModificaStipendioModal(discord.ui.Modal, title="Modifica Stipendio Turno")
             cur.execute("""
                 UPDATE users SET bank = bank + %s, ore_lavorate = ore_lavorate + %s 
                 WHERE user_id = %s
-            """, (valore, self.ore, self.user_id))
+            """, (valore, self.ore, str(self.user_id)))
             conn.commit()
-            cur.close()
-            conn.close()
+            cur.close(); conn.close()
+            
             await interaction.response.edit_message(
                 content=f"✍️ **STIPENDIO MODIFICATO**: Accreditati **{valore}€** a <@{self.user_id}> (Ruolo: {self.ruolo_nome}).", 
                 embed=None, view=None
@@ -3046,33 +3011,50 @@ class ModificaStipendioModal(discord.ui.Modal, title="Modifica Stipendio Turno")
         except ValueError:
             await interaction.response.send_message("❌ Inserisci un numero valido!", ephemeral=True)
 
-# --- VIEW PER LO STAFF (BOTTONI) ---
+# --- VIEW PER LO STAFF (Persistente) ---
 class TurnoStaffView(discord.ui.View):
-    def __init__(self, user_id, stipendio, ore, ruolo_nome):
+    def __init__(self, user_id=None, stipendio=None, ore=None, ruolo_nome=None):
         super().__init__(timeout=None)
-        self.user_id = user_id
-        self.stipendio = stipendio
-        self.ore = ore
-        self.ruolo_nome = ruolo_nome
+        
+        # Se i dati sono presenti, li iniettiamo nei bottoni
+        if user_id is not None:
+            # Formato: "user_id:stipendio:ore:ruolo"
+            data = f"{user_id}:{stipendio}:{ore}:{ruolo_nome}"
+            self.approva_btn.custom_id = f"turno_app:{data}"
+            self.rifiuta_btn.custom_id = f"turno_rif:{data}"
+            self.modifica_btn.custom_id = f"turno_mod:{data}"
+
+    def parse_data(self, custom_id):
+        # Splitta saltando il prefisso (turno_app:)
+        parts = custom_id.split(":")[1:]
+        return {
+            "user_id": int(parts[0]),
+            "stipendio": int(parts[1]),
+            "ore": float(parts[2]), # Ore potrebbero essere decimali
+            "ruolo": parts[3]
+        }
 
     @discord.ui.button(label="Approva", style=discord.ButtonStyle.success)
-    async def conferma(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def approva_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        d = self.parse_data(button.custom_id)
         conn = get_db_connection()
         cur = conn.cursor()
         cur.execute("UPDATE users SET bank = bank + %s, ore_lavorate = ore_lavorate + %s WHERE user_id = %s", 
-                   (self.stipendio, self.ore, self.user_id))
+                   (d['stipendio'], d['ore'], str(d['user_id'])))
         conn.commit()
-        cur.close()
-        conn.close()
-        await interaction.response.edit_message(content=f"✅ **APPROVATO**: {self.stipendio}€ accreditati a <@{self.user_id}>.", embed=None, view=None)
+        cur.close(); conn.close()
+        
+        await interaction.response.edit_message(content=f"✅ **APPROVATO**: {d['stipendio']}€ accreditati a <@{d['user_id']}>.", embed=None, view=None)
 
     @discord.ui.button(label="Rifiuta", style=discord.ButtonStyle.danger)
-    async def annulla(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.edit_message(content=f"❌ **RIFIUTATO**: Turno di <@{self.user_id}> annullato.", embed=None, view=None)
+    async def rifiuta_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        d = self.parse_data(button.custom_id)
+        await interaction.response.edit_message(content=f"❌ **RIFIUTATO**: Turno di <@{d['user_id']}> annullato.", embed=None, view=None)
 
     @discord.ui.button(label="Modifica Importo", style=discord.ButtonStyle.secondary)
-    async def modifica(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(ModificaStipendioModal(self.user_id, self.ore, self.ruolo_nome))
+    async def modifica_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        d = self.parse_data(button.custom_id)
+        await interaction.response.send_modal(ModificaStipendioModal(d['user_id'], d['ore'], d['ruolo']))
 
 # --- COMANDI SLASH ---
 
@@ -4387,6 +4369,27 @@ async def on_ready():
         print(f"❌ Errore durante la sincronizzazione: {e}")
 
     print(f"✅ Bot Online! Loggato come: {bot.user}")
+@bot.event
+async def on_ready():
+    # 1. Rendiamo la View persistente
+    # La inizializziamo senza argomenti perché i dati sono salvati nei custom_id dei bottoni
+    bot.add_view(RapinaStaffView())
+    
+    # 2. Feedback in console
+    print(f'{"-"*30}')
+    print(f'🤖 Bot Online: {bot.user}')
+    print(f'💾 View Persistente: CARICATA')
+    print(f'{"-"*30}')
+@bot.event
+async def on_ready():
+    # Registra entrambe le View per renderle persistenti
+    bot.add_view(RapinaStaffView())
+    bot.add_view(TurnoStaffView()) # <--- Aggiunta questa
+    
+    print(f'--- BOT ONLINE COME {bot.user} ---')
+    print('✅ Persistenza Rapine caricata.')
+    print('✅ Persistenza Turni caricata.')
+
 
 # Controllo autorizzazione server
 @bot.tree.interaction_check
