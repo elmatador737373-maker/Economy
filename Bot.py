@@ -2819,7 +2819,7 @@ async def sondaggio(interaction: discord.Interaction, ora: str):
                 await member.send(embed=embed_dm)
                 success += 1
                 # Pausa per evitare il rate limit globale
-                await asyncio.sleep(0.5) 
+                await asyncio.sleep(5) 
             except discord.Forbidden:
                 failed += 1
             except Exception:
