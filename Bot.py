@@ -2871,19 +2871,28 @@ class VerificaView(discord.ui.View):
             await interaction.followup.send(f"❌ Errore: {e}", ephemeral=True)
 
 
-# --- COMANDO RP ON ---
+# --- COMANDO RP ON (VERSIONE PULITA) ---
 @bot.tree.command(name="rpon", description="Segnala che l'RP è ONLINE")
 @app_commands.checks.has_role(1253707509399683202)
-async def rpon(interaction: discord.Interaction):
+@app_commands.describe(psn_id="Inserisci il tuo ID PlayStation Network")
+async def rpon(interaction: discord.Interaction, psn_id: str):
+    # Creazione dell'embed con focus su Status, Utente e PSN
     embed = discord.Embed(
-        title="🟢 RP ONLINE",
-        description="La sessione di Roleplay è ufficialmente **APERTA**. Potete entrare!",
-        color=discord.Color.green()
+        title="Server Status",
+        description=f"***Roleplay On da :*** {interaction.user.mention}",
+        color=discord.Color.blue()
     )
+    
+    # Campo dedicato all'ID PSN
+    embed.add_field(name="🎮 ID PSN", value=f"**{psn_id}**", inline=False)
+    
+    # Footer opzionale per dare un tocco professionale
+    embed.set_footer(text="Evren City RP • Sessione Aperta")
+    
+    if interaction.guild.icon:
+        embed.set_thumbnail(url=interaction.guild.icon.url)
+
     await interaction.response.send_message(embed=embed)
-import asyncio
-import discord
-from discord import app_commands
 
 @bot.tree.command(name="sondaggio", description="Crea un sondaggio per l'orario dell'RP")
 @app_commands.describe(ora="Inserisci l'orario (es. 21:30)")
