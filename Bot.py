@@ -384,6 +384,9 @@ async def crea_documento(
                 tipo_documento=EXCLUDED.tipo_documento
         """, valori_documento)
         
+        await interaction.user.add_roles(discord.Object(id=1278673173172453418))
+        await interaction.user.remove_roles(discord.Object(id=1278680093044113469))
+
         conn.commit()
         cur.close()
         conn.close()
