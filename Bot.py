@@ -4368,7 +4368,6 @@ async def on_ready():
     try:
         bot.add_view(VerificaView())
         bot.add_view(RapinaStaffView())
-        bot.add_view(TurnoStaffView())
         print('✅ Persistenza caricata: Verifica, Rapine e Turni.')
     except Exception as e:
         print(f"⚠️ Errore nel caricamento delle View: {e}")
@@ -4395,11 +4394,6 @@ async def check_guild(interaction: discord.Interaction):
 
 # --- Configurazione Flask per Render ---
 app = Flask("")
-
-@app.route("/")
-def home(): 
-    return "Bot Online"
-
 
 @app.route("/")
 def home(): 
