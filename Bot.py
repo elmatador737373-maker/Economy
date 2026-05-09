@@ -465,6 +465,22 @@ async def mostra_documento(interaction: discord.Interaction, cittadino: discord.
         print(f"[LOG ERROR] Errore nel comando mostra: {e}")
         await interaction.followup.send(f"❌ Errore grafico imprevisto: {e}")
 
+@bot.event
+async def on_voice_state_update(member, before, after):
+    # ID del canale vocale da monitorare
+    VC_TARGET_ID = 1252225096827928607
+    # ID del canale testuale dove inviare la notifica
+    LOG_CHANNEL_ID = 1411290694257213440
+    # ID del ruolo da taggare
+    ROLE_ID = 1253634976243646527
+
+    # Controllo: l'utente è entrato nel VC target?
+    # (before.channel != after.channel assicura che non si attivi se muta solo il microfono)
+    if after.channel and after.channel.id == VC_TARGET_ID and before.channel != after.channel:
+        channel = bot.get_channel(LOG_CHANNEL_ID)
+        if channel:
+            # Invio del messaggio con i tag richiesti
+            await channel.send(f"<@&{ROLE_ID}> è entrato {member.mention} in <#{VC_TARGET_ID}>")
 
 # --- COMANDO SETUP (ADMIN) ---
 @bot.tree.command(name="setup_polizia", description="[ADMIN] Imposta il ruolo che può gestire i tesserini")
