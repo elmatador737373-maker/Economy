@@ -3101,42 +3101,65 @@ async def inizia_turno(interaction: discord.Interaction, ruolo: discord.Role, pa
 @bot.tree.command(name="finisci_turno", description="Termina il turno e richiedi stipendio")
 async def finisci_turno(interaction: discord.Interaction):
     await interaction.response.defer()
+    
     conn = get_db_connection()
     from psycopg2.extras import RealDictCursor
     cur = conn.cursor(cursor_factory=RealDictCursor)
     
-    cur.execute("SELECT *, EXTRACT(EPOCH FROM (NOW() - inizio)) / 3600 AS ore FROM turni WHERE user_id = %s", (str(interaction.user.id),))
+    # 1. Recupero dati turno e ore passate
+    cur.execute("""
+        SELECT *, EXTRACT(EPOCH FROM (NOW() - inizio)) / 3600 AS ore 
+        FROM turni WHERE user_id = %s
+    """, (str(interaction.user.id),))
     turno = cur.fetchone()
-    cur.execute("SELECT setting_value FROM server_settings WHERE setting_name = 'canale_paghe'")
-    res_canale = cur.fetchone()
     
-    if not turno or not res_canale:
-        cur.close()
-        conn.close()
-        return await interaction.followup.send("❌ Turno non attivo o canale non configurato.")
+    if not turno:
+        cur.close(); conn.close()
+        return await interaction.followup.send("❌ Non hai un turno attivo.")
 
+    # 2. Calcolo stipendio
     dati = turno['ruolo'].split('|')
     nome_ruolo, paga_h = dati[0], int(dati[1])
     ore_lavorate = round(float(turno['ore']), 2)
     stipendio = int(ore_lavorate * paga_h)
     
+    # 3. Pulizia Database (rimuovo il turno attivo)
     cur.execute("DELETE FROM turni WHERE user_id = %s", (str(interaction.user.id),))
     conn.commit()
-    cur.close()
-    conn.close()
+    cur.close(); conn.close()
 
-    # Notifica Utente
-    embed_u = discord.Embed(title="🏁 TURNO FINITO", description=f"Ore: `{ore_lavorate}`\nRichiesta inviata allo staff.", color=discord.Color.orange())
+    # 4. Notifica all'utente
+    embed_u = discord.Embed(
+        title="🏁 TURNO FINITO", 
+        description=f"Hai lavorato per: `{ore_lavorate} ore`\nLa tua richiesta è stata inviata allo staff.", 
+        color=discord.Color.orange()
+    )
     await interaction.followup.send(embed=embed_u)
 
-    # Richiesta Staff
-    canale_staff = 1459566404100686009
+    # 5. Invio Richiesta allo STAFF (Canale Paghe)
+    # Assicurati che l'ID sia corretto e il bot abbia i permessi di scrittura
+    ID_CANALE_PAGHE = 1459566404100686009 
+    canale_staff = interaction.guild.get_channel(ID_CANALE_PAGHE)
+
     if canale_staff:
         embed_s = discord.Embed(title="💼 RICHIESTA STIPENDIO", color=discord.Color.blue())
-        embed_s.add_field(name="Utente", value=interaction.user.mention)
-        embed_s.add_field(name="Ruolo", value=nome_ruolo)
-        embed_s.add_field(name="Stipendio", value=f"{stipendio}€ ({ore_lavorate}h)")
-        await canale_staff.send(embed=embed_s, view=TurnoStaffView(str(interaction.user.id), stipendio, ore_lavorate, nome_ruolo))
+        embed_s.add_field(name="Utente", value=interaction.user.mention, inline=True)
+        embed_s.add_field(name="Ruolo", value=nome_ruolo, inline=True)
+        embed_s.add_field(name="Stipendio Calcolato", value=f"**{stipendio}€**", inline=False)
+        embed_s.add_field(name="Ore Totali", value=f"{ore_lavorate}h", inline=True)
+        
+        # Creiamo la View passandogli i dati per i custom_id persistenti
+        view_staff = TurnoStaffView(
+            user_id=interaction.user.id, 
+            stipendio=stipendio, 
+            ore=ore_lavorate, 
+            ruolo_nome=nome_ruolo
+        )
+        
+        await canale_staff.send(embed=embed_s, view=view_staff)
+    else:
+        # Se il bot non trova il canale tramite ID
+        print(f"⚠️ Errore: Non riesco a trovare il canale staff con ID {ID_CANALE_PAGHE}")
 
 
 class WipeConfirmView(discord.ui.View):
