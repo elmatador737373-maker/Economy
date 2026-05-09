@@ -2645,15 +2645,7 @@ async def finisci_raccolta(interaction: discord.Interaction):
         print(f"Errore finisci_raccolta: {e}")
         await interaction.followup.send("❌ Errore nel processare la fine della raccolta.", ephemeral=True)
 
-@bot.command()
-@commands.is_owner() # Solo il proprietario del bot può usarlo per sicurezza
-async def sync(ctx):
-    try:
-        # Sincronizza i comandi con l'API di Discord
-        synced = await bot.tree.sync()
-        await ctx.send(f"✅ Sincronizzazione completata! {len(synced)} comandi slash sono ora attivi.")
-    except Exception as e:
-        await ctx.send(f"❌ Si è verificato un errore durante il sync: {e}")
+
 # --- COMANDO AGGIORNATO ---
 @bot.tree.command(name="anonimo", description="Invia un messaggio criptato sulla rete segreta")
 @app_commands.describe(
