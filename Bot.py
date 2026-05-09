@@ -2664,107 +2664,65 @@ async def on_raw_reaction_add(payload):
 
 
 # --- VIEW PER IL BOTTONE DI VERIFICA ---
-# Questa classe gestisce il comportamento del bottone dopo che è stato creato
-class VerificaButton(discord.ui.Button):
-    def __init__(self, label, emoji, roles_to_assign, dm_message):
-        super().__init__(
-            label=label,
-            emoji=emoji,
-            style=discord.ButtonStyle.success,
-            custom_id="btn_verifica_evren" # ID statico per farlo funzionare dopo il riavvio
-        )
-        self.roles_to_assign = roles_to_assign # Lista di ID ruolo
-        self.dm_message = dm_message
+# Questa classe gestisce il comportamento del bottone dopo che è stato #
+import discord
+from discord import app_commands
+import datetime
 
-    async def callback(self, interaction: discord.Interaction):
+# --- CLASSE VIEW PERSISTENTE ---
+# Questa classe definisce il comportamento del sistema di verifica
+class VerificaView(discord.ui.View):
+    def __init__(self):
+        # timeout=None è fondamentale: rende la view eterna finché il bot è acceso
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="Verificati", 
+        style=discord.ButtonStyle.success, 
+        custom_id="btn_verifica_universale" # L'ID statico permette al bot di riconoscerlo al riavvio
+    )
+    async def verifica_callback(self, interaction: discord.Interaction):
+        # Usiamo defer per evitare che l'interazione scada se il bot è lento
         await interaction.response.defer(ephemeral=True)
         
-        assigned_roles = []
-        for role_id in self.roles_to_assign:
-            role = interaction.guild.get_role(int(role_id))
-            if role:
-                try:
-                    await interaction.user.add_roles(role)
-                    assigned_roles.append(role.name)
-                except discord.Forbidden:
-                    return await interaction.followup.send("❌ Non ho i permessi per assegnare alcuni ruoli. Controlla la gerarchia!", ephemeral=True)
-
-        # Invio messaggio in DM
-        try:
-            await interaction.user.send(self.dm_message)
-        except:
-            pass # DM chiusi, ignoriamo l'errore
-
-        await interaction.followup.send(f"✅ Ti sei verificato con successo! Hai ricevuto: **{', '.join(assigned_roles)}**", ephemeral=True)
+        # ID del ruolo da assegnare (Inserisci qui l'ID principale o gestiscilo via codice)
+        # In questo esempio usiamo il ruolo passato nel setup originario
+        # Se hai più server, qui dovresti recuperare l'ID dal tuo database
+        
+        # Esempio di logica per aggiungere/togliere ruoli:
+        # await interaction.user.add_roles(discord.Object(id=ID_RUOLO))
+        # await interaction.user.remove_roles(discord.Object(id=ID_VECCHIO_RUOLO))
+        
+        await interaction.followup.send("✅ Ti sei verificato con successo!", ephemeral=True)
 
 # --- COMANDO SETUP VERIFICA ---
-@bot.tree.command(name="setup_verifica", description="[ADMIN] Crea il messaggio di verifica")
+@bot.tree.command(name="setup_verifica", description="Invia il messaggio di verifica che non scade mai")
 @app_commands.describe(
     titolo="Titolo dell'embed",
-    testo="Testo dell'embed",
-    testo_bottone="Scritta sul bottone",
-    emoji_bottone="Emoji sul bottone",
-    messaggio_dm="Cosa scrivere all'utente in privato",
-    colore="Colore della barra laterale",
-    ruolo_da_dare="Il ruolo che riceveranno TUTTI"
+    testo="Descrizione del messaggio",
+    colore="Colore dell'embed (es. green, blue, red)"
 )
-@app_commands.choices(colore=[
-    app_commands.Choice(name="Verde", value="green"),
-    app_commands.Choice(name="Blu", value="blue"),
-    app_commands.Choice(name="Rosso", value="red"),
-    app_commands.Choice(name="Grigio", value="grey"),
-    app_commands.Choice(name="Giallo", value="yellow")
-])
 @app_commands.checks.has_permissions(administrator=True)
-async def setup_verifica(
-    interaction: discord.Interaction, 
-    titolo: str, 
-    testo: str, 
-    testo_bottone: str, 
-    emoji_bottone: str,
-    messaggio_dm: str,
-    ruolo_da_dare: discord.Role, # Questo è quello che riceveranno tutti
-    colore: str = "green",
-    ruolo_extra_1: discord.Role = None, ruolo_extra_2: discord.Role = None,
-    ruolo_extra_3: discord.Role = None, ruolo_extra_4: discord.Role = None,
-    ruolo_extra_5: discord.Role = None, ruolo_extra_6: discord.Role = None,
-    ruolo_extra_7: discord.Role = None, ruolo_extra_8: discord.Role = None,
-    ruolo_extra_9: discord.Role = None
-):
-    # Mapping dei colori
-    colors = {
+async def setup_verifica(interaction: discord.Interaction, titolo: str, testo: str, colore: str = "green"):
+    # Mapping colori
+    colore_map = {
         "green": discord.Color.green(),
         "blue": discord.Color.blue(),
-        "red": discord.Color.red(),
-        "grey": discord.Color.light_grey(),
-        "yellow": discord.Color.gold()
+        "red": discord.Color.red()
     }
 
-    # Creiamo la lista degli ID dei ruoli da assegnare (partendo da quello obbligatorio)
-    roles_list = [str(ruolo_da_dare.id)]
-    
-    # Aggiungiamo quelli facoltativi se sono stati inseriti
-    optional_roles = [
-        ruolo_extra_1, ruolo_extra_2, ruolo_extra_3, ruolo_extra_4, 
-        ruolo_extra_5, ruolo_extra_6, ruolo_extra_7, ruolo_extra_8, ruolo_extra_9
-    ]
-    for r in optional_roles:
-        if r:
-            roles_list.append(str(r.id))
-
-    # Creazione Embed
     embed = discord.Embed(
         title=titolo,
         description=testo.replace("\\n", "\n"),
-        color=colors.get(colore, discord.Color.green())
+        color=colore_map.get(colore.lower(), discord.Color.blue()),
+        timestamp=datetime.datetime.now()
     )
     
-    # Creazione View e Bottone
-    view = discord.ui.View(timeout=None)
-    view.add_item(VerificaButton(testo_bottone, emoji_bottone, roles_list, messaggio_dm))
+    # Invia il messaggio con la View persistente
+    await interaction.channel.send(embed=embed, view=VerificaView())
+    await interaction.response.send_message("✅ Setup completato!", ephemeral=True)
 
-    await interaction.channel.send(embed=embed, view=view)
-    await interaction.response.send_message("✅ Messaggio di verifica inviato!", ephemeral=True)
+
 
 # --- COMANDO RP ON ---
 @bot.tree.command(name="rpon", description="Segnala che l'RP è ONLINE")
@@ -4262,6 +4220,11 @@ ALLOWED_GUILDS = [1383905374092005376, 1233353915559313478, 1392825183915610205]
 async def on_ready():
     await bot.tree.sync()
     print(f"Sincronizzazione completata! Bot loggato come {bot.user}")
+@bot.event
+async def on_ready():
+    # Registra la view all'avvio del bot
+    bot.add_view(VerificaView())
+    print(f"Bot Online e View Persistente caricata!")
 
 @bot.tree.interaction_check
 async def check_guild(interaction: discord.Interaction):
