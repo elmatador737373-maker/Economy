@@ -4373,6 +4373,7 @@ async def on_ready():
         bot.add_view(VerificaView())
         bot.add_view(RapinaStaffView())
         bot.add_view(TurnoStaffView())
+        bot.add_view(BackgroundStaffView())
         print('✅ Persistenza caricata: Verifica, Rapine e Turni.')
     except Exception as e:
         print(f"⚠️ Errore nel caricamento delle View: {e}")
