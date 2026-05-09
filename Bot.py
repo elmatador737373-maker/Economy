@@ -266,12 +266,24 @@ def calcola_date_id(data_nascita_str):
     
     return data_emissione, data_scadenza
     
-import discord
-from discord import app_commands
-import asyncio
 from menu_bellevue import MENU_DATI
 
+# --- COMANDO ADMIN PER IL SYNC (!) ---
+# Questo serve per forzare Discord a vedere i nuovi comandi /
+@bot.command(name="sync")
+@commands.has_permissions(administrator=True)
+async def sync(ctx):
+    try:
+        print("Tentativo di sincronizzazione dei comandi...")
+        synced = await bot.tree.sync()
+        print(f"Sincronizzati {len(synced)} comandi slash.")
+        await ctx.send(f"✅ Sincronizzati {len(synced)} comandi slash globalmente!")
+    except Exception as e:
+        print(f"Errore durante il sync: {e}")
+        await ctx.send(f"❌ Errore durante il sync: {e}")
+
 # --- VIEW INTERATTIVA ---
+# Gestisce il bottone che lo chef deve cliccare
 class InterazioneCucina(discord.ui.View):
     def __init__(self, timeout):
         super().__init__(timeout=timeout + 5)
@@ -286,74 +298,79 @@ class InterazioneCucina(discord.ui.View):
         await interaction.response.edit_message(view=self)
 
 # --- AUTOCOMPLETE ---
+# Suggerisce i piatti del menu mentre l'utente scrive
 async def piatto_autocomplete(interaction: discord.Interaction, current: str):
-    return [
-        app_commands.Choice(name=piatto, value=piatto)
-        for piatto in MENU_DATI.keys() if current.lower() in piatto.lower()
-    ][:25]
+    try:
+        return [
+            app_commands.Choice(name=piatto, value=piatto)
+            for piatto in MENU_DATI.keys() if current.lower() in piatto.lower()
+        ][:25]
+    except Exception as e:
+        print(f"Errore Autocomplete: {e}")
+        return []
 
 # --- COMANDO /CUCINA ---
 @bot.tree.command(name="cucina", description="Prepara un piatto del Bellevue (Richiede ruolo Chef)")
 @app_commands.autocomplete(piatto=piatto_autocomplete)
 async def cucina(interaction: discord.Interaction, piatto: str):
-    # 1. CONTROLLO RUOLO
     ID_RUOLO_CHEF = 1460674851269247151
+    
+    # 1. Verifica Ruolo
     if not any(r.id == ID_RUOLO_CHEF for r in interaction.user.roles):
-        return await interaction.response.send_message("❌ Non sei autorizzato a usare le cucine del Bellevue!", ephemeral=True)
+        return await interaction.response.send_message("❌ Non sei autorizzato a usare le cucine!", ephemeral=True)
 
+    # 2. Verifica Esistenza Piatto
     if piatto not in MENU_DATI:
         return await interaction.response.send_message("❌ Piatto non trovato nel menu.", ephemeral=True)
 
     info = MENU_DATI[piatto]
     await interaction.response.defer()
 
-    # 2. MESSAGGIO DI INIZIO
+    # 3. Creazione Embed di Inizio
     embed = discord.Embed(
         title="👨‍🍳 Ristorante Bellevue - Cucina",
-        description=f"Lo Chef **{interaction.user.display_name}** sta preparando: **{piatto}**\n\n"
-                    f"**Ingredienti:** *{info['desc']}*\n"
-                    f"**Tempo:** `{info['tempo']}s`",
+        description=f"Chef: **{interaction.user.display_name}**\nStai preparando: **{piatto}**\n\n"
+                    f"**Ingredienti:** *{info.get('desc', 'N/A')}*\n"
+                    f"**Tempo di attesa:** `{info['tempo']}s`",
         color=discord.Color.blue()
     )
     
     view = InterazioneCucina(info['tempo'])
     msg = await interaction.followup.send(embed=embed, view=view)
 
-    # 3. ATTESA COTTURA
+    # 4. Fase di Cottura (Attesa Reale)
     await asyncio.sleep(info['tempo'])
 
-    # 4. ESITO
+    # 5. Controllo Esito
     if not view.cliccato:
-        # Se non ha cliccato il bottone, il piatto si brucia
+        # Se il bottone non è stato premuto
         embed.title = "🔥 PIATTO BRUCIATO!"
-        embed.description = f"Ti sei distratto e il **{piatto}** è diventato cenere! Non è stato aggiunto nulla all'inventario."
+        embed.description = f"Chef {interaction.user.display_name}, ti sei distratto! Il **{piatto}** è diventato cenere."
         embed.color = discord.Color.red()
         await msg.edit(embed=embed, view=None)
     else:
-        # Successo: Consegna l'item nel database
+        # Successo: Aggiunta Item alla tabella public.inventory
         try:
             conn = get_db_connection()
             cur = conn.cursor()
-            
-            # Query per la tua tabella 'inventory'
             cur.execute("""
                 INSERT INTO public.inventory (user_id, item_name, quantity) 
                 VALUES (%s, %s, 1)
                 ON CONFLICT (user_id, item_name) 
                 DO UPDATE SET quantity = public.inventory.quantity + 1
             """, (str(interaction.user.id), piatto))
-            
             conn.commit()
             cur.close(); conn.close()
 
             embed.title = "🍽️ Servizio Completato!"
-            embed.description = f"Il **{piatto}** è pronto! È stato impiantato e aggiunto al tuo inventario."
+            embed.description = f"Ottimo lavoro! Il **{piatto}** è pronto e aggiunto all'inventario."
             embed.color = discord.Color.green()
             await msg.edit(embed=embed, view=None)
+            print(f"LOG: {interaction.user.name} ha cucinato {piatto}")
             
         except Exception as e:
-            print(f"[LOG ERROR] Errore Database Cucina: {e}")
-            await interaction.followup.send(f"❌ Errore nel database: {e}", ephemeral=True)
+            print(f"ERRORE DB: {e}")
+            await interaction.followup.send(f"❌ Errore durante il salvataggio: {e}", ephemeral=True)
 
 import discord
 from discord import app_commands
