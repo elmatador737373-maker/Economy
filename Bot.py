@@ -3130,7 +3130,7 @@ async def finisci_turno(interaction: discord.Interaction):
     await interaction.followup.send(embed=embed_u)
 
     # Richiesta Staff
-    canale_staff = interaction.guild.get_channel(int(res_canale['setting_value']))
+    canale_staff = 1459566404100686009
     if canale_staff:
         embed_s = discord.Embed(title="💼 RICHIESTA STIPENDIO", color=discord.Color.blue())
         embed_s.add_field(name="Utente", value=interaction.user.mention)
