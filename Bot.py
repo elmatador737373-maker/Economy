@@ -2108,50 +2108,84 @@ async def setup_wl(
     app_commands.Choice(name="❌ Rifiutata", value="rifiutato")
 ])
 async def esito_wl(interaction: discord.Interaction, utente: discord.Member, esito: app_commands.Choice[str], errori: int):
+    # --- CONFIGURAZIONE RUOLI FISSI ---
+    RUOLO_STAFF_ID = 1253634976243646527
+    
+    # Ruoli da aggiungere se PASSATA
+    RUOLI_PASSATA = [
+        1346490158505263183, # Tutti
+        1253463763471040550, # Approvad member
+        1359878894840447066, # Disoccupato
+        1278680093044113469, # No documentado
+        1253752632820895817  # Fedina penale pulita
+    ]
+    
+    # Ruoli da rimuovere se PASSATA
+    RUOLI_DA_RIMUOVERE = [
+        1502380869938315284, # Landing
+        1421433939574132746, # Bienvenido
+        1421434530283126805  # A mexico
+    ]
+
+    # --- CONTROLLO PERMESSO STAFF ---
+    ruolo_staff = interaction.guild.get_role(RUOLO_STAFF_ID)
+    if ruolo_staff not in interaction.user.roles:
+        return await interaction.response.send_message(
+            f"❌ Non hai i permessi necessari ({ruolo_staff.mention}) per usare questo comando.", 
+            ephemeral=True
+        )
+
+    await interaction.response.defer()
+
+    # --- LOGICA DB (Mantenuta per ruoli dinamici se presenti) ---
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
     cur.execute("SELECT * FROM wl_config WHERE guild_id = %s", (str(interaction.guild.id),))
     config = cur.fetchone()
     cur.close(); conn.close()
 
-    if not config:
-        return await interaction.response.send_message("❌ Sistema non configurato.", ephemeral=True)
+    # --- GESTIONE RUOLI UTENTE ---
+    if esito.value == "accettato":
+        # Aggiunta ruoli lista fissa + eventuale ruolo dal DB
+        for r_id in RUOLI_PASSATA:
+            r = interaction.guild.get_role(r_id)
+            if r: await utente.add_roles(r)
+        
+        if config and config.get('ruolo_passata'):
+            r_db = interaction.guild.get_role(int(config['ruolo_passata']))
+            if r_db: await utente.add_roles(r_db)
 
-    # --- CONTROLLO RUOLO ABILITATO ---
-    id_ruolo_esito = config.get('ruolo_abilitato_esito')
-    if id_ruolo_esito:
-        ruolo_necessario = interaction.guild.get_role(int(id_ruolo_esito))
-        if ruolo_necessario not in interaction.user.roles:
-            return await interaction.response.send_message(f"❌ Solo chi ha il ruolo {ruolo_necessario.mention} può dare esiti WL!", ephemeral=True)
+        # Rimozione ruoli specificati
+        for r_id in RUOLI_DA_RIMUOVERE:
+            r = interaction.guild.get_role(r_id)
+            if r: await utente.remove_roles(r)
 
-    await interaction.response.defer()
+    else:
+        # Se rifiutato, aggiunge solo il ruolo rifiutato dal DB se configurato
+        if config and config.get('ruolo_rifiutata'):
+            r_fail = interaction.guild.get_role(int(config['ruolo_rifiutata']))
+            if r_fail: await utente.add_roles(r_fail)
 
-    # Logica Estetica
+    # --- CREAZIONE ESTETICA EMBED ---
     color = discord.Color.green() if esito.value == "accettato" else discord.Color.red()
     emoji_status = "🟩" if esito.value == "accettato" else "🟥"
     
-    # Assegnazione Ruolo all'utente
-    role_to_add_id = config['ruolo_passata'] if esito.value == "accettato" else config['ruolo_rifiutata']
-    role_to_add = interaction.guild.get_role(int(role_to_add_id))
-    if role_to_add:
-        try: await utente.add_roles(role_to_add)
-        except: pass
+    display_staff_role = ruolo_staff.mention if ruolo_staff else "@Staffer"
 
-    # Recupero Ruolo Staff da mostrare nell'embed
-    display_staff_role = f"<@&{config['ruolo_staff']}>" if config['ruolo_staff'] else "@Staffer"
-
-    # Creazione Embed
     embed = discord.Embed(title=f"{emoji_status} | Approval notices", color=color)
     embed.set_thumbnail(url=interaction.guild.icon.url if interaction.guild.icon else None)
+    
     embed.add_field(name="Evrenians ❯❯", value=utente.mention, inline=False)
-    embed.add_field(name="Esito ❯❯", value=f"**{esito.value.upper()}**", inline=True)
+    embed.add_field(name="Esito ❯❯", value=f"**{esito.name}**", inline=True)
     embed.add_field(name="Errori ❯❯", value=f"**{errori}**", inline=True)
     embed.add_field(name="━━━━━━━━━━━━━━━━━━━━", value=" ", inline=False)
     embed.add_field(name=f"Da {display_staff_role} :", value=interaction.user.mention, inline=False)
+    
     embed.set_footer(text=f"Evren City RP • {discord.utils.utcnow().strftime('%d/%m/%Y')}")
 
     await interaction.followup.send(content=utente.mention, embed=embed)
-# --- LOGICA PER NOTIFICA DM E COMANDO SLASH CON AUTOCOMPLETE ---
+
+#A DM E COMANDO SLASH CON AUTOCOMPLETE ---
 
 YOUR_USER_ID =  1191824316376043580 #Inserisci il tuo ID
 
