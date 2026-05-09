@@ -3100,13 +3100,14 @@ async def inizia_turno(interaction: discord.Interaction, ruolo: discord.Role, pa
 
 @bot.tree.command(name="finisci_turno", description="Termina il turno e richiedi stipendio")
 async def finisci_turno(interaction: discord.Interaction):
+    # Usiamo defer perché il DB e il fetch del canale potrebbero richiedere tempo
     await interaction.response.defer()
     
     conn = get_db_connection()
     from psycopg2.extras import RealDictCursor
     cur = conn.cursor(cursor_factory=RealDictCursor)
     
-    # 1. Recupero dati turno e ore passate
+    # 1. Recupero dati turno e calcolo ore lavorate
     cur.execute("""
         SELECT *, EXTRACT(EPOCH FROM (NOW() - inizio)) / 3600 AS ore 
         FROM turni WHERE user_id = %s
@@ -3115,11 +3116,18 @@ async def finisci_turno(interaction: discord.Interaction):
     
     if not turno:
         cur.close(); conn.close()
-        return await interaction.followup.send("❌ Non hai un turno attivo.")
+        return await interaction.followup.send("❌ Non hai un turno attivo da terminare.")
 
-    # 2. Calcolo stipendio
-    dati = turno['ruolo'].split('|')
-    nome_ruolo, paga_h = dati[0], int(dati[1])
+    # 2. Estrazione dati dal database
+    # Assumendo che il campo ruolo sia nel formato "NomeRuolo|PagaOraria"
+    try:
+        dati = turno['ruolo'].split('|')
+        nome_ruolo = dati[0]
+        paga_h = int(dati[1])
+    except (IndexError, ValueError):
+        cur.close(); conn.close()
+        return await interaction.followup.send("❌ Errore nei dati del ruolo. Contatta un amministratore.")
+
     ore_lavorate = round(float(turno['ore']), 2)
     stipendio = int(ore_lavorate * paga_h)
     
@@ -3128,27 +3136,33 @@ async def finisci_turno(interaction: discord.Interaction):
     conn.commit()
     cur.close(); conn.close()
 
-    # 4. Notifica all'utente
+    # 4. Notifica all'utente che ha eseguito il comando
     embed_u = discord.Embed(
         title="🏁 TURNO FINITO", 
-        description=f"Hai lavorato per: `{ore_lavorate} ore`\nLa tua richiesta è stata inviata allo staff.", 
+        description=f"Hai lavorato per: `{ore_lavorate} ore`\nLa richiesta di stipendio (**{stipendio}€**) è stata inviata.", 
         color=discord.Color.orange()
     )
     await interaction.followup.send(embed=embed_u)
 
     # 5. Invio Richiesta allo STAFF (Canale Paghe)
-    # Assicurati che l'ID sia corretto e il bot abbia i permessi di scrittura
-    ID_CANALE_PAGHE = 1459566404100686009 
-    canale_staff = interaction.guild.get_channel(ID_CANALE_PAGHE)
+    ID_CANALE_STAFF = 1459566404100686009 
+    
+    # Tentativo di recupero canale (Cache -> API)
+    canale_staff = interaction.guild.get_channel(ID_CANALE_STAFF)
+    if not canale_staff:
+        try:
+            canale_staff = await interaction.guild.fetch_channel(ID_CANALE_STAFF)
+        except:
+            canale_staff = None
 
     if canale_staff:
         embed_s = discord.Embed(title="💼 RICHIESTA STIPENDIO", color=discord.Color.blue())
         embed_s.add_field(name="Utente", value=interaction.user.mention, inline=True)
         embed_s.add_field(name="Ruolo", value=nome_ruolo, inline=True)
-        embed_s.add_field(name="Stipendio Calcolato", value=f"**{stipendio}€**", inline=False)
+        embed_s.add_field(name="Stipendio", value=f"**{stipendio}€**", inline=False)
         embed_s.add_field(name="Ore Totali", value=f"{ore_lavorate}h", inline=True)
         
-        # Creiamo la View passandogli i dati per i custom_id persistenti
+        # Creiamo la View passandogli i dati che verranno salvati nei custom_id per la persistenza
         view_staff = TurnoStaffView(
             user_id=interaction.user.id, 
             stipendio=stipendio, 
@@ -3158,8 +3172,8 @@ async def finisci_turno(interaction: discord.Interaction):
         
         await canale_staff.send(embed=embed_s, view=view_staff)
     else:
-        # Se il bot non trova il canale tramite ID
-        print(f"⚠️ Errore: Non riesco a trovare il canale staff con ID {ID_CANALE_PAGHE}")
+        # Messaggio di errore in console se l'ID è ancora sbagliato o il bot non vede il canale
+        print(f"⚠️ Errore critico: Canale {ID_CANALE_STAFF} non trovato nemmeno con fetch_channel.")
 
 
 class WipeConfirmView(discord.ui.View):
