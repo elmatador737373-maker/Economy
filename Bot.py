@@ -310,6 +310,7 @@ async def piatto_autocomplete(interaction: discord.Interaction, current: str):
         return []
 
 # --- COMANDO /CUCINA ---
+print("Caricamento comando cucina...")
 @bot.tree.command(name="cucina", description="Prepara un piatto del Bellevue (Richiede ruolo Chef)")
 @app_commands.autocomplete(piatto=piatto_autocomplete)
 async def cucina(interaction: discord.Interaction, piatto: str):
