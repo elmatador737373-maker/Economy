@@ -2132,7 +2132,8 @@ async def esito_wl(interaction: discord.Interaction, utente: discord.Member, esi
     RUOLI_DA_RIMUOVERE = [
         1502380869938315284, # Landing
         1421433939574132746, # Bienvenido
-        1421434530283126805  # A mexico
+        1421434530283126805,
+        1253460158617620573
     ]
 
     # --- CONTROLLO PERMESSO STAFF ---
