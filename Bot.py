@@ -2843,11 +2843,11 @@ import asyncio
 import discord
 from discord import app_commands
 
-@bot.tree.command(name="sondaggio", description="Crea un sondaggio per l'orario dell'RP e avvisa tutti in DM")
+@bot.tree.command(name="sondaggio", description="Crea un sondaggio per l'orario dell'RP")
 @app_commands.describe(ora="Inserisci l'orario (es. 21:30)")
 @app_commands.checks.has_role(1253707509399683202)
 async def sondaggio(interaction: discord.Interaction, ora: str):
-    # Diciamo a Discord di aspettare, l'operazione sarà lunga
+    # Risposta immediata per confermare la ricezione del comando
     await interaction.response.defer(ephemeral=True)
     
     try:
@@ -2865,50 +2865,20 @@ async def sondaggio(interaction: discord.Interaction, ora: str):
         embed.add_field(name="🕒 Ritardo", value="In ritardo", inline=True)
         embed.set_footer(text="Evren City RP Staff")
         
-        # Invia il messaggio nel canale
+        # 2. Invio del messaggio nel canale con menzione @everyone
         messaggio = await interaction.channel.send(content="@everyone", embed=embed)
+        
+        # 3. Aggiunta delle reazioni per il voto
         await messaggio.add_reaction("✅")
         await messaggio.add_reaction("❌")
         await messaggio.add_reaction("🕒")
 
-        # 2. Preparazione DM
-        embed_dm = discord.Embed(
-            title="📢 NUOVO SONDAGGIO RP - EVREN CITY",
-            description=f"Ciao Cittadino! È stato indetto un sondaggio per la prossima sessione.\n\n"
-                        f"🕔 **Orario scelto:** {ora}\n"
-                        f"🔗 **Vota qui:** [Clicca per andare al sondaggio]({messaggio.jump_url})\n\n"
-                        "Assicurati di votare per aiutarci a organizzare l'RP!",
-            color=discord.Color.blue()
-        )
-        if interaction.guild.icon:
-            embed_dm.set_thumbnail(url=interaction.guild.icon.url)
-
-        # 3. Invio DM (Logica asincrona migliorata)
-        success = 0
-        failed = 0
-        
-        # Recupera tutti i membri (necessita di Members Intent)
-        members = interaction.guild.members
-        
-        for member in members:
-            if member.bot: 
-                continue
-            
-            try:
-                await member.send(embed=embed_dm)
-                success += 1
-                # Pausa per evitare il rate limit globale
-                await asyncio.sleep(5) 
-            except discord.Forbidden:
-                failed += 1
-            except Exception:
-                failed += 1
-
-        # Modifica il messaggio di defer iniziale per confermare la fine
-        await interaction.followup.send(f"✅ Sondaggio creato!\nDM inviati con successo: **{success}**\nFalliti (DM chiusi): **{failed}**")
+        # Messaggio di conferma visibile solo a chi ha eseguito il comando
+        await interaction.followup.send("✅ Sondaggio creato con successo nel canale!")
 
     except Exception as e:
-        await interaction.followup.send(f"Si è verificato un errore critico: {e}")
+        # Gestione errori in caso di problemi di permessi o altro
+        await interaction.followup.send(f"❌ Si è verificato un errore: {e}")
 
 # --- COMANDO RP OFF ---
 @bot.tree.command(name="rpoff", description="Segnala che l'RP è OFFLINE")
