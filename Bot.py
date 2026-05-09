@@ -282,96 +282,129 @@ async def sync(ctx):
         print(f"Errore durante il sync: {e}")
         await ctx.send(f"❌ Errore durante il sync: {e}")
 
-# --- VIEW INTERATTIVA ---
-# Gestisce il bottone che lo chef deve cliccare
-class InterazioneCucina(discord.ui.View):
-    def __init__(self, timeout):
-        super().__init__(timeout=timeout + 5)
-        self.cliccato = False
+class InterazioneCucinaRealistica(discord.ui.View):
+    def __init__(self, piatto, info, user, timeout):
+        super().__init__(timeout=timeout + 20)
+        self.piatto = piatto
+        self.info = info
+        self.user = user
+        self.strumento_attivo = None
+        self.stato_cottura = 0
+        self.cliccato_cottura = False
+        
+        nome_p = piatto.lower()
+        # --- LOGICA STRUMENTI AGGIORNATA ---
+        if any(x in nome_p for x in ["pizza", "focaccia", "pane"]):
+            self.strumento_necessario = "Forno a Legna"
+            self.fase_cottura = "Infornare"
+        elif any(x in nome_p for x in ["pasta", "spaghetti", "riso", "zuppa inglese"]): # La zuppa inglese usa la pentola per la crema
+            self.strumento_necessario = "Pentola"
+            self.fase_cottura = "Bollire/Cuocere crema"
+        elif any(x in nome_p for x in ["carne", "bistecca", "hamburger", "uova"]):
+            self.strumento_necessario = "Padella"
+            self.fase_cottura = "Grigliare"
+        elif any(x in nome_p for x in ["tiramisù", "mousse", "profitterol", "cannoli", "babà"]):
+            self.strumento_necessario = "Frusta/Sbattitore" # Strumento specifico per dolci a freddo
+            self.fase_cottura = "Montare/Assemblare"
+        else:
+            self.strumento_necessario = "Tagliere"
+            self.fase_cottura = "Preparare"
 
-    @discord.ui.button(label="🍳 Controlla Cottura", style=discord.ButtonStyle.primary)
-    async def controlla(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.cliccato = True
+    def crea_embed(self, messaggio):
+        color = discord.Color.blue()
+        if "✅" in messaggio: color = discord.Color.green()
+        if "❌" in messaggio: color = discord.Color.red()
+
+        embed = discord.Embed(title=f"👨‍🍳 Cucina Bellevue: {self.piatto}", description=messaggio, color=color)
+        embed.add_field(name="🛠️ Strumento", value=f"`{self.strumento_attivo or 'Mani Vuote'}`", inline=True)
+        embed.add_field(name="🎯 Serve", value=f"`{self.strumento_necessario}`", inline=True)
+        
+        fasi = ["🔪 Prep", "🔥 Cottura", "🍽️ Fine"]
+        bar = " ".join([f"**{f}** {'✅' if self.stato_cottura > i else '⚪'}" for i, f in enumerate(fasi)])
+        embed.add_field(name="Avanzamento", value=bar, inline=False)
+        return embed
+
+    @discord.ui.select(
+        placeholder="Scegli lo strumento...",
+        options=[
+            discord.SelectOption(label="Tagliere", emoji="🔪"),
+            discord.SelectOption(label="Pentola", emoji="🍲"),
+            discord.SelectOption(label="Forno a Legna", emoji="🔥"),
+            discord.SelectOption(label="Frusta/Sbattitore", emoji="🥣"), # Aggiunto per i dessert
+            discord.SelectOption(label="Padella", emoji="🍳")
+        ]
+    )
+    async def select_strumento(self, interaction: discord.Interaction, select: discord.ui.Select):
+        if interaction.user.id != self.user.id: return
+        self.strumento_attivo = select.values[0]
+        await interaction.response.edit_message(embed=self.crea_embed(f"Hai preso: **{self.strumento_attivo}**."))
+
+    @discord.ui.button(label="1. Prepara Ingredienti", style=discord.ButtonStyle.secondary)
+    async def prepara(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user.id: return
+        if self.strumento_attivo != "Tagliere":
+            return await interaction.response.send_message("❌ Usa il Tagliere per iniziare la preparazione!", ephemeral=True)
+        
+        self.stato_cottura = 1
         button.disabled = True
-        button.label = "✅ Controllato!"
-        button.style = discord.ButtonStyle.success
-        await interaction.response.edit_message(view=self)
+        await interaction.response.edit_message(embed=self.crea_embed("Base pronta! Ora usa lo strumento finale."), view=self)
 
-# --- AUTOCOMPLETE ---
-# Suggerisce i piatti del menu mentre l'utente scrive
-async def piatto_autocomplete(interaction: discord.Interaction, current: str):
-    try:
-        return [
-            app_commands.Choice(name=piatto, value=piatto)
-            for piatto in MENU_DATI.keys() if current.lower() in piatto.lower()
-        ][:25]
-    except Exception as e:
-        print(f"Errore Autocomplete: {e}")
-        return []
+    @discord.ui.button(label="2. Completa Piatto", style=discord.ButtonStyle.danger)
+    async def cuoci(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user.id: return
+        if self.stato_cottura < 1:
+            return await interaction.response.send_message("❌ Devi prima preparare gli ingredienti!", ephemeral=True)
+        if self.strumento_attivo != self.strumento_necessario:
+            return await interaction.response.send_message(f"❌ Per questo piatto serve: {self.strumento_necessario}!", ephemeral=True)
 
-# --- COMANDO /CUCINA ---
-print("Caricamento comando cucina...")
-@bot.tree.command(name="cucina", description="Prepara un piatto del Bellevue (Richiede ruolo Chef)")
+        self.cliccato_cottura = True
+        self.stato_cottura = 2
+        for child in self.children: child.disabled = True
+        await interaction.response.edit_message(embed=self.crea_embed(f"⏳ Fase di: **{self.fase_cottura}** in corso..."), view=self)
+        self.stop()
+
+# --- COMANDO /CUCINA CON AUTOCOMPLETE DESSERT ---
+@bot.tree.command(name="cucina", description="Cucina Pizze, Primi, Secondi o Dessert del Bellevue")
 @app_commands.autocomplete(piatto=piatto_autocomplete)
 async def cucina(interaction: discord.Interaction, piatto: str):
     ID_RUOLO_CHEF = 1460674851269247151
     
-    # 1. Verifica Ruolo
     if not any(r.id == ID_RUOLO_CHEF for r in interaction.user.roles):
-        return await interaction.response.send_message("❌ Non sei autorizzato a usare le cucine!", ephemeral=True)
+        return await interaction.response.send_message("❌ Solo gli Chef del Bellevue possono cucinare!", ephemeral=True)
 
-    # 2. Verifica Esistenza Piatto
     if piatto not in MENU_DATI:
-        return await interaction.response.send_message("❌ Piatto non trovato nel menu.", ephemeral=True)
+        return await interaction.response.send_message("❌ Questo piatto non è nel menu del Bellevue.", ephemeral=True)
 
     info = MENU_DATI[piatto]
-    await interaction.response.defer()
-
-    # 3. Creazione Embed di Inizio
-    embed = discord.Embed(
-        title="👨‍🍳 Ristorante Bellevue - Cucina",
-        description=f"Chef: **{interaction.user.display_name}**\nStai preparando: **{piatto}**\n\n"
-                    f"**Ingredienti:** *{info.get('desc', 'N/A')}*\n"
-                    f"**Tempo di attesa:** `{info['tempo']}s`",
-        color=discord.Color.blue()
-    )
+    view = InterazioneCucinaRealistica(piatto, info, interaction.user, info['tempo'])
     
-    view = InterazioneCucina(info['tempo'])
-    msg = await interaction.followup.send(embed=embed, view=view)
+    await interaction.response.send_message(embed=view.crea_embed("Chef, ai fornelli!"), view=view)
+    await view.wait()
 
-    # 4. Fase di Cottura (Attesa Reale)
+    if not view.cliccato_cottura:
+        return await interaction.edit_original_response(content="🔥 Hai lasciato i fornelli incustoditi! Piatto rovinato.", embed=None, view=None)
+
     await asyncio.sleep(info['tempo'])
 
-    # 5. Controllo Esito
-    if not view.cliccato:
-        # Se il bottone non è stato premuto
-        embed.title = "🔥 PIATTO BRUCIATO!"
-        embed.description = f"Chef {interaction.user.display_name}, ti sei distratto! Il **{piatto}** è diventato cenere."
-        embed.color = discord.Color.red()
-        await msg.edit(embed=embed, view=None)
-    else:
-        # Successo: Aggiunta Item alla tabella public.inventory
-        try:
-            conn = get_db_connection()
-            cur = conn.cursor()
-            cur.execute("""
-                INSERT INTO public.inventory (user_id, item_name, quantity) 
-                VALUES (%s, %s, 1)
-                ON CONFLICT (user_id, item_name) 
-                DO UPDATE SET quantity = public.inventory.quantity + 1
-            """, (str(interaction.user.id), piatto))
-            conn.commit()
-            cur.close(); conn.close()
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO public.inventory (user_id, item_name, quantity) 
+            VALUES (%s, %s, 1)
+            ON CONFLICT (user_id, item_name) 
+            DO UPDATE SET quantity = public.inventory.quantity + 1
+        """, (str(interaction.user.id), piatto))
+        conn.commit()
+        cur.close(); conn.close()
 
-            embed.title = "🍽️ Servizio Completato!"
-            embed.description = f"Ottimo lavoro! Il **{piatto}** è pronto e aggiunto all'inventario."
-            embed.color = discord.Color.green()
-            await msg.edit(embed=embed, view=None)
-            print(f"LOG: {interaction.user.name} ha cucinato {piatto}")
-            
-        except Exception as e:
-            print(f"ERRORE DB: {e}")
-            await interaction.followup.send(f"❌ Errore durante il salvataggio: {e}", ephemeral=True)
+        embed_finale = view.crea_embed(f"✅ **{piatto}** preparato con cura! Aggiunto in inventario.")
+        embed_finale.color = discord.Color.green()
+        view.stato_cottura = 3
+        await interaction.edit_original_response(embed=embed_finale, view=None)
+        
+    except Exception as e:
+        await interaction.followup.send(f"❌ Errore Inventario: {e}", ephemeral=True)
 
 import discord
 from discord import app_commands
