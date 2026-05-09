@@ -40,14 +40,15 @@ MENU_DATI = {
     "Pollo Al Lime": {"desc": "Petto di pollo, lime", "tempo": TEMPI["secondo"]},
     "Involtini Vitello Nocciole": {"desc": "Fettine di vitello, nocciole", "tempo": TEMPI["secondo"]},
     "Finta Pizza Di Albumi": {"desc": "Albumi, funghi champignon", "tempo": TEMPI["last_minute"]},
-
-    # --- I DESSERT ---
-    "Tiramisù": {"desc": "Savoiardi, mascarpone, caffè", "tempo": TEMPI["dessert"]},
-    "Creme Brulée": {"desc": "Panna, uova, zucchero", "tempo": TEMPI["dessert"]},
-    "Mousse Al Cioccolato": {"desc": "Cioccolato, panna", "tempo": TEMPI["dessert"]},
-    "Puffinglese": {"desc": "Pasta sfoglia, crema", "tempo": TEMPI["dessert"]},
-    "Zuppa Inglese": {"desc": "Savoiardi, alchermes, crema", "tempo": TEMPI["dessert"]},
-    "Cannoli Siciliani": {"desc": "Cialde cannolo, ricotta", "tempo": TEMPI["dessert"]},
-    "Babà Napoletano": {"desc": "Babà base, rum", "tempo": TEMPI["dessert"]},
-    "Profitterol": {"desc": "Bignè, cioccolato, panna", "tempo": TEMPI["dessert"]}
+    
+    
+    "Tiramisù": {"tempo": 15, "desc": "Savoiardi, caffè, mascarpone"},
+    "Creme Brûlée": {"tempo": 20, "desc": "Crema inglese con crosta di zucchero"},
+    "Mousse al Cioccolato": {"tempo": 10, "desc": "Mousse soffice al cioccolato fondente"},
+    "Puffinglese": {"tempo": 25, "desc": "Dessert speciale Bellevue"},
+    "Zuppa Inglese": {"tempo": 15, "desc": "Alchermes, crema e cacao"},
+    "Cannoli Siciliani": {"tempo": 20, "desc": "Ricotta fresca e granella di pistacchio"},
+    "Babà Napoletano": {"tempo": 10, "desc": "Soffice babà bagnato al rum"},
+    "Profitterol": {"tempo": 25, "desc": "Bignè ripieni di crema al cioccolato"}
 }
+
