@@ -362,6 +362,23 @@ class InterazioneCucinaRealistica(discord.ui.View):
         for child in self.children: child.disabled = True
         await interaction.response.edit_message(embed=self.crea_embed(f"⏳ Fase di: **{self.fase_cottura}** in corso..."), view=self)
         self.stop()
+# --- FUNZIONE AUTOCOMPLETE ---
+# Suggerisce i piatti del menu (Pizze, Primi, Secondi e Dessert)
+async def piatto_autocomplete(interaction: discord.Interaction, current: str):
+    try:
+        # Recupera i nomi dei piatti dalle chiavi del tuo dizionario MENU_DATI
+        # Filtra in base a ciò che l'utente sta scrivendo (case-insensitive)
+        opzioni = [
+            app_commands.Choice(name=piatto, value=piatto)
+            for piatto in MENU_DATI.keys() 
+            if current.lower() in piatto.lower()
+        ]
+        
+        # Discord permette un massimo di 25 suggerimenti alla volta
+        return opzioni[:25]
+    except Exception as e:
+        print(f"Errore nell'autocomplete: {e}")
+        return []
 
 # --- COMANDO /CUCINA CON AUTOCOMPLETE DESSERT ---
 @bot.tree.command(name="cucina", description="Cucina Pizze, Primi, Secondi o Dessert del Bellevue")
@@ -2789,35 +2806,27 @@ class VerificaView(discord.ui.View):
         style=discord.ButtonStyle.success, 
         custom_id="btn_verifica_universale"
     )
-    async def verifica_callback(self, interaction: discord.Interaction):
-        # Usiamo defer ephemeral per dare tempo al bot di gestire i ruoli
+    # Aggiungi "button" tra gli argomenti qui sotto:
+    async def verifica_callback(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=True)
         
-        # Definizione degli ID forniti
         ID_RUOLO_DA_TOGLIERE = 1254059448771809341
         ID_RUOLO_DA_AGGIUNGERE = 1502380869938315284
         
         try:
-            # Recuperiamo gli oggetti ruolo dal server (guild)
             ruolo_vecchio = interaction.guild.get_role(ID_RUOLO_DA_TOGLIERE)
             ruolo_nuovo = interaction.guild.get_role(ID_RUOLO_DA_AGGIUNGERE)
             
-            # 1. Aggiungiamo il nuovo ruolo
             if ruolo_nuovo:
                 await interaction.user.add_roles(ruolo_nuovo)
             
-            # 2. Togliamo il vecchio ruolo (se l'utente lo possiede)
             if ruolo_vecchio and ruolo_vecchio in interaction.user.roles:
                 await interaction.user.remove_roles(ruolo_vecchio)
                 
-            await interaction.followup.send("✅ Verifica completata: ruolo aggiornato con successo!", ephemeral=True)
+            await interaction.followup.send("✅ Verifica completata!", ephemeral=True)
             
-        except discord.Forbidden:
-            # Errore comune: il bot ha i permessi più bassi dei ruoli che deve gestire
-            await interaction.followup.send("❌ Errore: Non ho i permessi necessari per gestire i ruoli. Controlla la gerarchia dei ruoli nelle impostazioni del server.", ephemeral=True)
         except Exception as e:
-            await interaction.followup.send(f"❌ Si è verificato un errore imprevisto: {e}", ephemeral=True)
-
+            await interaction.followup.send(f"❌ Errore: {e}", ephemeral=True)
 
 
 # --- COMANDO RP ON ---
