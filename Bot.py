@@ -270,7 +270,7 @@ from menu_bellevue import MENU_DATI
 
 # --- COMANDO ADMIN PER IL SYNC (!) ---
 # Questo serve per forzare Discord a vedere i nuovi comandi /
-@bot.command(name="sync")
+@bot.command(name="syncbot")
 @commands.has_permissions(administrator=True)
 async def sync(ctx):
     try:
