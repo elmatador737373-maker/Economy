@@ -2400,29 +2400,6 @@ class BackgroundStaffView(discord.ui.View):
         except:
             await interaction.edit_original_response(content="❌ Errore nell'invio del rifiuto.", view=None)
 
-# --- 2. VIEW PER LA VERIFICA ---
-class VerificaView(discord.ui.View):
-    def __init__(self, role_id=None):
-        super().__init__(timeout=None)
-        self.role_id = role_id
-
-    @discord.ui.button(label="Verificati", style=discord.ButtonStyle.primary, emoji="✅", custom_id="btn_verifica_persist")
-    async def verifica(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # Se role_id è None (post-riavvio), lo cerchiamo nel DB
-        if not self.role_id:
-            conn = get_db_connection()
-            cur = conn.cursor(cursor_factory=RealDictCursor)
-            cur.execute("SELECT role_id FROM verifica_config WHERE guild_id = %s", (str(interaction.guild.id),))
-            res = cur.fetchone()
-            cur.close(); conn.close()
-            if res: self.role_id = int(res['role_id'])
-
-        role = interaction.guild.get_role(self.role_id)
-        if role:
-            await interaction.user.add_roles(role)
-            await interaction.response.send_message("✅ Ti sei verificato!", ephemeral=True)
-        else:
-            await interaction.response.send_message("❌ Ruolo non configurato correttamente.", ephemeral=True)
 
 # --- 3. COMANDO SETUP BACKGROUND (ADMIN) ---
 @bot.tree.command(name="setup_background", description="[ADMIN] Configura il sistema Background")
@@ -2802,58 +2779,44 @@ import discord
 from discord import app_commands
 import datetime
 
-# --- CLASSE VIEW PERSISTENTE ---
-# Questa classe definisce il comportamento del sistema di verifica
+# --- CLASSE VIEW PERSISTENTE AGGIORNATA ---
 class VerificaView(discord.ui.View):
     def __init__(self):
-        # timeout=None è fondamentale: rende la view eterna finché il bot è acceso
         super().__init__(timeout=None)
 
     @discord.ui.button(
         label="Verificati", 
         style=discord.ButtonStyle.success, 
-        custom_id="btn_verifica_universale" # L'ID statico permette al bot di riconoscerlo al riavvio
+        custom_id="btn_verifica_universale"
     )
     async def verifica_callback(self, interaction: discord.Interaction):
-        # Usiamo defer per evitare che l'interazione scada se il bot è lento
+        # Usiamo defer ephemeral per dare tempo al bot di gestire i ruoli
         await interaction.response.defer(ephemeral=True)
         
-        # ID del ruolo da assegnare (Inserisci qui l'ID principale o gestiscilo via codice)
-        # In questo esempio usiamo il ruolo passato nel setup originario
-        # Se hai più server, qui dovresti recuperare l'ID dal tuo database
+        # Definizione degli ID forniti
+        ID_RUOLO_DA_TOGLIERE = 1254059448771809341
+        ID_RUOLO_DA_AGGIUNGERE = 1502380869938315284
         
-        # Esempio di logica per aggiungere/togliere ruoli:
-        # await interaction.user.add_roles(discord.Object(id=ID_RUOLO))
-        # await interaction.user.remove_roles(discord.Object(id=ID_VECCHIO_RUOLO))
-        
-        await interaction.followup.send("✅ Ti sei verificato con successo!", ephemeral=True)
-
-# --- COMANDO SETUP VERIFICA ---
-@bot.tree.command(name="setup_verifica", description="Invia il messaggio di verifica che non scade mai")
-@app_commands.describe(
-    titolo="Titolo dell'embed",
-    testo="Descrizione del messaggio",
-    colore="Colore dell'embed (es. green, blue, red)"
-)
-@app_commands.checks.has_permissions(administrator=True)
-async def setup_verifica(interaction: discord.Interaction, titolo: str, testo: str, colore: str = "green"):
-    # Mapping colori
-    colore_map = {
-        "green": discord.Color.green(),
-        "blue": discord.Color.blue(),
-        "red": discord.Color.red()
-    }
-
-    embed = discord.Embed(
-        title=titolo,
-        description=testo.replace("\\n", "\n"),
-        color=colore_map.get(colore.lower(), discord.Color.blue()),
-        timestamp=datetime.datetime.now()
-    )
-    
-    # Invia il messaggio con la View persistente
-    await interaction.channel.send(embed=embed, view=VerificaView())
-    await interaction.response.send_message("✅ Setup completato!", ephemeral=True)
+        try:
+            # Recuperiamo gli oggetti ruolo dal server (guild)
+            ruolo_vecchio = interaction.guild.get_role(ID_RUOLO_DA_TOGLIERE)
+            ruolo_nuovo = interaction.guild.get_role(ID_RUOLO_DA_AGGIUNGERE)
+            
+            # 1. Aggiungiamo il nuovo ruolo
+            if ruolo_nuovo:
+                await interaction.user.add_roles(ruolo_nuovo)
+            
+            # 2. Togliamo il vecchio ruolo (se l'utente lo possiede)
+            if ruolo_vecchio and ruolo_vecchio in interaction.user.roles:
+                await interaction.user.remove_roles(ruolo_vecchio)
+                
+            await interaction.followup.send("✅ Verifica completata: ruolo aggiornato con successo!", ephemeral=True)
+            
+        except discord.Forbidden:
+            # Errore comune: il bot ha i permessi più bassi dei ruoli che deve gestire
+            await interaction.followup.send("❌ Errore: Non ho i permessi necessari per gestire i ruoli. Controlla la gerarchia dei ruoli nelle impostazioni del server.", ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Si è verificato un errore imprevisto: {e}", ephemeral=True)
 
 
 
