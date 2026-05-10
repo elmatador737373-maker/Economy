@@ -2989,9 +2989,6 @@ async def conto(interaction: discord.Interaction):
     embed.set_footer(text=f"Servizio Bancario Digitale • {interaction.user.display_name}")
 
     await interaction.response.send_message(embed=embed)
-
-import discord
-
 # --- MODAL PER MODIFICA STIPENDIO ---
 class ModificaStipendioModal(discord.ui.Modal, title="Modifica Stipendio Turno"):
     nuovo_importo = discord.ui.TextInput(label="Nuovo Totale (€)", placeholder="Inserisci la cifra corretta...")
@@ -3024,13 +3021,12 @@ class ModificaStipendioModal(discord.ui.Modal, title="Modifica Stipendio Turno")
 # --- VIEW PER LO STAFF (Persistente) ---
 class TurnoStaffView(discord.ui.View):
     def __init__(self):
-        # Fondamentale: timeout=None per la persistenza
+        # Fondamentale per la persistenza
         super().__init__(timeout=None)
 
     def parse_data_from_embed(self, embed):
         """Estrae i dati dal footer dell'embed dello staff"""
         try:
-            # Formato previsto nel footer: "ID: 123 | Stipendio: 500 | Ore: 2.5 | Ruolo: Polizia"
             footer = embed.footer.text
             parts = footer.split(" | ")
             return {
@@ -3039,14 +3035,14 @@ class TurnoStaffView(discord.ui.View):
                 "ore": float(parts[2].replace("Ore: ", "")),
                 "ruolo": parts[3].replace("Ruolo: ", "")
             }
-        except Exception as e:
-            print(f"❌ Errore parsing turno: {e}")
+        except Exception:
             return None
 
     @discord.ui.button(label="Approva", style=discord.ButtonStyle.success, custom_id="turno_staff_approva")
     async def approva_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         d = self.parse_data_from_embed(interaction.message.embeds[0])
-        if not d: return await interaction.response.send_message("Errore dati.", ephemeral=True)
+        if not d: 
+            return await interaction.response.send_message("❌ Errore critico: Dati non trovati nell'embed.", ephemeral=True)
 
         conn = get_db_connection()
         cur = conn.cursor()
@@ -3059,55 +3055,24 @@ class TurnoStaffView(discord.ui.View):
 
     @discord.ui.button(label="Rifiuta", style=discord.ButtonStyle.danger, custom_id="turno_staff_rifiuta")
     async def rifiuta_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        d = self.parse_data_from_embed(interaction.message.embeds[0])
-        if not d: return
-        await interaction.response.edit_message(content=f"❌ **RIFIUTATO**: Turno di <@{d['user_id']}> annullato.", embed=None, view=None)
+        await interaction.response.edit_message(content="❌ **RIFIUTATO**: Richiesta di stipendio annullata.", embed=None, view=None)
 
     @discord.ui.button(label="Modifica Importo", style=discord.ButtonStyle.secondary, custom_id="turno_staff_modifica")
     async def modifica_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         d = self.parse_data_from_embed(interaction.message.embeds[0])
-        if not d: return
+        if not d: 
+            return await interaction.response.send_message("❌ Errore recupero dati.", ephemeral=True)
+        
         await interaction.response.send_modal(ModificaStipendioModal(d['user_id'], d['ore'], d['ruolo']))
-
-
-# --- COMANDI SLASH ---
-
-@bot.tree.command(name="set_canale_paghe", description="Imposta il canale approvazione stipendi (Admin)")
-@app_commands.checks.has_permissions(administrator=True)
-async def set_canale_paghe(interaction: discord.Interaction, canale: discord.TextChannel):
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("INSERT INTO server_settings (setting_name, setting_value) VALUES ('canale_paghe', %s) ON CONFLICT (setting_name) DO UPDATE SET setting_value = EXCLUDED.setting_value", (str(canale.id),))
-    conn.commit()
-    cur.close()
-    conn.close()
-    await interaction.response.send_message(f"✅ Canale paghe: {canale.mention}")
-
-@bot.tree.command(name="inizia_turno", description="Inizia il turno di lavoro")
-async def inizia_turno(interaction: discord.Interaction, ruolo: discord.Role, paga_oraria: int):
-    await interaction.response.defer()
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("INSERT INTO turni (user_id, inizio, ruolo) VALUES (%s, NOW(), %s) ON CONFLICT (user_id) DO UPDATE SET inizio = NOW(), ruolo = EXCLUDED.ruolo", (str(interaction.user.id), f"{ruolo.name}|{paga_oraria}"))
-    conn.commit()
-    cur.close()
-    conn.close()
-    
-    embed = discord.Embed(title="🛠️ TURNO INIZIATO", color=discord.Color.green())
-    embed.add_field(name="Ruolo", value=ruolo.mention)
-    embed.add_field(name="Paga", value=f"{paga_oraria}€/h")
-    await interaction.followup.send(embed=embed)
-
 @bot.tree.command(name="finisci_turno", description="Termina il turno e richiedi stipendio")
 async def finisci_turno(interaction: discord.Interaction):
-    # Usiamo defer perché il DB e il fetch del canale potrebbero richiedere tempo
     await interaction.response.defer()
     
     conn = get_db_connection()
     from psycopg2.extras import RealDictCursor
     cur = conn.cursor(cursor_factory=RealDictCursor)
     
-    # 1. Recupero dati turno e calcolo ore lavorate
+    # Recupero turno
     cur.execute("""
         SELECT *, EXTRACT(EPOCH FROM (NOW() - inizio)) / 3600 AS ore 
         FROM turni WHERE user_id = %s
@@ -3118,62 +3083,65 @@ async def finisci_turno(interaction: discord.Interaction):
         cur.close(); conn.close()
         return await interaction.followup.send("❌ Non hai un turno attivo da terminare.")
 
-    # 2. Estrazione dati dal database
-    # Assumendo che il campo ruolo sia nel formato "NomeRuolo|PagaOraria"
+    # Parsing dati
     try:
         dati = turno['ruolo'].split('|')
         nome_ruolo = dati[0]
         paga_h = int(dati[1])
     except (IndexError, ValueError):
         cur.close(); conn.close()
-        return await interaction.followup.send("❌ Errore nei dati del ruolo. Contatta un amministratore.")
+        return await interaction.followup.send("❌ Errore nei dati del ruolo.")
 
     ore_lavorate = round(float(turno['ore']), 2)
     stipendio = int(ore_lavorate * paga_h)
     
-    # 3. Pulizia Database (rimuovo il turno attivo)
+    # Pulizia Turno
     cur.execute("DELETE FROM turni WHERE user_id = %s", (str(interaction.user.id),))
     conn.commit()
     cur.close(); conn.close()
 
-    # 4. Notifica all'utente che ha eseguito il comando
-    embed_u = discord.Embed(
-        title="🏁 TURNO FINITO", 
-        description=f"Hai lavorato per: `{ore_lavorate} ore`\nLa richiesta di stipendio (**{stipendio}€**) è stata inviata.", 
-        color=discord.Color.orange()
-    )
-    await interaction.followup.send(embed=embed_u)
+    # Messaggio Utente
+    await interaction.followup.send(f"🏁 Turno terminato! Hai lavorato `{ore_lavorate} ore`. Richiesta di **{stipendio}€** inviata allo staff.")
 
-    # 5. Invio Richiesta allo STAFF (Canale Paghe)
+    # Invio allo STAFF
     ID_CANALE_STAFF = 1459566404100686009 
-    
-    # Tentativo di recupero canale (Cache -> API)
-    canale_staff = interaction.guild.get_channel(ID_CANALE_STAFF)
-    if not canale_staff:
-        try:
-            canale_staff = await interaction.guild.fetch_channel(ID_CANALE_STAFF)
-        except:
-            canale_staff = None
+    canale_staff = interaction.guild.get_channel(ID_CANALE_STAFF) or await interaction.guild.fetch_channel(ID_CANALE_STAFF)
 
     if canale_staff:
         embed_s = discord.Embed(title="💼 RICHIESTA STIPENDIO", color=discord.Color.blue())
         embed_s.add_field(name="Utente", value=interaction.user.mention, inline=True)
         embed_s.add_field(name="Ruolo", value=nome_ruolo, inline=True)
-        embed_s.add_field(name="Stipendio", value=f"**{stipendio}€**", inline=False)
         embed_s.add_field(name="Ore Totali", value=f"{ore_lavorate}h", inline=True)
+        embed_s.add_field(name="Stipendio Calcolato", value=f"**{stipendio}€**", inline=False)
         
-        # Creiamo la View passandogli i dati che verranno salvati nei custom_id per la persistenza
-        view_staff = TurnoStaffView(
-            user_id=interaction.user.id, 
-            stipendio=stipendio, 
-            ore=ore_lavorate, 
-            ruolo_nome=nome_ruolo
-        )
+        # --- CRUCIALE: Scriviamo i dati nel footer ---
+        embed_s.set_footer(text=f"ID: {interaction.user.id} | Stipendio: {stipendio} | Ore: {ore_lavorate} | Ruolo: {nome_ruolo}")
         
-        await canale_staff.send(embed=embed_s, view=view_staff)
-    else:
-        # Messaggio di errore in console se l'ID è ancora sbagliato o il bot non vede il canale
-        print(f"⚠️ Errore critico: Canale {ID_CANALE_STAFF} non trovato nemmeno con fetch_channel.")
+        # Chiamata corretta senza argomenti (li prenderà dall'embed al click)
+        await canale_staff.send(embed=embed_s, view=TurnoStaffView())
+@bot.tree.command(name="inizia_turno", description="Inizia il turno di lavoro")
+async def inizia_turno(interaction: discord.Interaction, ruolo: discord.Role, paga_oraria: int):
+    await interaction.response.defer()
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    # Inserisce il turno o lo aggiorna se l'utente ne ha già uno attivo
+    cur.execute("""
+        INSERT INTO turni (user_id, inizio, ruolo) 
+        VALUES (%s, NOW(), %s) 
+        ON CONFLICT (user_id) 
+        DO UPDATE SET inizio = NOW(), ruolo = EXCLUDED.ruolo
+    """, (str(interaction.user.id), f"{ruolo.name}|{paga_oraria}"))
+    
+    conn.commit()
+    cur.close()
+    conn.close()
+    
+    embed = discord.Embed(title="🛠️ TURNO INIZIATO", color=discord.Color.green())
+    embed.add_field(name="Ruolo", value=ruolo.mention)
+    embed.add_field(name="Paga", value=f"{paga_oraria}€/h")
+    
+    await interaction.followup.send(embed=embed)
 
 
 class WipeConfirmView(discord.ui.View):
