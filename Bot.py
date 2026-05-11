@@ -2992,8 +2992,6 @@ class VerificaView(discord.ui.View):
         except Exception as e:
             await interaction.followup.send(f"❌ Errore: {e}", ephemeral=True)
 
-
-# --- COMANDO RP ON (VERSIONE PULITA) ---
 @bot.tree.command(name="rpon", description="Segnala che l'RP è ONLINE")
 @app_commands.checks.has_role(1253707509399683202)
 @app_commands.describe(psn_id="Inserisci il tuo ID PlayStation Network")
@@ -3063,6 +3061,34 @@ async def rpoff(interaction: discord.Interaction):
         color=discord.Color.red()
     )
     await interaction.response.send_message(embed=embed)
+from discord import app_commands
+
+# --- GESTORE ERRORI GLOBALE PER I COMANDI SLASH ---
+@bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    # Controlla se l'errore è dovuto alla mancanza di un ruolo
+    if isinstance(error, app_commands.MissingRole) or isinstance(error, app_commands.MissingAnyRole):
+        # Messaggio personalizzato se l'utente non ha il ruolo
+        return await interaction.response.send_message(
+            content=f"❌ **Accesso Negato**: Non hai i permessi necessari (Staff) per usare questo comando.",
+            ephemeral=True
+        )
+    
+    # Gestione di altri tipi di errori (opzionale)
+    elif isinstance(error, app_commands.CommandOnCooldown):
+        return await interaction.response.send_message(
+            content=f"⏳ Comando in cooldown. Riprova tra {error.retry_after:.1f} secondi.",
+            ephemeral=True
+        )
+    
+    # Se è un errore imprevisto, stampalo nei log del bot
+    else:
+        print(f"[LOG ERROR] Errore imprevisto: {error}")
+        # Se l'interazione non ha ancora ricevuto risposta, inviane una di cortesia
+        if not interaction.response.is_done():
+            await interaction.response.send_message("❌ Si è verificato un errore imprevisto durante l'esecuzione del comando.", ephemeral=True)
+
+# --- COMANDO RP ON (VERSIONE PULITA) ---
 @bot.tree.command(name="portafoglio", description="Visualizza i contanti nel wallet")
 async def portafoglio(interaction: discord.Interaction):
     u = get_user_data(interaction.user.id)
