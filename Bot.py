@@ -575,7 +575,9 @@ async def crea_documento(
         
         conn.commit()
         cur.close(); conn.close()
-        
+        await interaction.user.add_roles(discord.Object(id=1278673173172453418))
+        await interaction.user.remove_roles(discord.Object(id=1278680093044113469))
+
         await interaction.followup.send("✅ Documento registrato con successo!", ephemeral=True)
         
     except Exception as e:
