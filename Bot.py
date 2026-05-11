@@ -379,17 +379,46 @@ async def piatto_autocomplete(interaction: discord.Interaction, current: str):
     except Exception as e:
         print(f"Errore nell'autocomplete: {e}")
         return []
-@bot.tree.command(name="libretto", description="Visualizza i dati del veicolo")
-@app_commands.describe(targa="La targa da cercare")
+from discord import app_commands
+
+# --- FUNZIONE AUTOCOMPLETE ---
+async def targa_autocomplete(
+    interaction: discord.Interaction,
+    current: str,
+) -> list[app_commands.Choice[str]]:
+    # Recuperiamo solo i veicoli che appartengono all'utente che sta scrivendo
+    # Usiamo LIMIT 25 perché Discord non permette più di 25 scelte nell'autocomplete
+    query = """
+        SELECT targa FROM public.veicoli 
+        WHERE owner_id = $1 AND targa ILIKE $2 
+        LIMIT 25
+    """
+    rows = await bot.db.fetch(query, str(interaction.user.id), f"%{current}%")
+    
+    return [
+        app_commands.Choice(name=row['targa'], value=row['targa'])
+        for row in rows
+    ]
+
+# --- COMANDO LIBRETTO ---
+@bot.tree.command(name="libretto", description="Mostra il libretto di un tuo veicolo")
+@app_commands.describe(targa="Scegli una delle tue targhe")
+@app_commands.autocomplete(targa=targa_autocomplete) # Colleghiamo l'autocomplete
 async def libretto(interaction: discord.Interaction, targa: str):
+    await interaction.response.defer() # Usiamo defer se la query al DB richiede tempo
+    
     targa = targa.upper()
     
-    # Eseguiamo la query usando il pool di connessione che dovresti avere nel bot
-    # Esempio usando asyncpg (il più comune per bot.tree)
+    # Cerchiamo il veicolo (assicurandoci che sia dell'utente o che esista)
     row = await bot.db.fetchrow("SELECT * FROM public.veicoli WHERE targa = $1", targa)
 
     if not row:
-        return await interaction.response.send_message(f"Nessun veicolo trovato: `{targa}`", ephemeral=True)
+        return await interaction.followup.send(f"Nessun veicolo trovato con targa: `{targa}`", ephemeral=True)
+
+    # Controllo di sicurezza: solo il proprietario può mostrare il libretto
+    # (Opzionale, se vuoi che chiunque possa vederlo se conosce la targa, rimuovi queste 2 righe)
+    if row['owner_id'] != str(interaction.user.id):
+        return await interaction.followup.send("❌ Questo veicolo non ti appartiene.", ephemeral=True)
 
     # Costruzione dell'Embed
     embed = discord.Embed(
@@ -398,13 +427,16 @@ async def libretto(interaction: discord.Interaction, targa: str):
     )
 
     embed.add_field(name="📦 Modello", value=row['modello'] or "N/D", inline=True)
-    embed.add_field(name="🆔 Owner ID", value=f"`{row['owner_id']}`" if row['owner_id'] else "N/D", inline=True)
+    embed.add_field(name="👤 Intestatario", value=f"<@{row['owner_id']}>", inline=True)
     embed.add_field(name="📅 Data Vendita", value=row['data_vendita'] or "N/D", inline=True)
     
     stato_legale = "❌ SEQUESTRATO" if row['sequestrato'] else "✅ REGOLARE"
     embed.add_field(name="🚦 Stato", value=stato_legale, inline=False)
 
-    await interaction.response.send_message(embed=embed)
+    await interaction.followup.send(
+        content=f"**{interaction.user.display_name}** mostra il libretto di circolazione:",
+        embed=embed
+    )
 
 # --- COMANDO /CUCINA CON AUTOCOMPLETE DESSERT ---
 @bot.tree.command(name="cucina", description="Cucina Pizze, Primi, Secondi o Dessert del Bellevue")
