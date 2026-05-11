@@ -1634,109 +1634,94 @@ async def aggiungi(interaction: discord.Interaction, id_messaggio: str, testo_bo
 # --- LOGICA STAFF: VIEW E MODAL PER APPROVAZIONE ---
 
 import discord
-from discord import app_commands, Interaction
-import discord
+from discord.ext import commands
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
-import discord
+
 
 class RapinaStaffView(discord.ui.View):
-    def __init__(self, user_id=None, ammontare=None, luogo=None, msg_utente_id=None, canale_utente_id=None):
-        # Timeout deve essere None per le View persistenti
+    def __init__(self, rapina_id=None):
         super().__init__(timeout=None)
-        
-        # Se i dati sono passati (nuova rapina), li iniettiamo nei custom_id dei bottoni
-        if user_id is not None:
-            base_id = f"{user_id}:{ammontare}:{luogo}:{msg_utente_id}:{canale_utente_id}"
-            self.conferma_btn.custom_id = f"rapina_conf:{base_id}"
-            self.annulla_btn.custom_id = f"rapina_ann:{base_id}"
-            self.modifica_btn.custom_id = f"rapina_mod:{base_id}"
+        # Se stiamo creando una nuova rapina, assegniamo l'ID al bottone
+        if rapina_id:
+            self.conferma_btn.custom_id = f"rapina_conf:{rapina_id}"
+            self.annulla_btn.custom_id = f"rapina_ann:{rapina_id}"
+            self.modifica_btn.custom_id = f"rapina_mod:{rapina_id}"
 
-    async def parse_id(self, custom_id):
-        """Estrae i dati dal custom_id salvato nel bottone"""
-        parts = custom_id.split(":")
-        return {
-            "user_id": int(parts[1]),
-            "ammontare": int(parts[2]),
-            "luogo": parts[3],
-            "msg_utente_id": int(parts[4]),
-            "canale_utente_id": int(parts[5])
-        }
+    # --- HELPER RECUPERO DATI ---
+    async def get_data(self, button_custom_id):
+        try:
+            rapina_id = int(button_custom_id.split(":")[1])
+            conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+            cur = conn.cursor()
+            cur.execute("SELECT * FROM rapine_pendenti WHERE id = %s", (rapina_id,))
+            res = cur.fetchone()
+            cur.close(); conn.close()
+            return res, rapina_id
+        except:
+            return None, None
 
+    # --- BOTTONE CONFERMA ---
     @discord.ui.button(label="Conferma", style=discord.ButtonStyle.success, custom_id="rapina_conf:default")
     async def conferma_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        data = await self.parse_id(button.custom_id)
-        
-        # Logica Database
-        conn = get_db_connection()
+        data, r_id = await self.get_data(button.custom_id)
+        if not data:
+            return await interaction.response.send_message("❌ Errore: Rapina non trovata o già processata.", ephemeral=True)
+
+        # Aggiornamento tabella originale 'users' come richiesto
+        conn = psycopg2.connect(DATABASE_URL)
         cur = conn.cursor()
         cur.execute("UPDATE users SET wallet = wallet + %s WHERE user_id = %s", (data['ammontare'], str(data['user_id'])))
-        conn.commit()
-        cur.close(); conn.close()
+        # Eliminiamo la rapina pendente per pulizia
+        cur.execute("DELETE FROM rapine_pendenti WHERE id = %s", (r_id,))
+        conn.commit(); cur.close(); conn.close()
         
-        # Utilizzo Helper
         await self.aggiorna_originale(interaction, data, "✅ **BOTTINO APPROVATO**", discord.Color.green(), data['ammontare'])
         await self.notificami(interaction, data['user_id'], f"✅ Il tuo bottino per la rapina a **{data['luogo']}** è stato approvato! Ricevuti: **{data['ammontare']}€**")
-        
-        await interaction.response.edit_message(
-            content=f"✅ **APPROVATA**: {data['ammontare']}€ a <@{data['user_id']}>.", 
-            embed=None, 
-            view=None
-        )
+        await interaction.response.edit_message(content=f"✅ **APPROVATA**: {data['ammontare']}€ a <@{data['user_id']}>.", embed=None, view=None)
 
+    # --- BOTTONE ANNULLA ---
     @discord.ui.button(label="Annulla", style=discord.ButtonStyle.danger, custom_id="rapina_ann:default")
     async def annulla_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        data = await self.parse_id(button.custom_id)
-        
-        # Utilizzo Helper
+        data, r_id = await self.get_data(button.custom_id)
+        if not data: return
+
+        conn = psycopg2.connect(DATABASE_URL); cur = conn.cursor()
+        cur.execute("DELETE FROM rapine_pendenti WHERE id = %s", (r_id,))
+        conn.commit(); cur.close(); conn.close()
+
         await self.aggiorna_originale(interaction, data, "❌ **RAPINA ANNULLATA**", discord.Color.red())
         await self.notificami(interaction, data['user_id'], f"❌ La tua rapina a **{data['luogo']}** è stata annullata dallo staff.")
-        
-        await interaction.response.edit_message(
-            content=f"❌ **RIFIUTATA**: Colpo di <@{data['user_id']}> invalidato.", 
-            embed=None, 
-            view=None
-        )
+        await interaction.response.edit_message(content=f"❌ **RIFIUTATA**: Colpo di <@{data['user_id']}> invalidato.", embed=None, view=None)
 
+    # --- BOTTONE MODIFICA ---
     @discord.ui.button(label="Modifica Importo", style=discord.ButtonStyle.secondary, custom_id="rapina_mod:default")
     async def modifica_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        data = await self.parse_id(button.custom_id)
-        # Passiamo i dati al Modal (Assicurati che ModificaBottinoModal sia importato)
-        await interaction.response.send_modal(ModificaBottinoModal(data['user_id'], data['luogo'], data['msg_utente_id'], data['canale_utente_id']))
+        data, r_id = await self.get_data(button.custom_id)
+        if not data: return
+        # Qui apriresti il tuo Modal originale
+        await interaction.response.send_modal(ModificaBottinoModal(data, r_id))
 
-    # --- Helper Methods ---
-    
+    # --- HELPERS ORIGINALI ---
     async def aggiorna_originale(self, interaction, data, esito, colore, finale=None):
-        """Aggiorna il messaggio inviato dall'utente nel canale rapine"""
         try:
             canale = interaction.guild.get_channel(data['canale_utente_id'])
-            if not canale: return
-            
             msg = await canale.fetch_message(data['msg_utente_id'])
-            if not msg.embeds: return
-            
             embed = msg.embeds[0]
             embed.color = colore
-            # Modifica il campo "Stato" (assumendo sia il primo, indice 0)
             embed.set_field_at(0, name="Stato", value=esito)
-            
             if finale:
                 embed.add_field(name="Importo Ricevuto", value=f"**{finale}€**", inline=False)
-            
             await msg.edit(embed=embed)
-        except Exception as e:
-            print(f"Errore aggiorna_originale: {e}")
+        except: pass
 
     async def notificami(self, interaction, user_id, testo):
-        """Invia un DM all'utente per notificare l'esito"""
         try:
             user = await interaction.guild.fetch_member(user_id)
-            if not user:
-                user = await interaction.client.fetch_user(user_id)
-            
-            if user:
-                await user.send(testo)
-        except Exception as e:
-            print(f"Errore notifica DM: {e}")
+            if not user: user = await interaction.client.fetch_user(user_id)
+            await user.send(testo)
+        except: pass
 
 # --- ESEMPIO DI INVIO NEL COMANDO RAPINA ---
 # Quando invii il messaggio all'utente nel comando:
