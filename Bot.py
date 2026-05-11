@@ -3621,6 +3621,107 @@ async def fattura(interaction: discord.Interaction, cliente: discord.Member, azi
 # ==========================================
 # 3. COMANDO PER VISUALIZZARE FATTURE (/pagafattura)
 # ==========================================
+
+
+# ==========================================
+# 1. CLASSE PER IL PAGAMENTO (PagaFatturaView)
+# ==========================================
+class PagaFatturaView(discord.ui.View):
+    def __init__(self, user_id, fatture):
+        super().__init__(timeout=180)
+        self.user_id = user_id
+        
+        options = []
+        for f in fatture:
+            # Salviamo: ID Fattura | Prezzo | ID Azienda (Ruolo)
+            options.append(discord.SelectOption(
+                label=f"Fattura {f['id_fattura']}",
+                description=f"Importo: {f['prezzo']}$",
+                value=f"{f['id_fattura']}|{f['prezzo']}|{f['id_azienda']}"
+            ))
+            
+        self.select = discord.ui.Select(placeholder="Scegli la fattura da saldare...", options=options)
+        self.select.callback = self.select_callback
+        self.add_item(self.select)
+
+    async def select_callback(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        
+        # Spacchettiamo i dati
+        data = self.select.values[0].split('|')
+        id_f = data[0]
+        prezzo = int(data[1])
+        id_azienda = data[2] # Questo è l'ID numerico del ruolo
+
+        try:
+            conn = get_db_connection()
+            from psycopg2.extras import RealDictCursor
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+            
+            # 1. Controllo se il cittadino ha i soldi nel wallet
+            cur.execute("SELECT wallet FROM users WHERE user_id = %s", (str(interaction.user.id),))
+            user_data = cur.fetchone()
+            
+            if not user_data or user_data['wallet'] < prezzo:
+                cur.close()
+                conn.close()
+                return await interaction.followup.send("❌ Non hai abbastanza contanti nel wallet!", ephemeral=True)
+
+            # --- TRANSAZIONE ECONOMICA ---
+            # A. Sottrazione soldi al cittadino
+            cur.execute("UPDATE users SET wallet = wallet - %s WHERE user_id = %s", (prezzo, str(interaction.user.id)))
+            
+            # B. Accredito nel deposito fazione (Usa l'ID del ruolo)
+            cur.execute("""
+                INSERT INTO depositi (role_id, money) 
+                VALUES (%s, %s) 
+                ON CONFLICT (role_id) 
+                DO UPDATE SET money = depositi.money + EXCLUDED.money
+            """, (str(id_azienda), prezzo))
+            
+            # C. Aggiornamento stato fattura
+            cur.execute("UPDATE fatture SET stato = 'Pagata' WHERE id_fattura = %s", (id_f,))
+            
+            conn.commit()
+            cur.close()
+            conn.close()
+
+            self.select.disabled = True
+            await interaction.edit_original_response(
+                content=f"✅ Fattura `{id_f}` pagata! **{prezzo}$** accreditati nel deposito fazione.", 
+                view=self
+            )
+
+        except Exception as e:
+            print(f"ERRORE SQL PAGAMENTO: {e}")
+            await interaction.followup.send("❌ Errore durante il trasferimento dei fondi.", ephemeral=True)
+
+# ==========================================
+# 3. COMANDO PER VISUALIZZARE FATTURE (/pagafattura)
+# ==========================================
+@bot.tree.command(name="pagafattura", description="Paga le tue fatture pendenti")
+async def pagafattura(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    try:
+        conn = get_db_connection()
+        from psycopg2.extras import RealDictCursor
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("SELECT * FROM fatture WHERE id_cliente = %s AND stato = 'Pendente'", (str(interaction.user.id),))
+        mie_fatture = cur.fetchall()
+        cur.close()
+        conn.close()
+
+        if not mie_fatture:
+            return await interaction.followup.send("✅ Non hai fatture in sospeso.", ephemeral=True)
+
+        view = PagaFatturaView(interaction.user.id, mie_fatture)
+        await interaction.followup.send("Seleziona la fattura da pagare:", view=view, ephemeral=True)
+    except Exception as e:
+        print(f"ERRORE CARICAMENTO: {e}")
+        await interaction.followup.send("❌ Errore nel caricamento dei dati.", ephemeral=True)
+
+
+
 ID_RUOLO_CONCESSIONARIO = 1253460178305679433
 
 @bot.tree.command(name="registra_veicolo", description="Registra la vendita e salva i dati nel database motorizzazione")
