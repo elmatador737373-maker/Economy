@@ -3636,7 +3636,7 @@ async def registra_veicolo(
 
     data_ora = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
     targa_maiuscola = targa.upper().replace(" ", "") # Puliamo la targa da spazi
-    nome_item_chiavi = f"<:emoji_2:1464729413651534029> | Chiavi {marca_modello} [{targa_maiuscola}]"
+    nome_item_chiavi = f"<:emoji_2:1503415723974987837> | Chiavi {marca_modello} [{targa_maiuscola}]"
 
     try:
         conn = get_db_connection()
