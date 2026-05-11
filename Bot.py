@@ -379,6 +379,32 @@ async def piatto_autocomplete(interaction: discord.Interaction, current: str):
     except Exception as e:
         print(f"Errore nell'autocomplete: {e}")
         return []
+@bot.tree.command(name="libretto", description="Visualizza i dati del veicolo")
+@app_commands.describe(targa="La targa da cercare")
+async def libretto(interaction: discord.Interaction, targa: str):
+    targa = targa.upper()
+    
+    # Eseguiamo la query usando il pool di connessione che dovresti avere nel bot
+    # Esempio usando asyncpg (il più comune per bot.tree)
+    row = await bot.db.fetchrow("SELECT * FROM public.veicoli WHERE targa = $1", targa)
+
+    if not row:
+        return await interaction.response.send_message(f"Nessun veicolo trovato: `{targa}`", ephemeral=True)
+
+    # Costruzione dell'Embed
+    embed = discord.Embed(
+        title=f"🚗 Libretto Veicolo: {targa}",
+        color=discord.Color.red() if row['sequestrato'] else discord.Color.green()
+    )
+
+    embed.add_field(name="📦 Modello", value=row['modello'] or "N/D", inline=True)
+    embed.add_field(name="🆔 Owner ID", value=f"`{row['owner_id']}`" if row['owner_id'] else "N/D", inline=True)
+    embed.add_field(name="📅 Data Vendita", value=row['data_vendita'] or "N/D", inline=True)
+    
+    stato_legale = "❌ SEQUESTRATO" if row['sequestrato'] else "✅ REGOLARE"
+    embed.add_field(name="🚦 Stato", value=stato_legale, inline=False)
+
+    await interaction.response.send_message(embed=embed)
 
 # --- COMANDO /CUCINA CON AUTOCOMPLETE DESSERT ---
 @bot.tree.command(name="cucina", description="Cucina Pizze, Primi, Secondi o Dessert del Bellevue")
