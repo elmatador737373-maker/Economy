@@ -479,14 +479,6 @@ def calcola_date_id(data_nascita):
     app_commands.Choice(name="Maschio", value="Maschio"),
     app_commands.Choice(name="Femmina", value="Femmina")
 ])
-@app_commands.describe(
-    nome="Il tuo nome IC",
-    cognome="Il tuo cognome IC",
-    data_nascita="Formato GG/MM/AAAA",
-    luogo_nascita="Città di nascita",
-    nazionalita="Esempio: Messicana",
-    foto="Carica la tua foto fototessera"
-)
 async def crea_documento(
     interaction: discord.Interaction, 
     nome: str, 
@@ -498,96 +490,69 @@ async def crea_documento(
     foto: discord.Attachment
 ):
     await interaction.response.defer(ephemeral=True)
-    print(f"\n[DEBUG] === Inizio creazione documento per {interaction.user.id} ===")
     
     if not foto.content_type.startswith("image/"):
         return await interaction.followup.send("❌ Devi allegare un'immagine valida!", ephemeral=True)
 
     # 1. ARCHIVIAZIONE FOTO
+    message_id_salvato = None
+    foto_url_permanente = None
+
     try:
-        print("[DEBUG] 1. Tentativo recupero canale archivio...")
         canale_archivio = bot.get_channel(ID_CANALE_ARCHIVIO) or await bot.fetch_channel(ID_CANALE_ARCHIVIO)
-        
-        print("[DEBUG] 2. Invio file al canale archivio...")
         file_da_inviare = await foto.to_file()
         msg = await canale_archivio.send(
             content=f"📌 Archivio Foto ID: **{nome} {cognome}** (Utente: {interaction.user.id})", 
             file=file_da_inviare
         )
+        # Salviamo sia l'URL che l'ID del messaggio per sicurezza
         foto_url_permanente = msg.attachments[0].url
-        print(f"[DEBUG] 3. Foto archiviata con successo: {foto_url_permanente}")
+        message_id_salvato = str(msg.id)
     except Exception as e:
         print(f"[LOG ERROR] Fallimento archivio foto: {e}")
         foto_url_permanente = foto.url
-        print("[DEBUG] 3. Utilizzo URL temporaneo causa errore archivio.")
 
     # 2. CALCOLO DATE
-    print("[DEBUG] 4. Calcolo date emissione/scadenza...")
     emissione, scadenza = calcola_date_id(data_nascita)
 
     # 3. SALVATAGGIO DATABASE
     try:
-        print("[DEBUG] 5. Connessione al Database...")
         conn = get_db_connection()
         cur = conn.cursor()
         
-        print("[DEBUG] 6. Esecuzione query SQL...")
-        
-        # 11 parametri corrispondenti agli 11 %s
         valori_documento = (
-            str(interaction.user.id), 
-            nome, 
-            cognome, 
-            data_nascita, 
-            luogo_nascita, 
-            sesso.value, 
-            nazionalita, 
-            emissione, 
-            scadenza, 
-            foto_url_permanente, 
-            "CARTA DI IDENTITÀ"
+            str(interaction.user.id), nome, cognome, data_nascita, luogo_nascita, 
+            sesso.value, nazionalita, emissione, scadenza, 
+            foto_url_permanente, "CARTA DI IDENTITÀ", message_id_salvato
         )
 
         cur.execute("""
             INSERT INTO documenti (
                 user_id, nome, cognome, data_nascita, luogo_nascita, 
                 sesso, nazionalita, data_emissione, data_scadenza, 
-                foto_url, tipo_documento
+                foto_url, tipo_documento, message_id
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (user_id) DO UPDATE SET
-                nome=EXCLUDED.nome, 
-                cognome=EXCLUDED.cognome, 
-                data_nascita=EXCLUDED.data_nascita,
-                luogo_nascita=EXCLUDED.luogo_nascita, 
-                sesso=EXCLUDED.sesso, 
-                nazionalita=EXCLUDED.nazionalita,
-                data_emissione=EXCLUDED.data_emissione, 
-                data_scadenza=EXCLUDED.data_scadenza,
-                foto_url=EXCLUDED.foto_url, 
-                tipo_documento=EXCLUDED.tipo_documento
+                nome=EXCLUDED.nome, cognome=EXCLUDED.cognome, data_nascita=EXCLUDED.data_nascita,
+                luogo_nascita=EXCLUDED.luogo_nascita, sesso=EXCLUDED.sesso, nazionalita=EXCLUDED.nazionalita,
+                data_emissione=EXCLUDED.data_emissione, data_scadenza=EXCLUDED.data_scadenza,
+                foto_url=EXCLUDED.foto_url, tipo_documento=EXCLUDED.tipo_documento, 
+                message_id=EXCLUDED.message_id
         """, valori_documento)
         
-        await interaction.user.add_roles(discord.Object(id=1278673173172453418))
-        await interaction.user.remove_roles(discord.Object(id=1278680093044113469))
-
         conn.commit()
-        cur.close()
-        conn.close()
+        cur.close(); conn.close()
         
-        print("[DEBUG] 7. Database aggiornato correttamente!")
-        await interaction.followup.send("✅ Documento registrato con successo nel database!", ephemeral=True)
+        await interaction.followup.send("✅ Documento registrato con successo!", ephemeral=True)
         
     except Exception as e:
         print(f"[LOG ERROR] Errore Database: {e}")
-        await interaction.followup.send(f"❌ Errore durante il salvataggio nel database: {e}", ephemeral=True)
-
-# --- COMANDO 2: MOSTRA DOCUMENTO ---
+        await interaction.followup.send(f"❌ Errore durante il salvataggio: {e}", ephemeral=True)
 @bot.tree.command(name="mostra_documento", description="Mostra graficamente il tuo documento")
 async def mostra_documento(interaction: discord.Interaction, cittadino: discord.Member = None):
     await interaction.response.defer()
     target = cittadino if cittadino else interaction.user
-    print(f"\n[DEBUG] === Recupero documento per {target.id} ===")
 
     try:
         conn = get_db_connection()
@@ -604,16 +569,15 @@ async def mostra_documento(interaction: discord.Interaction, cittadino: discord.
         img = Image.open("IMG_0453.png").convert("RGBA")
         draw = ImageDraw.Draw(img)
         
-        # Gestione Font
+        # Gestione Font (Arial o default)
         try:
             font_arial = ImageFont.truetype("arial.ttf", 30)
             font_id_type = ImageFont.truetype("arial.ttf", 27)
-        except Exception as e:
-            print(f"[LOG WARNING] Font non trovato, uso default: {e}")
+        except:
             font_arial = ImageFont.load_default()
             font_id_type = ImageFont.load_default()
 
-        # COORDINATE ORIGINALI
+        # COORDINATE (Invariate)
         draw.text((496, 284), doc['tipo_documento'].upper(), fill=(60, 60, 60), font=font_id_type)
         draw.text((494, 361), doc['cognome'].upper(), fill="black", font=font_arial)
         draw.text((493, 436), doc['nome'].upper(), fill="black", font=font_arial)
@@ -625,16 +589,29 @@ async def mostra_documento(interaction: discord.Interaction, cittadino: discord.
         draw.text((984, 580), doc['data_scadenza'], fill="black", font=font_arial)
         draw.text((983, 693), "MESSICO", fill="black", font=font_arial)
 
-
-        # Download Foto dall'Archivio
+        # GESTIONE FOTO CON RECOVERY
+        foto_url = doc['foto_url']
         headers = {'User-Agent': 'Mozilla/5.0'}
-        foto_res = requests.get(doc['foto_url'], headers=headers, timeout=10)
+        foto_res = requests.get(foto_url, headers=headers, timeout=10)
         
+        # Se il link è scaduto, prova a recuperarlo dal messaggio originale
+        if foto_res.status_code != 200 and doc.get('message_id'):
+            try:
+                print(f"[DEBUG] Link scaduto per {target.id}, rinfresco...")
+                canale_archivio = bot.get_channel(ID_CANALE_ARCHIVIO) or await bot.fetch_channel(ID_CANALE_ARCHIVIO)
+                msg = await canale_archivio.fetch_message(int(doc['message_id']))
+                foto_url = msg.attachments[0].url
+                foto_res = requests.get(foto_url, headers=headers, timeout=10)
+                # Opzionale: aggiorna l'URL nel DB qui per velocizzare la prossima volta
+            except Exception as e:
+                print(f"[LOG ERROR] Impossibile rinfrescare foto: {e}")
+
         if foto_res.status_code == 200:
             user_img = Image.open(io.BytesIO(foto_res.content)).convert("RGBA")
             user_img = user_img.resize((306, 387)) 
             img.paste(user_img, (149, 311), user_img) 
 
+        # Invio Finale
         buffer = io.BytesIO()
         img.save(buffer, format="PNG")
         buffer.seek(0)
@@ -643,11 +620,10 @@ async def mostra_documento(interaction: discord.Interaction, cittadino: discord.
             content=f"***{interaction.user.display_name}** mostra il proprio documento d'identità.*", 
             file=discord.File(buffer, filename=f"documento_{target.id}.png")
         )
-        print("[DEBUG] Documento generato e inviato con successo!")
 
     except Exception as e:
-        print(f"[LOG ERROR] Errore nel comando mostra: {e}")
-        await interaction.followup.send(f"❌ Errore grafico imprevisto: {e}")
+        print(f"[LOG ERROR] Errore generale: {e}")
+        await interaction.followup.send(f"❌ Errore imprevisto: {e}")
 
 @bot.event
 async def on_voice_state_update(member, before, after):
