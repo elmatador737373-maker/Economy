@@ -349,6 +349,78 @@ from PIL import Image, ImageDraw, ImageFont
 import io
 import requests
 import datetime
+@app_commands.command(name="bonifico", description="Invia denaro dal tuo conto bancario a un altro cittadino")
+@app_commands.describe(destinatario="Il cittadino che riceve i soldi", ammontare="La cifra da inviare")
+async def bonifico(interaction: discord.Interaction, destinatario: discord.Member, ammontare: int):
+    # Validazione base
+    if ammontare <= 0:
+        return await interaction.response.send_message("❌ L'importo deve essere superiore a 0€.", ephemeral=True)
+    
+    if destinatario.id == interaction.user.id:
+        return await interaction.response.send_message("❌ Non puoi inviare denaro a te stesso.", ephemeral=True)
+
+    user_id = str(interaction.user.id)
+    dest_id = str(destinatario.id)
+
+    conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+    cur = conn.cursor()
+
+    try:
+        # 1. Recupero fondi in banca del mittente
+        cur.execute("SELECT bank FROM users WHERE user_id = %s", (user_id,))
+        result = cur.fetchone()
+
+        # Se l'utente non esiste o non ha abbastanza soldi in banca
+        if not result or result['bank'] < ammontare:
+            saldo_attuale = result['bank'] if result else 0
+            return await interaction.response.send_message(
+                f"❌ Fondi insufficienti in banca. Saldo attuale: **{saldo_attuale}€**", 
+                ephemeral=True
+            )
+
+        # 2. Transazione: Sottrazione al mittente (bank) e aggiunta al destinatario (bank)
+        # Sottraiamo dal mittente
+        cur.execute("UPDATE users SET bank = bank - %s WHERE user_id = %s", (ammontare, user_id))
+
+        # Aggiungiamo al destinatario (con creazione record se non esiste)
+        cur.execute("""
+            INSERT INTO users (user_id, bank, wallet) VALUES (%s, %s, 0)
+            ON CONFLICT (user_id) DO UPDATE SET bank = users.bank + EXCLUDED.bank
+        """, (dest_id, ammontare))
+
+        # Conferma l'operazione
+        conn.commit()
+
+        # 3. Output grafico
+        embed = discord.Embed(
+            title="🏦 Bonifico Bancario Confermato",
+            description=(
+                f"**Mittente:** {interaction.user.mention}\n"
+                f"**Destinatario:** {destinatario.mention}\n"
+                f"**Importo:** {ammontare}€\n\n"
+                "I fondi sono stati trasferiti con successo tra i conti bancari."
+            ),
+            color=discord.Color.blue()
+        )
+        embed.set_footer(text="Evren City Banking System")
+        
+        await interaction.response.send_message(embed=embed)
+
+        # Notifica DM al destinatario
+        try:
+            await destinatario.send(f"🏦 Hai ricevuto un bonifico bancario di **{ammontare}€** da {interaction.user.name}!")
+        except:
+            pass
+
+    except Exception as e:
+        # In caso di errore, annulla ogni modifica al DB fatta in questa sessione
+        conn.rollback()
+        print(f"Errore critico bonifico: {e}")
+        await interaction.response.send_message("❌ Errore tecnico durante il trasferimento bancario.", ephemeral=True)
+    
+    finally:
+        cur.close()
+        conn.close()
 
 # --- CONFIGURAZIONE ---
 ID_CANALE_ARCHIVIO = 1501928095865896990 
