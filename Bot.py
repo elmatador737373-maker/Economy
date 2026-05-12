@@ -2248,7 +2248,8 @@ async def esito_wl(interaction: discord.Interaction, utente: discord.Member, esi
         1253463763471040550, # Approvad member
         1359878894840447066, # Disoccupato
         1278680093044113469, # No documentado
-        1253752632820895817  # Fedina penale pulita
+        1253752632820895817,
+        1253460170969976925
     ]
     
     # Ruoli da rimuovere se PASSATA
