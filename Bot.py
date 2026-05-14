@@ -1996,8 +1996,6 @@ async def paga(interaction: discord.Interaction, utente: discord.Member, importo
     finally:
         cur.close(); conn.close()
 
-# --- ECONOMIA FAZIONI E AZIENDE ---
-
 @bot.tree.command(name="deposita_soldi_fazione", description="Deposita contanti nel fondo della fazione")
 async def deposita_soldi_fazione(interaction: Interaction, importo: int):
     await interaction.response.defer()
@@ -2018,11 +2016,19 @@ async def deposita_soldi_fazione(interaction: Interaction, importo: int):
         emb.add_field(name="Utente", value=inter.user.mention); emb.add_field(name="Fazione", value=r_obj.name); emb.add_field(name="Importo", value=f"{importo}$")
         await invia_log_finanziario(inter.guild, emb)
 
-    if len(miei_ruoli) == 1: await procedi(interaction, str(miei_ruoli[0].id))
+    if len(miei_ruoli) == 1: 
+        await procedi(interaction, str(miei_ruoli[0].id))
     else:
         view = discord.ui.View()
         sel = discord.ui.Select(options=[discord.SelectOption(label=r.name, value=str(r.id)) for r in miei_ruoli])
-        async def call(i): await i.response.defer(); await procedi(i, sel.values[0])
+        
+        async def call(i):
+            # Disabilita il menu e aggiorna il messaggio originale
+            sel.disabled = True
+            await i.response.edit_message(view=view)
+            # Esegue la transazione
+            await procedi(i, sel.values[0])
+            
         sel.callback = call; view.add_item(sel)
         await interaction.followup.send("In quale fazione desideri depositare?", view=view, ephemeral=True)
 
@@ -2047,11 +2053,19 @@ async def preleva_soldi_fazione(interaction: Interaction, importo: int):
         emb.add_field(name="Utente", value=inter.user.mention); emb.add_field(name="Fazione", value=r_obj.name); emb.add_field(name="Importo", value=f"{importo}$")
         await invia_log_finanziario(inter.guild, emb)
 
-    if len(miei_ruoli) == 1: await procedi(interaction, str(miei_ruoli[0].id))
+    if len(miei_ruoli) == 1: 
+        await procedi(interaction, str(miei_ruoli[0].id))
     else:
         view = discord.ui.View()
         sel = discord.ui.Select(options=[discord.SelectOption(label=r.name, value=str(r.id)) for r in miei_ruoli])
-        async def call(i): await i.response.defer(); await procedi(i, sel.values[0])
+        
+        async def call(i):
+            # Disabilita il menu e aggiorna il messaggio originale
+            sel.disabled = True
+            await i.response.edit_message(view=view)
+            # Esegue la transazione
+            await procedi(i, sel.values[0])
+            
         sel.callback = call; view.add_item(sel)
         await interaction.followup.send("Da quale fazione desideri prelevare?", view=view, ephemeral=True)
 
