@@ -359,39 +359,47 @@ async def bonifico(interaction: discord.Interaction, destinatario: discord.Membe
     if destinatario.id == interaction.user.id:
         return await interaction.response.send_message("❌ Non puoi inviare denaro a te stesso.", ephemeral=True)
 
+    if destinatario.bot:
+        return await interaction.response.send_message("❌ Non puoi inviare denaro ai bot.", ephemeral=True)
+
     user_id = str(interaction.user.id)
     dest_id = str(destinatario.id)
 
-    conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
-    cur = conn.cursor()
+    # Inviamo un "defer" così Discord sa che stiamo lavorando ed evitiamo il timeout di 3 secondi
+    await interaction.response.defer(ephemeral=False)
 
     try:
-        # 1. Recupero fondi in banca del mittente
-        cur.execute("SELECT bank FROM users WHERE user_id = %s", (user_id,))
-        result = cur.fetchone()
+        # Utilizziamo i context manager 'with' per una gestione sicura della connessione
+        with psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor) as conn:
+            with conn.cursor() as cur:
+                
+                # 1. Recupero fondi con FOR UPDATE per evitare exploit di clonazione (Race Condition)
+                cur.execute("SELECT bank FROM users WHERE user_id = %s FOR UPDATE", (user_id,))
+                result = cur.fetchone()
 
-        # Se l'utente non esiste o non ha abbastanza soldi in banca
-        if not result or result['bank'] < ammontare:
-            saldo_attuale = result['bank'] if result else 0
-            return await interaction.response.send_message(
-                f"❌ Fondi insufficienti in banca. Saldo attuale: **{saldo_attuale}€**", 
-                ephemeral=True
-            )
+                # Se l'utente non esiste nel DB o ha fondi insufficienti
+                if not result or result['bank'] < ammontare:
+                    saldo_attuale = result['bank'] if result else 0
+                    return await interaction.followup.send(
+                        f"❌ Fondi insufficienti in banca. Saldo attuale: **{saldo_attuale}€**", 
+                        ephemeral=True
+                    )
 
-        # 2. Transazione: Sottrazione al mittente (bank) e aggiunta al destinatario (bank)
-        # Sottraiamo dal mittente
-        cur.execute("UPDATE users SET bank = bank - %s WHERE user_id = %s", (ammontare, user_id))
+                # 2. Transazione
+                # Sottraiamo dal mittente
+                cur.execute("UPDATE users SET bank = bank - %s WHERE user_id = %s", (ammontare, user_id))
 
-        # Aggiungiamo al destinatario (con creazione record se non esiste)
-        cur.execute("""
-            INSERT INTO users (user_id, bank, wallet) VALUES (%s, %s, 0)
-            ON CONFLICT (user_id) DO UPDATE SET bank = users.bank + EXCLUDED.bank
-        """, (dest_id, ammontare))
+                # Aggiungiamo al destinatario (con creazione record se non esiste)
+                cur.execute("""
+                    INSERT INTO users (user_id, bank, wallet) VALUES (%s, %s, 0)
+                    ON CONFLICT (user_id) DO UPDATE SET bank = users.bank + EXCLUDED.bank
+                """, (dest_id, ammontare))
 
-        # Conferma l'operazione
-        conn.commit()
+                # Il commit viene fatto in automatico all'uscita del blochetti 'with' se non ci sono errori,
+                # ma farlo esplicitamente prima dell'output visivo è una buona pratica.
+                conn.commit()
 
-        # 3. Output grafico
+        # 3. Output grafico (Utilizziamo followup perché abbiamo usato defer)
         embed = discord.Embed(
             title="🏦 Bonifico Bancario Confermato",
             description=(
@@ -404,23 +412,22 @@ async def bonifico(interaction: discord.Interaction, destinatario: discord.Membe
         )
         embed.set_footer(text="Evren City Banking System")
         
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(embed=embed)
 
         # Notifica DM al destinatario
         try:
             await destinatario.send(f"🏦 Hai ricevuto un bonifico bancario di **{ammontare}€** da {interaction.user.name}!")
+        except discord.Forbidden:
+            pass  # L'utente ha i DM disabilitati, ignoriamo l'errore in silenzio
+
+    except Exception as e:
+        print(f"Errore critico bonifico: {e}")
+        # Se interaction non è ancora stata risposta a causa del defer fallito (raro)
+        try:
+            await interaction.followup.send("❌ Errore tecnico durante il trasferimento bancario.", ephemeral=True)
         except:
             pass
 
-    except Exception as e:
-        # In caso di errore, annulla ogni modifica al DB fatta in questa sessione
-        conn.rollback()
-        print(f"Errore critico bonifico: {e}")
-        await interaction.response.send_message("❌ Errore tecnico durante il trasferimento bancario.", ephemeral=True)
-    
-    finally:
-        cur.close()
-        conn.close()
 
 # --- CONFIGURAZIONE ---
 ID_CANALE_ARCHIVIO = 1501928095865896990 
