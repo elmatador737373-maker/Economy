@@ -285,62 +285,85 @@ async def sync(ctx):
 
 from discord import app_commands
 
+
 # --- FUNZIONE AUTOCOMPLETE ---
 async def targa_autocomplete(
     interaction: discord.Interaction,
     current: str,
 ) -> list[app_commands.Choice[str]]:
-    # Recuperiamo solo i veicoli che appartengono all'utente che sta scrivendo
-    # Usiamo LIMIT 25 perché Discord non permette più di 25 scelte nell'autocomplete
+    # Usiamo %s al posto di $1/$2 perché siamo su psycopg2
     query = """
         SELECT targa FROM public.veicoli 
-        WHERE owner_id = $1 AND targa ILIKE $2 
+        WHERE owner_id = %s AND targa ILIKE %s 
         LIMIT 25
     """
-    rows = await bot.db.fetch(query, str(interaction.user.id), f"%{current}%")
     
-    return [
-        app_commands.Choice(name=row['targa'], value=row['targa'])
-        for row in rows
-    ]
+    try:
+        # Assicurati che interaction.client.db sia la tua connessione o pool di psycopg2
+        # Se usi un pool, dovresti fare: con = interaction.client.db.getconn()
+        # Qui ipotizziamo una connessione standard o un oggetto che supporta il context manager
+        with interaction.client.db.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(query, (str(interaction.user.id), f"%{current.upper()}%"))
+            rows = cur.fetchall()
+        
+        return [
+            app_commands.Choice(name=row['targa'], value=row['targa'])
+            for row in rows
+        ]
+    except Exception as e:
+        print(f"Errore nell'autocomplete delle targhe: {e}")
+        return []
 
 # --- COMANDO LIBRETTO ---
 @bot.tree.command(name="libretto", description="Mostra il libretto di un tuo veicolo")
 @app_commands.describe(targa="Scegli una delle tue targhe")
-@app_commands.autocomplete(targa=targa_autocomplete) # Colleghiamo l'autocomplete
+@app_commands.autocomplete(targa=targa_autocomplete)
 async def libretto(interaction: discord.Interaction, targa: str):
-    await interaction.response.defer() # Usiamo defer se la query al DB richiede tempo
+    # Usiamo il defer perché le richieste sincrone al DB potrebbero richiedere più di 3 secondi
+    await interaction.response.defer()
     
-    targa = targa.upper()
+    targa_pulita = targa.upper().strip()
     
-    # Cerchiamo il veicolo (assicurandoci che sia dell'utente o che esista)
-    row = await bot.db.fetchrow("SELECT * FROM public.veicoli WHERE targa = $1", targa)
+    try:
+        with interaction.client.db.cursor(cursor_factory=RealDictCursor) as cur:
+            # Cerchiamo il veicolo usando %s
+            cur.execute("SELECT * FROM public.veicoli WHERE targa = %s", (targa_pulita,))
+            row = cur.fetchone()
 
-    if not row:
-        return await interaction.followup.send(f"Nessun veicolo trovato con targa: `{targa}`", ephemeral=True)
+        if not row:
+            return await interaction.followup.send(f"❌ Nessun veicolo trovato con targa: `{targa_pulita}`", ephemeral=True)
 
-    # Controllo di sicurezza: solo il proprietario può mostrare il libretto
-    # (Opzionale, se vuoi che chiunque possa vederlo se conosce la targa, rimuovi queste 2 righe)
-    if row['owner_id'] != str(interaction.user.id):
-        return await interaction.followup.send("❌ Questo veicolo non ti appartiene.", ephemeral=True)
+        # Controllo di sicurezza: solo il proprietario può vedere il libretto
+        if str(row['owner_id']) != str(interaction.user.id):
+            return await interaction.followup.send("❌ Questo veicolo non ti appartiene.", ephemeral=True)
 
-    # Costruzione dell'Embed
-    embed = discord.Embed(
-        title=f"🚗 Libretto Veicolo: {targa}",
-        color=discord.Color.red() if row['sequestrato'] else discord.Color.green()
-    )
+        # Costruzione dell'Embed grafico
+        embed = discord.Embed(
+            title=f"🚗 Libretto Veicolo: {targa_pulita}",
+            color=discord.Color.red() if row['sequestrato'] else discord.Color.green()
+        )
 
-    embed.add_field(name="📦 Modello", value=row['modello'] or "N/D", inline=True)
-    embed.add_field(name="👤 Intestatario", value=f"<@{row['owner_id']}>", inline=True)
-    embed.add_field(name="📅 Data Vendita", value=row['data_vendita'] or "N/D", inline=True)
-    
-    stato_legale = "❌ SEQUESTRATO" if row['sequestrato'] else "✅ REGOLARE"
-    embed.add_field(name="🚦 Stato", value=stato_legale, inline=False)
+        embed.add_field(name="📦 Modello", value=row['modello'] if row['modello'] else "N/D", inline=True)
+        embed.add_field(name="👤 Intestatario", value=f"<@{row['owner_id']}>", inline=True)
+        
+        # Gestione della data di vendita
+        data_v = row['data_vendita']
+        data_str = data_v.strftime("%d/%m/%Y") if hasattr(data_v, 'strftime') else (str(data_v) if data_v else "N/D")
+        embed.add_field(name="📅 Data Vendita", value=data_str, inline=True)
+        
+        stato_legale = "❌ SEQUESTRATO" if row['sequestrato'] else "✅ REGOLARE"
+        embed.add_field(name="🚦 Stato", value=stato_legale, inline=False)
+        embed.set_footer(text="Motorizzazione Civile")
 
-    await interaction.followup.send(
-        content=f"**{interaction.user.display_name}** mostra il libretto di circolazione:",
-        embed=embed
-    )
+        # Invio con followup (obbligatorio dopo il defer)
+        await interaction.followup.send(
+            content=f"**{interaction.user.display_name}** mostra il libretto di circolazione:",
+            embed=embed
+        )
+        
+    except Exception as e:
+        print(f"Errore nel comando libretto: {e}")
+        await interaction.followup.send("❌ Si è verificato un errore tecnico nel recupero del libretto.", ephemeral=True)
 
 
 import discord
