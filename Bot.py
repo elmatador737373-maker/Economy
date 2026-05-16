@@ -3088,9 +3088,11 @@ async def portafoglio(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=False)
     
     try:
-        # Recupero sicuro dei dati
+        # Recupero dei dati usando la tua funzione originale
         u = get_user_data(interaction.user.id)
-        saldo = u['wallet']  # Mostra il valore reale del database, anche se negativo
+        
+        # Estrazione tramite indice numerico (u[0] corrisponde alla prima colonna selezionata: wallet)
+        saldo = u[0]  
         
         embed = discord.Embed(
             title="💵 PORTAFOGLIO PERSONALE",
@@ -3118,9 +3120,11 @@ async def conto(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=False)
 
     try:
-        # Recupero sicuro dei dati dal database
+        # Recupero dei dati usando la tua funzione originale
         u = get_user_data(interaction.user.id)
-        saldo_banca = u['bank']  # Mostra il valore reale del database, anche se negativo
+        
+        # Estrazione tramite indice numerico (u[1] corrisponde alla seconda colonna selezionata: bank)
+        saldo_banca = u[1]  
         
         embed = discord.Embed(
             title="💳 CONTO BANCARIO",
