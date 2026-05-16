@@ -3080,52 +3080,61 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
         if not interaction.response.is_done():
             await interaction.response.send_message("❌ Si è verificato un errore imprevisto durante l'esecuzione del comando.", ephemeral=True)
 
-# --- COMANDO RP ON (VERSIONE PULITA) ---
+# --- ECONOMIA PERSONALE (PORTAFOGLIO E BANCA) ---
+
 @bot.tree.command(name="portafoglio", description="Visualizza i contanti nel wallet")
 async def portafoglio(interaction: discord.Interaction):
-    # 1. Diciamo subito a Discord di attendere (impedisce il crash dopo 3 secondi)
+    # Impedisce il crash dopo 3 secondi deferendo la risposta
     await interaction.response.defer(ephemeral=False)
     
     try:
-        # Recupero dei dati dal database
+        # Recupero sicuro dei dati
         u = get_user_data(interaction.user.id)
-        
-        # Assicuriamoci che se per qualche errore è negativo, mostri almeno 0 a video
-        saldo = max(0, u['wallet'])
+        saldo = u['wallet']  # Mostra il valore reale del database, anche se negativo
         
         embed = discord.Embed(
             title="💵 PORTAFOGLIO PERSONALE",
             description=f"Al momento porti con te:\n## **{saldo:,}$**",
             color=discord.Color.green(),
-            timestamp=datetime.datetime.now()
+            timestamp=datetime.now()
         )
         embed.set_thumbnail(url=interaction.user.display_avatar.url)
         
-        # 2. Usiamo followup per inviare la risposta finale
         await interaction.followup.send(embed=embed)
 
     except Exception as e:
         print(f"❌ Errore nel comando portafoglio: {e}")
-        # In caso di errore invia un messaggio di avviso pulito
         await interaction.followup.send("❌ Si è verificato un errore nel recupero del tuo portafoglio.", ephemeral=True)
+
 
 @bot.tree.command(name="conto", description="Visualizza il tuo saldo in banca")
 async def conto(interaction: discord.Interaction):
+    # Controllo del ruolo bancario prima di qualsiasi altra operazione
     RUOLO_BANCA_ID = 1374264699331543140
     if not any(r.id == RUOLO_BANCA_ID for r in interaction.user.roles):
-        return await interaction.response.send_message("❌ Non hai un conto aperto.", ephemeral=True)
+        return await interaction.response.send_message("❌ Non hai un conto aperto o non possiedi il ruolo della Banca.", ephemeral=True)
 
-    u = get_user_data(interaction.user.id)
-    saldo_banca = max(0, u['bank'])
-    
-    embed = discord.Embed(
-        title="💳 CONTO BANCARIO",
-        description=f"Saldo disponibile:\n## **{saldo_banca:,}$**",
-        color=discord.Color.blue(),
-        timestamp=datetime.datetime.now()
-    )
-    embed.set_thumbnail(url=interaction.user.display_avatar.url)
-    await interaction.response.send_message(embed=embed)
+    # Deferiamo la risposta per evitare timeout durante la lettura del database
+    await interaction.response.defer(ephemeral=False)
+
+    try:
+        # Recupero sicuro dei dati dal database
+        u = get_user_data(interaction.user.id)
+        saldo_banca = u['bank']  # Mostra il valore reale del database, anche se negativo
+        
+        embed = discord.Embed(
+            title="💳 CONTO BANCARIO",
+            description=f"Saldo disponibile:\n## **{saldo_banca:,}$**",
+            color=discord.Color.blue(),
+            timestamp=datetime.now()
+        )
+        embed.set_thumbnail(url=interaction.user.display_avatar.url)
+        
+        await interaction.followup.send(embed=embed)
+
+    except Exception as e:
+        print(f"❌ Errore nel comando conto: {e}")
+        await interaction.followup.send("❌ Si è verificato un errore nel recupero del tuo conto bancario.", ephemeral=True)
 
 # --- MODAL PER MODIFICA STIPENDIO ---
 class ModificaStipendioModal(discord.ui.Modal, title="Modifica Stipendio Turno"):
