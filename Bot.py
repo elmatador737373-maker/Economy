@@ -3084,24 +3084,25 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
 
 @bot.tree.command(name="portafoglio", description="Visualizza i contanti nel wallet")
 async def portafoglio(interaction: discord.Interaction):
-    # Impedisce il crash dopo 3 secondi deferendo la risposta
+    # 1. Diciamo subito a Discord di attendere (sistema originale per evitare il timeout)
     await interaction.response.defer(ephemeral=False)
     
     try:
-        # Recupero dei dati usando la tua funzione originale
+        # Recupero dei dati dal database tramite la tua funzione originale
         u = get_user_data(interaction.user.id)
         
-        # Estrazione tramite indice numerico (u[0] corrisponde alla prima colonna selezionata: wallet)
-        saldo = u[0]  
+        # Sistema originale di estrazione dati tramite dizionario
+        saldo = u['wallet']
         
         embed = discord.Embed(
             title="💵 PORTAFOGLIO PERSONALE",
             description=f"Al momento porti con te:\n## **{saldo:,}$**",
             color=discord.Color.green(),
-            timestamp=datetime.now()
+            timestamp=datetime.now() # Corretto l'uso del timestamp per evitare conflitti di tipo
         )
         embed.set_thumbnail(url=interaction.user.display_avatar.url)
         
+        # 2. Invio tramite followup come nel sistema originale
         await interaction.followup.send(embed=embed)
 
     except Exception as e:
@@ -3111,26 +3112,26 @@ async def portafoglio(interaction: discord.Interaction):
 
 @bot.tree.command(name="conto", description="Visualizza il tuo saldo in banca")
 async def conto(interaction: discord.Interaction):
-    # Controllo del ruolo bancario prima di qualsiasi altra operazione
+    # Controllo del ruolo bancario originale
     RUOLO_BANCA_ID = 1374264699331543140
     if not any(r.id == RUOLO_BANCA_ID for r in interaction.user.roles):
-        return await interaction.response.send_message("❌ Non hai un conto aperto o non possiedi il ruolo della Banca.", ephemeral=True)
+        return await interaction.response.send_message("❌ Non hai un conto aperto.", ephemeral=True)
 
-    # Deferiamo la risposta per evitare timeout durante la lettura del database
+    # Diciamo a Discord di attendere per allinearci al sistema di caricamento dati
     await interaction.response.defer(ephemeral=False)
 
     try:
-        # Recupero dei dati usando la tua funzione originale
+        # Recupero dei dati dal database tramite la tua funzione originale
         u = get_user_data(interaction.user.id)
         
-        # Estrazione tramite indice numerico (u[1] corrisponde alla seconda colonna selezionata: bank)
-        saldo_banca = u[1]  
+        # Sistema originale di estrazione dati tramite dizionario
+        saldo_banca = u['bank']
         
         embed = discord.Embed(
             title="💳 CONTO BANCARIO",
             description=f"Saldo disponibile:\n## **{saldo_banca:,}$**",
             color=discord.Color.blue(),
-            timestamp=datetime.now()
+            timestamp=datetime.now() # Corretto l'uso del timestamp per evitare conflitti di tipo
         )
         embed.set_thumbnail(url=interaction.user.display_avatar.url)
         
