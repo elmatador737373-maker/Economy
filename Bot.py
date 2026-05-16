@@ -4445,6 +4445,12 @@ async def registra_fazione(interaction: Interaction, ruolo: discord.Role):
     conn.commit(); cur.close(); conn.close()
     await interaction.response.send_message(f"✅ Fazione **{ruolo.name}** registrata nel sistema.")
 
+@bot.command()
+@commands.is_owner()
+async def sync(ctx):
+    fmt = await bot.tree.sync(guild=ctx.guild)
+    await ctx.send(f"🔄 Sincronizzati {len(fmt)} comandi in questo server!")
+
 @bot.tree.command(name="wipe_utente", description="STAFF - Reset totale utente")
 async def wipe_utente(interaction: Interaction, utente: discord.Member):
     if not is_staff(interaction):
