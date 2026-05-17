@@ -2040,13 +2040,13 @@ async def inizia_rapina(interaction: discord.Interaction, luogo: str):
             cur.close(); conn.close()
             return
 
-    # Scasso Completato
+    # --- FINE SCASSO ---
     embed.title = "🛠️ SCASSINAMENTO COMPLETATO"
     embed.color = discord.Color.orange()
     embed.set_field_at(0, name="Stato", value="⌛ In attesa di approvazione staff...")
     await msg.edit(embed=embed)
 
-    # Inserimento nel database per ottenere l'ID univoco
+    # 1. Inserimento nel database per ottenere l'ID univoco della richiesta pendente
     cur.execute("""
         INSERT INTO rapine_pendenti (user_id, ammontare, luogo, msg_utente_id, canale_utente_id)
         VALUES (%s, %s, %s, %s, %s) RETURNING id
@@ -2056,8 +2056,18 @@ async def inizia_rapina(interaction: discord.Interaction, luogo: str):
     conn.commit()
     cur.close(); conn.close()
 
-    # Invio Log nel Canale Staff con la View dinamica
-    canale_staff = 1496214188551307356
+    # 2. Configurazione ID manuali
+    CANALE_STAFF_ID = 1496214188551307356  # <--- Inserisci qui il tuo ID se diverso
+
+    # 3. Recupero sicuro del canale staff (Cache -> API Fetch)
+    canale_staff = interaction.guild.get_channel(CANALE_STAFF_ID)
+    if not canale_staff:
+        try:
+            canale_staff = await interaction.guild.fetch_channel(CANALE_STAFF_ID)
+        except:
+            canale_staff = None
+
+    # 4. Invio Log nel Canale Staff
     if canale_staff:
         embed_staff = discord.Embed(title="🛡️ RICHIESTA BOTTINO RAPINA", color=discord.Color.gold())
         embed_staff.add_field(name="ID Richiesta", value=f"`#{rapina_id}`", inline=True)
@@ -2068,7 +2078,7 @@ async def inizia_rapina(interaction: discord.Interaction, luogo: str):
         view_staff = RapinaStaffView(rapina_id=rapina_id)
         await canale_staff.send(embed=embed_staff, view=view_staff)
     else:
-        await interaction.followup.send("⚠️ Errore: Il canale staff non è raggiungibile. Contatta un Admin.")
+        await interaction.followup.send(f"⚠️ Errore: Il canale staff (`{CANALE_STAFF_ID}`) non è raggiungibile. Contatta un Admin.")
 
 
 
