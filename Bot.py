@@ -1625,105 +1625,6 @@ from psycopg2.extras import RealDictCursor
 
 
 
-class RapinaStaffView(discord.ui.View):
-    def __init__(self, rapina_id=None):
-        super().__init__(timeout=None)
-        # Se stiamo creando una nuova rapina, assegniamo l'ID al bottone
-        if rapina_id:
-            self.conferma_btn.custom_id = f"rapina_conf:{rapina_id}"
-            self.annulla_btn.custom_id = f"rapina_ann:{rapina_id}"
-            self.modifica_btn.custom_id = f"rapina_mod:{rapina_id}"
-
-    # --- HELPER RECUPERO DATI ---
-    async def get_data(self, button_custom_id):
-        try:
-            rapina_id = int(button_custom_id.split(":")[1])
-            conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
-            cur = conn.cursor()
-            cur.execute("SELECT * FROM rapine_pendenti WHERE id = %s", (rapina_id,))
-            res = cur.fetchone()
-            cur.close(); conn.close()
-            return res, rapina_id
-        except:
-            return None, None
-
-    # --- BOTTONE CONFERMA ---
-    @discord.ui.button(label="Conferma", style=discord.ButtonStyle.success, custom_id="rapina_conf:default")
-    async def conferma_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        data, r_id = await self.get_data(button.custom_id)
-        if not data:
-            return await interaction.response.send_message("❌ Errore: Rapina non trovata o già processata.", ephemeral=True)
-
-        # Aggiornamento tabella originale 'users' come richiesto
-        conn = psycopg2.connect(DATABASE_URL)
-        cur = conn.cursor()
-        cur.execute("UPDATE users SET wallet = wallet + %s WHERE user_id = %s", (data['ammontare'], str(data['user_id'])))
-        # Eliminiamo la rapina pendente per pulizia
-        cur.execute("DELETE FROM rapine_pendenti WHERE id = %s", (r_id,))
-        conn.commit(); cur.close(); conn.close()
-        
-        await self.aggiorna_originale(interaction, data, "✅ **BOTTINO APPROVATO**", discord.Color.green(), data['ammontare'])
-        await self.notificami(interaction, data['user_id'], f"✅ Il tuo bottino per la rapina a **{data['luogo']}** è stato approvato! Ricevuti: **{data['ammontare']}€**")
-        await interaction.response.edit_message(content=f"✅ **APPROVATA**: {data['ammontare']}€ a <@{data['user_id']}>.", embed=None, view=None)
-
-    # --- BOTTONE ANNULLA ---
-    @discord.ui.button(label="Annulla", style=discord.ButtonStyle.danger, custom_id="rapina_ann:default")
-    async def annulla_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        data, r_id = await self.get_data(button.custom_id)
-        if not data: return
-
-        conn = psycopg2.connect(DATABASE_URL); cur = conn.cursor()
-        cur.execute("DELETE FROM rapine_pendenti WHERE id = %s", (r_id,))
-        conn.commit(); cur.close(); conn.close()
-
-        await self.aggiorna_originale(interaction, data, "❌ **RAPINA ANNULLATA**", discord.Color.red())
-        await self.notificami(interaction, data['user_id'], f"❌ La tua rapina a **{data['luogo']}** è stata annullata dallo staff.")
-        await interaction.response.edit_message(content=f"❌ **RIFIUTATA**: Colpo di <@{data['user_id']}> invalidato.", embed=None, view=None)
-
-    # --- BOTTONE MODIFICA ---
-    @discord.ui.button(label="Modifica Importo", style=discord.ButtonStyle.secondary, custom_id="rapina_mod:default")
-    async def modifica_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        data, r_id = await self.get_data(button.custom_id)
-        if not data: return
-        # Qui apriresti il tuo Modal originale
-        await interaction.response.send_modal(ModificaBottinoModal(data, r_id))
-
-    # --- HELPERS ORIGINALI ---
-    async def aggiorna_originale(self, interaction, data, esito, colore, finale=None):
-        try:
-            canale = interaction.guild.get_channel(data['canale_utente_id'])
-            msg = await canale.fetch_message(data['msg_utente_id'])
-            embed = msg.embeds[0]
-            embed.color = colore
-            embed.set_field_at(0, name="Stato", value=esito)
-            if finale:
-                embed.add_field(name="Importo Ricevuto", value=f"**{finale}€**", inline=False)
-            await msg.edit(embed=embed)
-        except: pass
-
-    async def notificami(self, interaction, user_id, testo):
-        try:
-            user = await interaction.guild.fetch_member(user_id)
-            if not user: user = await interaction.client.fetch_user(user_id)
-            await user.send(testo)
-        except: pass
-
-# --- ESEMPIO DI INVIO NEL COMANDO RAPINA ---
-# Quando invii il messaggio all'utente nel comando:
-# embed.add_field(name="Stato", value="⌛ In attesa di approvazione staff...")
-# msg_utente = await interaction.followup.send(embed=embed)
-# 
-# view_staff = RapinaStaffView(
-#     user_id=str(interaction.user.id),
-#     ammontare=paga_casuale,
-#     luogo=luogo,
-#     msg_utente_id=msg_utente.id,
-#     canale_utente_id=interaction.channel.id
-# )
-# await canale_staff.send(embed=embed_staff, view=view_staff)
-
-# --- COMANDO SETTAGGIO CANALE (SOLO ADMIN) ---
-# --- SISTEMA ECONOMICO UNIFICATO CON LOGGING ---
 
 # Funzione Helper per inviare i log finanziari nel canale settato
 async def invia_log_finanziario(guild, embed):
@@ -1966,67 +1867,157 @@ async def preleva_soldi_fazione(interaction: Interaction, importo: int):
 
 # --- PAGAMENTO SANZIONI E FATTURE ---
 
+# --- VIEW PERSISTENTE ---
+class RapinaStaffView(discord.ui.View):
+    def __init__(self, rapina_id=None):
+        super().__init__(timeout=None)
+        
+        # Se passiamo un ID quando creiamo il messaggio, personalizziamo i custom_id
+        if rapina_id is not None:
+            self.conferma_btn.custom_id = f"rapina_conf:{rapina_id}"
+            self.annulla_btn.custom_id = f"rapina_ann:{rapina_id}"
+            self.modifica_btn.custom_id = f"rapina_mod:{rapina_id}"
 
+    # Helper recupero dati dal database
+    async def get_data(self, button_custom_id):
+        try:
+            rapina_id = int(button_custom_id.split(":")[1])
+            conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+            cur = conn.cursor()
+            cur.execute("SELECT * FROM rapine_pendenti WHERE id = %s", (rapina_id,))
+            res = cur.fetchone()
+            cur.close()
+            conn.close()
+            return res, rapina_id
+        except Exception as e:
+            print(f"Errore get_data: {e}")
+            return None, None
+
+    # Bottone Conferma
+    @discord.ui.button(label="Conferma", style=discord.ButtonStyle.success, custom_id="rapina_conf:default")
+    async def conferma_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        data, r_id = await self.get_data(button.custom_id)
+        if not data:
+            return await interaction.response.send_message("❌ Errore: Rapina non trovata o già processata.", ephemeral=True)
+
+        conn = psycopg2.connect(DATABASE_URL)
+        cur = conn.cursor()
+        cur.execute("UPDATE users SET wallet = wallet + %s WHERE user_id = %s", (data['ammontare'], str(data['user_id'])))
+        cur.execute("DELETE FROM rapine_pendenti WHERE id = %s", (r_id,))
+        conn.commit()
+        cur.close()
+        conn.close()
+        
+        await self.aggiorna_originale(interaction, data, "✅ **BOTTINO APPROVATO**", discord.Color.green(), data['ammontare'])
+        await self.notificami(interaction, data['user_id'], f"✅ Il tuo bottino per la rapina a **{data['luogo']}** è stato approvato! Ricevuti: **{data['ammontare']}€**")
+        await interaction.response.edit_message(content=f"✅ **APPROVATA**: {data['ammontare']}€ a <@{data['user_id']}>.", embed=None, view=None)
+
+    # Bottone Annulla
+    @discord.ui.button(label="Annulla", style=discord.ButtonStyle.danger, custom_id="rapina_ann:default")
+    async def annulla_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        data, r_id = await self.get_data(button.custom_id)
+        if not data:
+            return await interaction.response.send_message("❌ Errore: Rapina non trovata.", ephemeral=True)
+
+        conn = psycopg2.connect(DATABASE_URL)
+        cur = conn.cursor()
+        cur.execute("DELETE FROM rapine_pendenti WHERE id = %s", (r_id,))
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        await self.aggiorna_originale(interaction, data, "❌ **RAPINA ANNULLATA**", discord.Color.red())
+        await self.notificami(interaction, data['user_id'], f"❌ La tua rapina a **{data['luogo']}** è stata annullata dallo staff.")
+        await interaction.response.edit_message(content=f"❌ **RIFIUTATA**: Colpo di <@{data['user_id']}> invalidato.", embed=None, view=None)
+
+    # Bottone Modifica Importo
+    @discord.ui.button(label="Modifica Importo", style=discord.ButtonStyle.secondary, custom_id="rapina_mod:default")
+    async def modifica_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        data, r_id = await self.get_data(button.custom_id)
+        if not data:
+            return await interaction.response.send_message("❌ Errore: Rapina non trovata.", ephemeral=True)
+        
+        await interaction.response.send_modal(ModificaBottinoModal(data, r_id))
+
+    # Helpers di aggiornamento canali e DM
+    async def aggiorna_originale(self, interaction, data, esito, colore, finale=None):
+        try:
+            canale = interaction.guild.get_channel(int(data['canale_utente_id']))
+            msg = await canale.fetch_message(int(data['msg_utente_id']))
+            embed = msg.embeds[0]
+            embed.color = colore
+            embed.set_field_at(0, name="Stato", value=esito)
+            if finale:
+                embed.add_field(name="Importo Ricevuto", value=f"**{finale}€**", inline=False)
+            await msg.edit(embed=embed)
+        except Exception as e:
+            print(f"Errore aggiorna_originale: {e}")
+
+    async def notificami(self, interaction, user_id, testo):
+        try:
+            user = await interaction.guild.fetch_member(int(user_id))
+            if not user: 
+                user = await interaction.client.fetch_user(int(user_id))
+            await user.send(testo)
+        except Exception as e:
+            print(f"Errore DM notifica: {e}")
+
+
+# --- AUTOCOMPLETE ---
 async def rapina_autocomplete(interaction: discord.Interaction, current: str):
-    conn = get_db_connection()
+    conn = psycopg2.connect(DATABASE_URL)
     cur = conn.cursor()
-    # Recupera i nomi delle rapine configurate nel DB
     cur.execute("SELECT nome FROM rapine_config WHERE nome ILIKE %s LIMIT 25", (f'%{current}%',))
     choices = [app_commands.Choice(name=row[0].upper(), value=row[0]) for row in cur.fetchall()]
     cur.close()
     conn.close()
     return choices
-# --- COMANDO INIZIA RAPINA CON SISTEMA BBC ---
+
+
+# --- COMANDO PRINCIPALE ---
 @bot.tree.command(name="inizia_rapina", description="Inizia lo scasso in un luogo configurato")
 @app_commands.autocomplete(luogo=rapina_autocomplete)
 async def inizia_rapina(interaction: discord.Interaction, luogo: str):
     await interaction.response.defer()
     
-    conn = get_db_connection()
-    from psycopg2.extras import RealDictCursor
-    cur = conn.cursor(cursor_factory=RealDictCursor)
+    conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+    cur = conn.cursor()
     
-    # 1. Recupera Config Rapina
+    # 1. Recupera Config Rapina e Canale Staff
     cur.execute("SELECT * FROM rapine_config WHERE nome = %s", (luogo.lower(),))
     config = cur.fetchone()
     
-    # 2. Recupera Canale Staff per le rapine
     cur.execute("SELECT setting_value FROM server_settings WHERE setting_name = 'canale_rapine'")
     res_canale = cur.fetchone()
     
     if not config:
-        cur.close()
-        conn.close()
+        cur.close(); conn.close()
         return await interaction.followup.send("❌ Luogo non configurato.")
     
     if not res_canale:
-        cur.close()
-        conn.close()
-        return await interaction.followup.send("❌ Canale staff rapine non impostato. Usa `/set_canale_rapine`.")
+        cur.close(); conn.close()
+        return await interaction.followup.send("❌ Canale staff rapine non impostato nel DB.")
 
-    canale_staff_id = 1496214188551307356
+    canale_staff_id = int(res_canale['setting_value'])
     tempo_rimanente = config['tempo_scasso']
     paga_casuale = random.randint(config['paga_min'], config['paga_max'])
     
-    # --- PARTE FINALE COMANDO RAPINA ---
-
     RUOLO_NOTIFICA_ID = 1363487988570521670
 
- # Creazione Embed
+    # Creazione Embed Iniziale
     embed = discord.Embed(
-    title="🚨 RAPINA IN CORSO", 
-    description=f"Sede: **{luogo.upper()}**", 
-    color=discord.Color.red()
-)
+        title="🚨 RAPINA IN CORSO", 
+        description=f"Sede: **{luogo.upper()}**", 
+        color=discord.Color.red()
+    )
     embed.add_field(name="Progresso", value=f"⏳ Scasso in corso: `{tempo_rimanente}s`")
 
-# Invio unico con TAG e EMBED insieme
     msg = await interaction.followup.send(
-    content=f"⚠️ Allerta <@&{RUOLO_NOTIFICA_ID}>!", 
-    embed=embed
-)
+        content=f"⚠️ Allerta <@&{RUOLO_NOTIFICA_ID}>!", 
+        embed=embed
+    )
 
-    # --- LOOP DEL TIMER ---
+    # Loop Timer Scasso
     while tempo_rimanente > 0:
         await asyncio.sleep(5)
         tempo_rimanente -= 5
@@ -2035,34 +2026,39 @@ async def inizia_rapina(interaction: discord.Interaction, luogo: str):
         try:
             await msg.edit(embed=embed)
         except:
-            cur.close()
-            conn.close()
+            cur.close(); conn.close()
             return
 
-    # --- FINE SCASSO (NESSUN ACCREDITO SOLDI QUI!) ---
-    
+    # Scasso Completato
     embed.title = "🛠️ SCASSINAMENTO COMPLETATO"
     embed.color = discord.Color.orange()
     embed.set_field_at(0, name="Stato", value="⌛ In attesa di approvazione staff...")
     await msg.edit(embed=embed)
 
-    # Invio richiesta al Canale Staff
+    # Inserimento nel database per ottenere l'ID univoco
+    cur.execute("""
+        INSERT INTO rapine_pendenti (user_id, ammontare, luogo, msg_utente_id, canale_utente_id)
+        VALUES (%s, %s, %s, %s, %s) RETURNING id
+    """, (str(interaction.user.id), paga_casuale, luogo, str(msg.id), str(interaction.channel.id)))
+    
+    rapina_id = cur.fetchone()['id']
+    conn.commit()
+    cur.close(); conn.close()
+
+    # Invio Log nel Canale Staff con la View dinamica
     canale_staff = interaction.guild.get_channel(canale_staff_id)
     if canale_staff:
         embed_staff = discord.Embed(title="🛡️ RICHIESTA BOTTINO RAPINA", color=discord.Color.gold())
+        embed_staff.add_field(name="ID Richiesta", value=f"`#{rapina_id}`", inline=True)
         embed_staff.add_field(name="Cittadino", value=interaction.user.mention, inline=True)
         embed_staff.add_field(name="Luogo", value=luogo.upper(), inline=True)
         embed_staff.add_field(name="Importo Generato", value=f"**{paga_casuale}€**", inline=False)
         
-        # Passiamo i dati alla View: sarà lei a pagare tramite il bottone
-        view = RapinaStaffView(str(interaction.user.id), paga_casuale, luogo)
-        await canale_staff.send(embed=embed_staff, view=view)
+        view_staff = RapinaStaffView(rapina_id=rapina_id)
+        await canale_staff.send(embed=embed_staff, view=view_staff)
     else:
-        # Se il bot non trova il canale, avvisa l'utente
         await interaction.followup.send("⚠️ Errore: Il canale staff non è raggiungibile. Contatta un Admin.")
 
-    cur.close()
-    conn.close()
 
 # --- COMANDO ADMIN: CREA CONFIGURAZIONE RAPINA ---
 @bot.tree.command(name="crea_rapina", description="Configura una nuova rapina (Solo Admin)")
