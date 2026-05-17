@@ -1908,7 +1908,8 @@ class RapinaStaffView(discord.ui.View):
         cur.close()
         conn.close()
         
-        await self.aggiorna_originale(interaction, data, "✅ **BOTTINO APPROVATO**", discord.Color.green(), data['ammontare'])
+        # Aggiorna il messaggio originale dell'utente con i dati completi
+        await self.aggiorna_originale(interaction, data, "✅ **APPROVATA**", discord.Color.green(), staff_member=interaction.user)
         await self.notificami(interaction, data['user_id'], f"✅ Il tuo bottino per la rapina a **{data['luogo']}** è stato approvato! Ricevuti: **{data['ammontare']}€**")
         await interaction.response.edit_message(content=f"✅ **APPROVATA**: {data['ammontare']}€ a <@{data['user_id']}>.", embed=None, view=None)
 
@@ -1926,7 +1927,8 @@ class RapinaStaffView(discord.ui.View):
         cur.close()
         conn.close()
 
-        await self.aggiorna_originale(interaction, data, "❌ **RAPINA ANNULLATA**", discord.Color.red())
+        # Aggiorna il messaggio originale dell'utente come rifiutato
+        await self.aggiorna_originale(interaction, data, "❌ **RESPINTA / ANNULLATA**", discord.Color.red(), staff_member=interaction.user)
         await self.notificami(interaction, data['user_id'], f"❌ La tua rapina a **{data['luogo']}** è stata annullata dallo staff.")
         await interaction.response.edit_message(content=f"❌ **RIFIUTATA**: Colpo di <@{data['user_id']}> invalidato.", embed=None, view=None)
 
@@ -1939,22 +1941,31 @@ class RapinaStaffView(discord.ui.View):
         
         await interaction.response.send_modal(ModificaBottinoModal(data, r_id))
 
-    # Helpers di aggiornamento canali e DM
-    async def aggiorna_originale(self, interaction, data, esito, colore, finale=None):
+    # NUOVO HELPER: Riscrive l'embed finale dell'utente con tutti i dettagli
+    async def aggiorna_originale(self, interaction, data, esito, colore, staff_member):
         try:
             canale = interaction.guild.get_channel(int(data['canale_utente_id']))
             msg = await canale.fetch_message(int(data['msg_utente_id']))
-            embed = msg.embeds[0]
-            embed.color = colore
-            embed.set_field_at(0, name="Stato", value=esito)
-            if finale:
-                embed.add_field(name="Importo Ricevuto", value=f"**{finale}€**", inline=False)
-            await msg.edit(embed=embed)
+            
+            # Creiamo un nuovissimo embed ricco di informazioni da sostituire a quello vecchio
+            embed_esito = discord.Embed(
+                title="📊 RESOCONTO FINALE RAPINA",
+                color=colore
+            )
+            embed_esito.add_field(name="👤 Cittadino", value=f"<@{data['user_id']}>", inline=True)
+            embed_esito.add_field(name="📍 Luogo Colpo", value=str(data['luogo']).upper(), inline=True)
+            embed_esito.add_field(name="💰 Bottino Guadagnato", value=f"**{data['ammontare']}€**", inline=False)
+            embed_esito.add_field(name="🛡️ Stato Richiesta", value=esito, inline=True)
+            embed_esito.add_field(name="👨‍✈️ Gestito da", value=staff_member.mention, inline=True)
+            
+            # Modifica il messaggio rimuovendo anche la dicitura "Allerta Ruolo" se presente nel content
+            await msg.edit(content=None, embed=embed_esito)
         except Exception as e:
             print(f"Errore aggiorna_originale: {e}")
 
     async def notificami(self, interaction, user_id, testo):
         try:
+            user = await interaction.guild.get_channel(int(user_id)) # Fallback se cercato in cache
             user = await interaction.guild.fetch_member(int(user_id))
             if not user: 
                 user = await interaction.client.fetch_user(int(user_id))
@@ -2046,7 +2057,7 @@ async def inizia_rapina(interaction: discord.Interaction, luogo: str):
     cur.close(); conn.close()
 
     # Invio Log nel Canale Staff con la View dinamica
-    canale_staff = interaction.guild.get_channel(canale_staff_id)
+    canale_staff = 1496214188551307356
     if canale_staff:
         embed_staff = discord.Embed(title="🛡️ RICHIESTA BOTTINO RAPINA", color=discord.Color.gold())
         embed_staff.add_field(name="ID Richiesta", value=f"`#{rapina_id}`", inline=True)
@@ -2058,6 +2069,8 @@ async def inizia_rapina(interaction: discord.Interaction, luogo: str):
         await canale_staff.send(embed=embed_staff, view=view_staff)
     else:
         await interaction.followup.send("⚠️ Errore: Il canale staff non è raggiungibile. Contatta un Admin.")
+
+
 
 
 # --- COMANDO ADMIN: CREA CONFIGURAZIONE RAPINA ---
