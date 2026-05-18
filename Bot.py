@@ -149,14 +149,13 @@ async def get_miei_ruoli_fazione(interaction: Interaction):
     cur.close(); conn.close()
     return [r for r in interaction.user.roles if str(r.id) in registrati]
 
-async def cerca_item_smart(interaction: Interaction, nome_input: str, modo="items", target_user_id=null):
+async def cerca_item_smart(interaction: Interaction, nome_input: str, modo="items", target_user_id=None):
     conn = get_db_connection()
     cur = conn.cursor()
     
     if modo == "items":
         cur.execute("SELECT name FROM items WHERE name ILIKE %s", (f"%{nome_input}%",))
     elif modo == "inventory":
-        # Se target_user_id non è specificato, usa chi ha lanciato il comando
         uid = str(target_user_id) if target_user_id else str(interaction.user.id)
         cur.execute("SELECT item_name FROM inventory WHERE user_id = %s AND item_name ILIKE %s", (uid, f"%{nome_input}%"))
     else:
@@ -176,11 +175,9 @@ async def cerca_item_smart(interaction: Interaction, nome_input: str, modo="item
     select = discord.ui.Select(options=[discord.SelectOption(label=n) for n in risultati[:25]])
     
     async def callback(i: Interaction):
-        # Usiamo defer_update per dire a Discord che abbiamo ricevuto la risposta, evitando il crash
         await i.response.defer_update()
         for item in view.children: 
             item.disabled = True
-        # Modifichiamo il messaggio originale usando l'interazione corretta
         await i.followup.edit_message(message_id=i.message.id, view=view)
         view.value = select.values[0]
         view.stop()
