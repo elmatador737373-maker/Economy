@@ -4418,12 +4418,28 @@ async def aggiungi_item(interaction: Interaction, utente: discord.Member, nome: 
         return await interaction.response.send_message("❌ Permessi insufficienti.", ephemeral=True)
     
     await interaction.response.defer()
+    
+    # Ricerca smart dell'item
     nome_e = await cerca_item_smart(interaction, nome, "items")
-    if not nome_e: return
-    conn = get_db_connection(); cur = conn.cursor()
-    cur.execute("INSERT INTO inventory (user_id, item_name, quantity) VALUES (%s, %s, %s) ON CONFLICT (user_id, item_name) DO UPDATE SET quantity = inventory.quantity + %s", (str(utente.id), nome_e, quantita, quantita))
-    conn.commit(); cur.close(); conn.close()
+    if not nome_e: 
+        return
+        
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    # Inserisce l'item o ne incrementa la quantità se già presente
+    cur.execute(
+        "INSERT INTO inventory (user_id, item_name, quantity) VALUES (%s, %s, %s) "
+        "ON CONFLICT (user_id, item_name) DO UPDATE SET quantity = inventory.quantity + %s", 
+        (str(utente.id), nome_e, quantita, quantita)
+    )
+    
+    conn.commit()
+    cur.close()
+    conn.close()
+    
     await interaction.followup.send(f"✅ Admin ha dato {quantita}x **{nome_e}** a {utente.mention}")
+
 
 @bot.tree.command(name="rimuovi_item", description="STAFF - Togli item")
 async def rimuovi_item(interaction: Interaction, utente: discord.Member, nome: str, quantita: int = 1):
@@ -4431,11 +4447,29 @@ async def rimuovi_item(interaction: Interaction, utente: discord.Member, nome: s
         return await interaction.response.send_message("❌ Permessi insufficienti.", ephemeral=True)
     
     await interaction.response.defer()
-    conn = get_db_connection(); cur = conn.cursor()
-    cur.execute("UPDATE inventory SET quantity = GREATEST(0, quantity - %s) WHERE user_id = %s AND item_name ILIKE %s", (quantita, str(utente.id), f"%{nome}%"))
+    
+    # Ricerca smart dell'item (stessa logica di aggiungi_item)
+    nome_e = await cerca_item_smart(interaction, nome, "items")
+    if not nome_e: 
+        return
+        
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    # Sottrae la quantità assicurandosi di non scendere sotto lo zero
+    cur.execute(
+        "UPDATE inventory SET quantity = GREATEST(0, quantity - %s) WHERE user_id = %s AND item_name = %s", 
+        (quantita, str(utente.id), nome_e)
+    )
+    
+    # Pulisce l'inventario rimuovendo le righe con quantità a 0
     cur.execute("DELETE FROM inventory WHERE quantity <= 0")
-    conn.commit(); cur.close(); conn.close()
-    await interaction.followup.send(f"✅ Admin ha rimosso {quantita}x **{nome}** a {utente.mention}")
+    
+    conn.commit()
+    cur.close()
+    conn.close()
+    
+    await interaction.followup.send(f"✅ Admin ha rimosso {quantita}x **{nome_e}** a {utente.mention}")
 
 @bot.tree.command(name="crea_item_shop", description="STAFF - Crea item shop")
 async def crea_item_shop(interaction: Interaction, nome: str, descrizione: str, prezzo: int, ruolo: discord.Role = None):
