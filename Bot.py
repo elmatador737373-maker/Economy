@@ -2023,9 +2023,13 @@ async def inizia_rapina(interaction: discord.Interaction, luogo: str):
     )
     embed.add_field(name="Progresso", value=f"⏳ Scasso in corso: `{tempo_rimanente}s`")
 
+    # --- MODIFICA QUI: Configura le menzioni consentite per permettere il ping di questo ruolo ---
+    allowed_mentions = discord.AllowedMentions(roles=[discord.Object(id=RUOLO_NOTIFICA_ID)])
+
     msg = await interaction.followup.send(
         content=f"⚠️ Allerta <@&{RUOLO_NOTIFICA_ID}>!", 
-        embed=embed
+        embed=embed,
+        allowed_mentions=allowed_mentions # <--- Passa il parametro qui
     )
 
     # Loop Timer Scasso
@@ -2035,52 +2039,12 @@ async def inizia_rapina(interaction: discord.Interaction, luogo: str):
         if tempo_rimanente < 0: tempo_rimanente = 0
         embed.set_field_at(0, name="Progresso", value=f"⏳ Scasso in corso: `{tempo_rimanente}s`")
         try:
+            # Mantieni allowed_mentions anche nell'edit se vuoi preservare la struttura, 
+            # anche se l'edit non re-invia il ping visivo.
             await msg.edit(embed=embed)
         except:
             cur.close(); conn.close()
             return
-
-    # --- FINE SCASSO ---
-    embed.title = "🛠️ SCASSINAMENTO COMPLETATO"
-    embed.color = discord.Color.orange()
-    embed.set_field_at(0, name="Stato", value="⌛ In attesa di approvazione staff...")
-    await msg.edit(embed=embed)
-
-    # 1. Inserimento nel database per ottenere l'ID univoco della richiesta pendente
-    cur.execute("""
-        INSERT INTO rapine_pendenti (user_id, ammontare, luogo, msg_utente_id, canale_utente_id)
-        VALUES (%s, %s, %s, %s, %s) RETURNING id
-    """, (str(interaction.user.id), paga_casuale, luogo, str(msg.id), str(interaction.channel.id)))
-    
-    rapina_id = cur.fetchone()['id']
-    conn.commit()
-    cur.close(); conn.close()
-
-    # 2. Configurazione ID manuali
-    CANALE_STAFF_ID = 1496214188551307356  # <--- Inserisci qui il tuo ID se diverso
-
-    # 3. Recupero sicuro del canale staff (Cache -> API Fetch)
-    canale_staff = interaction.guild.get_channel(CANALE_STAFF_ID)
-    if not canale_staff:
-        try:
-            canale_staff = await interaction.guild.fetch_channel(CANALE_STAFF_ID)
-        except:
-            canale_staff = None
-
-    # 4. Invio Log nel Canale Staff
-    if canale_staff:
-        embed_staff = discord.Embed(title="🛡️ RICHIESTA BOTTINO RAPINA", color=discord.Color.gold())
-        embed_staff.add_field(name="ID Richiesta", value=f"`#{rapina_id}`", inline=True)
-        embed_staff.add_field(name="Cittadino", value=interaction.user.mention, inline=True)
-        embed_staff.add_field(name="Luogo", value=luogo.upper(), inline=True)
-        embed_staff.add_field(name="Importo Generato", value=f"**{paga_casuale}€**", inline=False)
-        
-        view_staff = RapinaStaffView(rapina_id=rapina_id)
-        await canale_staff.send(embed=embed_staff, view=view_staff)
-    else:
-        await interaction.followup.send(f"⚠️ Errore: Il canale staff (`{CANALE_STAFF_ID}`) non è raggiungibile. Contatta un Admin.")
-
-
 
 
 # --- COMANDO ADMIN: CREA CONFIGURAZIONE RAPINA ---
