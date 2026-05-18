@@ -149,13 +149,16 @@ async def get_miei_ruoli_fazione(interaction: Interaction):
     cur.close(); conn.close()
     return [r for r in interaction.user.roles if str(r.id) in registrati]
 
-async def cerca_item_smart(interaction: Interaction, nome_input: str, modo="items"):
+async def cerca_item_smart(interaction: Interaction, nome_input: str, modo="items", target_user_id=null):
     conn = get_db_connection()
     cur = conn.cursor()
+    
     if modo == "items":
         cur.execute("SELECT name FROM items WHERE name ILIKE %s", (f"%{nome_input}%",))
     elif modo == "inventory":
-        cur.execute("SELECT item_name FROM inventory WHERE user_id = %s AND item_name ILIKE %s", (str(interaction.user.id), f"%{nome_input}%"))
+        # Se target_user_id non è specificato, usa chi ha lanciato il comando
+        uid = str(target_user_id) if target_user_id else str(interaction.user.id)
+        cur.execute("SELECT item_name FROM inventory WHERE user_id = %s AND item_name ILIKE %s", (uid, f"%{nome_input}%"))
     else:
         role_id = modo.replace("fazione_", "")
         cur.execute("SELECT item_name FROM depositi_items WHERE role_id = %s AND item_name ILIKE %s", (role_id, f"%{nome_input}%"))
@@ -164,39 +167,30 @@ async def cerca_item_smart(interaction: Interaction, nome_input: str, modo="item
     cur.close(); conn.close()
     
     if not risultati:
-        await interaction.followup.send(f"❌ Nessun oggetto trovato per '{nome_input}'.")
+        await interaction.followup.send(f"❌ Nessun oggetto trovato per '{nome_input}'.", ephemeral=True)
         return None
-    if len(risultati) == 1: return risultati[0]
+    if len(risultati) == 1: 
+        return risultati[0]
 
     view = discord.ui.View()
     select = discord.ui.Select(options=[discord.SelectOption(label=n) for n in risultati[:25]])
     
     async def callback(i: Interaction):
-        for item in view.children: item.disabled = True
-        await i.response.edit_message(view=view)
-        view.value = select.values[0]; view.stop()
+        # Usiamo defer_update per dire a Discord che abbiamo ricevuto la risposta, evitando il crash
+        await i.response.defer_update()
+        for item in view.children: 
+            item.disabled = True
+        # Modifichiamo il messaggio originale usando l'interazione corretta
+        await i.followup.edit_message(message_id=i.message.id, view=view)
+        view.value = select.values[0]
+        view.stop()
         
     select.callback = callback
     view.add_item(select); view.value = None
-    # Questo messaggio di scelta rimane privato per non intasare, ma l'azione finale sarà pubblica
+    
     await interaction.followup.send("🤔 Più risultati, seleziona quello corretto:", view=view, ephemeral=True)
     await view.wait()
     return view.value
-def calcola_date_id(data_nascita):
-    import datetime
-    # Prende la data di oggi per l'emissione
-    oggi = datetime.date.today()
-    emissione = oggi.strftime("%d/%m/%Y")
-    
-    # Calcola la scadenza (es. tra 10 anni)
-    try:
-        # Proviamo ad aggiungere 10 anni alla data odierna
-        scadenza = (oggi.replace(year=oggi.year + 10)).strftime("%d/%m/%Y")
-    except ValueError: 
-        # Gestisce il caso raro del 29 febbraio
-        scadenza = (oggi + datetime.timedelta(days=365*10)).strftime("%d/%m/%Y")
-        
-    return emissione, scadenza
 
 @bot.tree.command(name="say", description="[ADMIN] Invia un messaggio tramite il bot")
 @app_commands.describe(
@@ -4406,12 +4400,6 @@ async def staff_vedi_deposito(interaction: Interaction):
 # Funzione di supporto per pulire il codice (opzionale ma consigliata)
 def is_staff(interaction: discord.Interaction):
     return any(role.id == RUOLO_STAFF_ID for role in interaction.user.roles)
-
-# --- COMANDI SOLDI ---
-
-
-# --- COMANDI ITEM ---
-
 @bot.tree.command(name="aggiungi_item", description="STAFF - Regala item")
 async def aggiungi_item(interaction: Interaction, utente: discord.Member, nome: str, quantita: int = 1):
     if not is_staff(interaction):
@@ -4419,25 +4407,17 @@ async def aggiungi_item(interaction: Interaction, utente: discord.Member, nome: 
     
     await interaction.response.defer()
     
-    # Ricerca smart dell'item
+    # Cerca tra tutti gli item globali esistenti nel gioco
     nome_e = await cerca_item_smart(interaction, nome, "items")
-    if not nome_e: 
-        return
+    if not nome_e: return
         
-    conn = get_db_connection()
-    cur = conn.cursor()
-    
-    # Inserisce l'item o ne incrementa la quantità se già presente
+    conn = get_db_connection(); cur = conn.cursor()
     cur.execute(
         "INSERT INTO inventory (user_id, item_name, quantity) VALUES (%s, %s, %s) "
         "ON CONFLICT (user_id, item_name) DO UPDATE SET quantity = inventory.quantity + %s", 
         (str(utente.id), nome_e, quantita, quantita)
     )
-    
-    conn.commit()
-    cur.close()
-    conn.close()
-    
+    conn.commit(); cur.close(); conn.close()
     await interaction.followup.send(f"✅ Admin ha dato {quantita}x **{nome_e}** a {utente.mention}")
 
 
@@ -4448,26 +4428,17 @@ async def rimuovi_item(interaction: Interaction, utente: discord.Member, nome: s
     
     await interaction.response.defer()
     
-    # Ricerca smart dell'item (stessa logica di aggiungi_item)
-    nome_e = await cerca_item_smart(interaction, nome, "items")
-    if not nome_e: 
-        return
+    # SMART FIX: Cerca solo nell'inventario dell'utente a cui stiamo per togliere l'item!
+    nome_e = await cerca_item_smart(interaction, nome, "inventory", target_user_id=utente.id)
+    if not nome_e: return
         
-    conn = get_db_connection()
-    cur = conn.cursor()
-    
-    # Sottrae la quantità assicurandosi di non scendere sotto lo zero
+    conn = get_db_connection(); cur = conn.cursor()
     cur.execute(
         "UPDATE inventory SET quantity = GREATEST(0, quantity - %s) WHERE user_id = %s AND item_name = %s", 
         (quantita, str(utente.id), nome_e)
     )
-    
-    # Pulisce l'inventario rimuovendo le righe con quantità a 0
     cur.execute("DELETE FROM inventory WHERE quantity <= 0")
-    
-    conn.commit()
-    cur.close()
-    conn.close()
+    conn.commit(); cur.close(); conn.close()
     
     await interaction.followup.send(f"✅ Admin ha rimosso {quantita}x **{nome_e}** a {utente.mention}")
 
