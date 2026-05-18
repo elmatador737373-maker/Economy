@@ -314,7 +314,7 @@ async def targa_autocomplete(
         print(f"Errore nell'autocomplete delle targhe: {e}")
         return []
 
-# --- COMANDO LIBRETTO ---
+# --- COMANDO LIBRETTO (CORRETTO CON STATO VEICOLO & MODIFICHE) ---
 @bot.tree.command(name="libretto", description="Mostra il libretto di un tuo veicolo")
 @app_commands.describe(targa="Scegli una delle tue targhe")
 @app_commands.autocomplete(targa=targa_autocomplete)
@@ -325,6 +325,7 @@ async def libretto(interaction: discord.Interaction, targa: str):
     targa_pulita = targa.upper().strip()
     
     try:
+        from psycopg2.extras import RealDictCursor
         with interaction.client.db.cursor(cursor_factory=RealDictCursor) as cur:
             # Cerchiamo il veicolo usando %s
             cur.execute("SELECT * FROM public.veicoli WHERE targa = %s", (targa_pulita,))
@@ -337,10 +338,36 @@ async def libretto(interaction: discord.Interaction, targa: str):
         if str(row['owner_id']) != str(interaction.user.id):
             return await interaction.followup.send("❌ Questo veicolo non ti appartiene.", ephemeral=True)
 
+        # --- VERIFICA DINAMICA STATO ASSICURAZIONE/REVISIONE ---
+        oggi = datetime.now().date()
+        scad_ass = row['data_scadenza_assicurazione']
+        scad_rev = row['data_scadenza_revisione']
+
+        if scad_ass:
+            if scad_ass > oggi:
+                stato_assicurazione = f"🟢 ATTIVA (Scadenza: {scad_ass.strftime('%d/%m/%Y')})"
+            else:
+                stato_assicurazione = f"🔴 SCADUTA ({scad_ass.strftime('%d/%m/%Y')})"
+        else:
+            stato_assicurazione = "🔴 NON ASSICURATO"
+
+        if scad_rev:
+            if scad_rev > oggi:
+                stato_revisione = f"🟢 VALIDA (Scadenza: {scad_rev.strftime('%d/%m/%Y')})"
+            else:
+                stato_revisione = f"🔴 SCADUTA ({scad_rev.strftime('%d/%m/%Y')})"
+        else:
+            stato_revisione = "🔴 NON REVISIONATO"
+
+        # --- LETTURA MODIFICHE INSTALLATE ---
+        modifiche_installate = row['modifiche'] if row.get('modifiche') and row['modifiche'].strip() else "Nessuna modifica installata"
+
         # Costruzione dell'Embed grafico
+        colore = discord.Color.red() if row['sequestrato'] else discord.Color.green()
         embed = discord.Embed(
             title=f"🚗 Libretto Veicolo: {targa_pulita}",
-            color=discord.Color.red() if row['sequestrato'] else discord.Color.green()
+            color=colore,
+            timestamp=datetime.now()
         )
 
         embed.add_field(name="📦 Modello", value=row['modello'] if row['modello'] else "N/D", inline=True)
@@ -351,9 +378,16 @@ async def libretto(interaction: discord.Interaction, targa: str):
         data_str = data_v.strftime("%d/%m/%Y") if hasattr(data_v, 'strftime') else (str(data_v) if data_v else "N/D")
         embed.add_field(name="📅 Data Vendita", value=data_str, inline=True)
         
-        stato_legale = "❌ SEQUESTRATO" if row['sequestrato'] else "✅ REGOLARE"
-        embed.add_field(name="🚦 Stato", value=stato_legale, inline=False)
-        embed.set_footer(text="Motorizzazione Civile")
+        # Stato amministrativo e scadenze stradali
+        stato_legale = "❌ SEQUESTRATO / FERMO AMMINISTRATIVO" if row['sequestrato'] else "✅ REGOLARE"
+        embed.add_field(name="🚦 Stato Amministrativo", value=stato_legale, inline=False)
+        embed.add_field(name="🛡️ Assicurazione", value=stato_assicurazione, inline=True)
+        embed.add_field(name="🔧 Revisione Statale", value=stato_revisione, inline=True)
+        
+        # Mostriamo l'elenco delle modifiche montate dai meccanici
+        embed.add_field(name="⚙️ Modifiche Apportate", value=f"```\n{modifiche_installate}\n```", inline=False)
+        
+        embed.set_footer(text="Motorizzazione Civile - Dipartimento Trasporti")
 
         # Invio con followup (obbligatorio dopo il defer)
         await interaction.followup.send(
@@ -364,7 +398,6 @@ async def libretto(interaction: discord.Interaction, targa: str):
     except Exception as e:
         print(f"Errore nel comando libretto: {e}")
         await interaction.followup.send("❌ Si è verificato un errore tecnico nel recupero del libretto.", ephemeral=True)
-
 
 import discord
 from discord import app_commands
