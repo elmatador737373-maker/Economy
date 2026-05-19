@@ -3870,7 +3870,7 @@ class PagaFatturaView(discord.ui.View):
         self.add_item(self.select)
 
     async def select_callback(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer(ephemeral=False)
         
         # Spacchettiamo i dati
         data = self.select.values[0].split('|')
@@ -3913,7 +3913,7 @@ class PagaFatturaView(discord.ui.View):
 
             self.select.disabled = True
             await interaction.edit_original_response(
-                content=f"✅ Fattura `{id_f}` pagata! **{prezzo}$** accreditati nel deposito fazione.", 
+                content=f"✅ Fattura `{id_f}` pagata! **{prezzo}$** accreditati nel deposito fazione dell'azienda.", 
                 view=self
             )
 
