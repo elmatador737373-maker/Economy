@@ -3926,7 +3926,7 @@ class PagaFatturaView(discord.ui.View):
 # ==========================================
 @bot.tree.command(name="pagafattura", description="Paga le tue fatture pendenti")
 async def pagafattura(interaction: discord.Interaction):
-    await interaction.response.defer(ephemeral=True)
+    await interaction.response.defer(ephemeral=False)
     try:
         conn = get_db_connection()
         from psycopg2.extras import RealDictCursor
@@ -3937,10 +3937,10 @@ async def pagafattura(interaction: discord.Interaction):
         conn.close()
 
         if not mie_fatture:
-            return await interaction.followup.send("✅ Non hai fatture in sospeso.", ephemeral=True)
+            return await interaction.followup.send("✅ Non hai fatture in sospeso.", ephemeral=False)
 
         view = PagaFatturaView(interaction.user.id, mie_fatture)
-        await interaction.followup.send("Seleziona la fattura da pagare:", view=view, ephemeral=True)
+        await interaction.followup.send("Seleziona la fattura da pagare:", view=view, ephemeral=False)
     except Exception as e:
         print(f"ERRORE CARICAMENTO: {e}")
         await interaction.followup.send("❌ Errore nel caricamento dei dati.", ephemeral=True)
