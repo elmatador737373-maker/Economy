@@ -2009,66 +2009,147 @@ async def rapina_autocomplete(interaction: discord.Interaction, current: str):
     return choices
 
 
-# --- COMANDO PRINCIPALE ---
+
+# ==========================================
+# COMMAND TREE: INIZIA RAPINA (COMPLETO)
+# ==========================================
 @bot.tree.command(name="inizia_rapina", description="Inizia lo scasso in un luogo configurato")
+@app_commands.describe(luogo="Scegli il luogo in cui avviare lo scasso")
 @app_commands.autocomplete(luogo=rapina_autocomplete)
 async def inizia_rapina(interaction: discord.Interaction, luogo: str):
     await interaction.response.defer()
     
-    conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
-    cur = conn.cursor()
+    # Tentativo di connessione al database
+    try:
+        conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+        cur = conn.cursor()
+    except Exception as db_init_err:
+        print(f"[ERROR] Impossibile connettersi al database: {db_init_err}")
+        return await interaction.followup.send("❌ Errore tecnico di connessione al database.", ephemeral=True)
     
-    # 1. Recupera Config Rapina e Canale Staff
-    cur.execute("SELECT * FROM rapine_config WHERE nome = %s", (luogo.lower(),))
-    config = cur.fetchone()
-    
-    cur.execute("SELECT setting_value FROM server_settings WHERE setting_name = 'canale_rapine'")
-    res_canale = cur.fetchone()
-    
-    if not config:
-        cur.close(); conn.close()
-        return await interaction.followup.send("❌ Luogo non configurato.")
-    
-    if not res_canale:
-        cur.close(); conn.close()
-        return await interaction.followup.send("❌ Canale staff rapine non impostato nel DB.")
+    try:
+        # 1. Recupera Config Rapina e Canale Staff
+        cur.execute("SELECT * FROM rapine_config WHERE nome = %s", (luogo.lower(),))
+        config = cur.fetchone()
+        
+        cur.execute("SELECT setting_value FROM server_settings WHERE setting_name = 'canale_rapine'")
+        res_canale = cur.fetchone()
+        
+        if not config:
+            cur.close()
+            conn.close()
+            return await interaction.followup.send("❌ Luogo non configurato.")
+        
+        if not res_canale:
+            cur.close()
+            conn.close()
+            return await interaction.followup.send("❌ Canale staff rapine non impostato nel DB.")
 
-    canale_staff_id = int(res_canale['setting_value'])
-    tempo_rimanente = config['tempo_scasso']
-    paga_casuale = random.randint(config['paga_min'], config['paga_max'])
-    
-    RUOLO_NOTIFICA_ID = 1363487988570521670
+        # Estrazione delle variabili dalla query
+        canale_staff_id = int(res_canale['setting_value'])
+        tempo_rimanente = config['tempo_scasso']
+        paga_casuale = random.randint(config['paga_min'], config['paga_max'])
+        
+        RUOLO_NOTIFICA_ID = 1363487988570521670
 
-    # Creazione Embed Iniziale
-    embed = discord.Embed(
-        title="🚨 RAPINA IN CORSO", 
-        description=f"Sede: **{luogo.upper()}**", 
-        color=discord.Color.red()
-    )
-    embed.add_field(name="Progresso", value=f"⏳ Scasso in corso: `{tempo_rimanente}s`")
+        # Creazione dell'Embed Iniziale (Rosso per rapina in corso)
+        embed = discord.Embed(
+            title="🚨 RAPINA IN CORSO", 
+            description=f"Sede: **{luogo.upper()}**", 
+            color=discord.Color.red()
+        )
+        embed.add_field(name="Progresso", value=f"⏳ Scasso in corso: `{tempo_rimanente}s`")
 
-    # --- MODIFICA QUI: Configura le menzioni consentite per permettere il ping di questo ruolo ---
-    allowed_mentions = discord.AllowedMentions(roles=[discord.Object(id=RUOLO_NOTIFICA_ID)])
+        # Configura le menzioni consentite per permettere il ping di questo ruolo
+        allowed_mentions = discord.AllowedMentions(roles=[discord.Object(id=RUOLO_NOTIFICA_ID)])
 
-    msg = await interaction.followup.send(
-        content=f"⚠️ Allerta <@&{RUOLO_NOTIFICA_ID}>!", 
-        embed=embed,
-        allowed_mentions=allowed_mentions # <--- Passa il parametro qui
-    )
+        # Invio del primo messaggio con l'embed e la menzione dello staff
+        msg = await interaction.followup.send(
+            content=f"⚠️ Allerta <@&{RUOLO_NOTIFICA_ID}>!", 
+            embed=embed,
+            allowed_mentions=allowed_mentions
+        )
 
-    # Loop Timer Scasso
-    while tempo_rimanente > 0:
-        await asyncio.sleep(5)
-        tempo_rimanente -= 5
-        if tempo_rimanente < 0: tempo_rimanente = 0
-        embed.set_field_at(0, name="Progresso", value=f"⏳ Scasso in corso: `{tempo_rimanente}s`")
+        # Loop Timer Scasso (aggiornamento ogni 5 secondi)
+        while tempo_rimanente > 0:
+            await asyncio.sleep(5)
+            tempo_rimanente -= 5
+            if tempo_rimanente < 0: 
+                tempo_rimanente = 0
+                
+            embed.set_field_at(0, name="Progresso", value=f"⏳ Scasso in corso: `{tempo_rimanente}s`")
+            try:
+                # Mantieni allowed_mentions anche nell'edit per preservare la struttura
+                await msg.edit(embed=embed)
+            except Exception:
+                # Se l'utente cancella il messaggio o si verifica un errore nell'edit, chiude le connessioni ed esce
+                cur.close()
+                conn.close()
+                return
+
+        # ==========================================
+        # SCASSO COMPLETATO - GESTIONE FINE TIMER
+        # ==========================================
+        # 1. Creiamo l'embed arancione di attesa approvazione per l'utente/canale rapina
+        embed_attesa = discord.Embed(
+            title="🚨 SCASSO COMPLETATO",
+            description=f"Lo scasso presso **{luogo.upper()}** è stato completato con successo da {interaction.user.mention}.\nIl sistema è ora in attesa di una revisione da parte dello staff.",
+            color=discord.Color.orange(),
+            timestamp=datetime.now()
+        )
+        embed_attesa.add_field(name="📍 Sede Colpita", value=f"**{luogo.upper()}**", inline=True)
+        embed_attesa.add_field(name="💰 Bottino Stimato", value=f"**{paga_casuale:,.2f}$**", inline=True)
+        embed_attesa.add_field(name="📊 Stato Richiesta", value="⏳ In attesa di approvazione dello Staff", inline=False)
+        embed_attesa.set_footer(text="Sistema Rapine Automatico")
+
+        # Aggiorna il messaggio originale rimuovendo la menzione testuale iniziale
         try:
-            # Mantieni allowed_mentions anche nell'edit se vuoi preservare la struttura, 
-            # anche se l'edit non re-invia il ping visivo.
-            await msg.edit(embed=embed)
-        except:
-            cur.close(); conn.close()
-            return
+            await msg.edit(content=None, embed=embed_attesa)
+        except Exception as msg_err:
+            print(f"[ERROR] Impossibile aggiornare il messaggio di rapina: {msg_err}")
+
+        # 2. Invio della richiesta di approvazione nel canale Staff configurato
+        canale_staff = interaction.guild.get_channel(canale_staff_id)
+        if not canale_staff:
+            try:
+                canale_staff = await interaction.guild.fetch_channel(canale_staff_id)
+            except Exception:
+                canale_staff = None
+
+        if canale_staff:
+            embed_staff = discord.Embed(
+                title="📋 NUOVA RAPINA DA APPROVARE",
+                description=f"L'utente {interaction.user.mention} ha terminato lo scasso e richiede l'erogazione del bottino.",
+                color=discord.Color.orange(),
+                timestamp=datetime.now()
+            )
+            embed_staff.add_field(name="👤 Autore", value=interaction.user.mention, inline=True)
+            embed_staff.add_field(name="📍 Luogo", value=f"**{luogo.upper()}**", inline=True)
+            embed_staff.add_field(name="💵 Somma da Erogare", value=f"**{paga_casuale:,.2f}$**", inline=True)
+            embed_staff.set_footer(text=f"ID Utente: {interaction.user.id} | Approva manualmente nel database o tramite comando")
+
+            await canale_staff.send(embed=embed_staff)
+        else:
+            print(f"[WARNING] Canale staff rapine (ID: {canale_staff_id}) non trovato nel server Discord.")
+
+        # Chiudiamo le risorse del database in modo sicuro al termine del successo
+        cur.close()
+        conn.close()
+
+    except Exception as e:
+        print(f"Errore generale nel comando inizia_rapina: {e}")
+        try:
+            cur.close()
+            conn.close()
+        except Exception:
+            pass
+        try:
+            await interaction.followup.send("❌ Si è verificato un errore tecnico durante lo scasso.", ephemeral=True)
+        except Exception:
+            pass
+
+
+
 
 
 # --- COMANDO ADMIN: CREA CONFIGURAZIONE RAPINA ---
