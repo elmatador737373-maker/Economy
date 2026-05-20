@@ -277,57 +277,34 @@ async def sync(ctx):
 from discord import app_commands
 
 
-# --- FUNZIONE AUTOCOMPLETE ---
-async def targa_autocomplete(
-    interaction: discord.Interaction,
-    current: str,
-) -> list[app_commands.Choice[str]]:
-    # Usiamo %s al posto di $1/$2 perché siamo su psycopg2
-    query = """
-        SELECT targa FROM public.veicoli 
-        WHERE owner_id = %s AND targa ILIKE %s 
-        LIMIT 25
-    """
-    
-    try:
-        # Assicurati che interaction.client.db sia la tua connessione o pool di psycopg2
-        # Se usi un pool, dovresti fare: con = interaction.client.db.getconn()
-        # Qui ipotizziamo una connessione standard o un oggetto che supporta il context manager
-        with interaction.client.db.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(query, (str(interaction.user.id), f"%{current.upper()}%"))
-            rows = cur.fetchall()
-        
-        return [
-            app_commands.Choice(name=row['targa'], value=row['targa'])
-            for row in rows
-        ]
-    except Exception as e:
-        print(f"Errore nell'autocomplete delle targhe: {e}")
-        return []
+from datetime import datetime  # <--- ASSICURATI CHE CI SIA QUESTO
+import discord
+from discord import app_commands
+from psycopg2.extras import RealDictCursor
 
-# --- COMANDO LIBRETTO (CORRETTO CON STATO VEICOLO & MODIFICHE) ---
+# --- COMANDO LIBRETTO CORETTO ---
 @bot.tree.command(name="libretto", description="Mostra il libretto di un tuo veicolo")
-@app_commands.describe(targa="Scegli una delle tue targhe")
+@app_commands.describe(targa="Scegli una delle tue trasformazioni")
 @app_commands.autocomplete(targa=targa_autocomplete)
 async def libretto(interaction: discord.Interaction, targa: str):
-    # Usiamo il defer perché le richieste sincrone al DB potrebbero richiedere più di 3 secondi
+    # Deferiamo subito per evitare il timeout di 3 secondi
     await interaction.response.defer()
     
     targa_pulita = targa.upper().strip()
     
     try:
-        from psycopg2.extras import RealDictCursor
+        # Se interaction.client.db è una connessione diretta:
         with interaction.client.db.cursor(cursor_factory=RealDictCursor) as cur:
-            # Cerchiamo il veicolo usando %s
             cur.execute("SELECT * FROM public.veicoli WHERE targa = %s", (targa_pulita,))
             row = cur.fetchone()
 
         if not row:
-            return await interaction.followup.send(f"❌ Nessun veicolo trovato con targa: `{targa_pulita}`", ephemeral=True)
+            # Nota: rimosso ephemeral=True perché dopo il defer() standard può dare problemi su alcuni client
+            return await interaction.followup.send(f"❌ Nessun veicolo trovato con targa: `{targa_pulita}`")
 
-        # Controllo di sicurezza: solo il proprietario può vedere il libretto
+        # Controllo di sicurezza
         if str(row['owner_id']) != str(interaction.user.id):
-            return await interaction.followup.send("❌ Questo veicolo non ti appartiene.", ephemeral=True)
+            return await interaction.followup.send("❌ Questo veicolo non ti appartiene.")
 
         # --- VERIFICA DINAMICA STATO ASSICURAZIONE/REVISIONE ---
         oggi = datetime.now().date()
@@ -335,6 +312,8 @@ async def libretto(interaction: discord.Interaction, targa: str):
         scad_rev = row['data_scadenza_revisione']
 
         if scad_ass:
+            # Se il DB restituisce una stringa invece di un oggetto date, va convertito.
+            # Qui assumiamo sia già un oggetto date/datetime di psycopg2
             if scad_ass > oggi:
                 stato_assicurazione = f"🟢 ATTIVA (Scadenza: {scad_ass.strftime('%d/%m/%Y')})"
             else:
@@ -380,15 +359,23 @@ async def libretto(interaction: discord.Interaction, targa: str):
         
         embed.set_footer(text="Motorizzazione Civile - Dipartimento Trasporti")
 
-        # Invio con followup (obbligatorio dopo il defer)
+        # Invio finale
         await interaction.followup.send(
             content=f"**{interaction.user.display_name}** mostra il libretto di circolazione:",
             embed=embed
         )
         
     except Exception as e:
-        print(f"Errore nel comando libretto: {e}")
-        await interaction.followup.send("❌ Si è verificato un errore tecnico nel recupero del libretto.", ephemeral=True)
+        # Questo stamperà l'errore esatto nella console del tuo PC/Server così potrai leggerlo!
+        print(f"--- ERRORE CRITICO NEL COMANDO LIBRETTO ---")
+        import traceback
+        traceback.print_exc() 
+        print(f"--------------------------------------------")
+        
+        try:
+            await interaction.followup.send("❌ Si è verificato un errore tecnico nel recupero del libretto.")
+        except Exception:
+            pass
 
 import discord
 from discord import app_commands
