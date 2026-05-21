@@ -4167,27 +4167,40 @@ async def preleva_item_fazione(interaction: Interaction, nome: str, quantita: in
 
     async def procedi(inter, rid):
         nome_e = await cerca_item_smart(inter, nome, f"fazione_{rid}")
-        if not nome_e: return
+        if not nome_e: return await inter.followup.send("❌ Item non trovato.")
+        
         conn = get_db_connection(); cur = conn.cursor()
         cur.execute("SELECT quantity FROM depositi_items WHERE role_id = %s AND item_name = %s", (rid, nome_e))
         res = cur.fetchone()
-        if not res or res[0] < quantita: return await inter.followup.send("❌ Magazzino fazione insufficiente.")
+        if not res or res[0] < quantita: 
+            cur.close(); conn.close()
+            return await inter.followup.send("❌ Magazzino fazione insufficiente.")
+            
         cur.execute("UPDATE depositi_items SET quantity = quantity - %s WHERE role_id = %s AND item_name = %s", (quantita, rid, nome_e))
         cur.execute("INSERT INTO inventory (user_id, item_name, quantity) VALUES (%s, %s, %s) ON CONFLICT (user_id, item_name) DO UPDATE SET quantity = inventory.quantity + %s", (str(inter.user.id), nome_e, quantita, quantita))
         cur.execute("DELETE FROM depositi_items WHERE quantity <= 0")
         conn.commit(); cur.close(); conn.close()
+        
         r_obj = inter.guild.get_role(int(rid))
         await inter.followup.send(f"📦 **{inter.user.display_name}** ha prelevato {quantita}x **{nome_e}** da **{r_obj.name}**.")
 
-    if len(miei_ruoli) == 1: await procedi(interaction, str(miei_ruoli[0].id))
+    if len(miei_ruoli) == 1: 
+        await procedi(interaction, str(miei_ruoli[0].id))
     else:
         view = discord.ui.View()
         sel = discord.ui.Select(options=[discord.SelectOption(label=r.name, value=str(r.id)) for r in miei_ruoli])
-        async def call(i):
+        
+        async def call(i: Interaction):
+            # Deferiamo subito l'interazione del Select per evitare il timeout
+            await i.response.defer()
             for it in view.children: it.disabled = True
-            await i.response.edit_message(view=view); await procedi(i, sel.values[0])
+            # Aggiorniamo il messaggio originale usando il followup visto che l'interazione è ora deferita
+            await i.edit_original_response(view=view)
+            await procedi(i, sel.values[0])
+            
         sel.callback = call; view.add_item(sel)
         await interaction.followup.send("Da quale magazzino prelevi?", view=view, ephemeral=True)
+
 
 # ================= SHOP & LAVORO =================
 class ShopPaginationView(discord.ui.View):
