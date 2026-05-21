@@ -3059,27 +3059,62 @@ class VerificaView(discord.ui.View):
         except Exception as e:
             await interaction.followup.send(f"❌ Errore: {e}", ephemeral=True)
 
+import os
+import discord
+from discord import app_commands
+
 @bot.tree.command(name="rpon", description="Segnala che l'RP è ONLINE")
 @app_commands.checks.has_role(1253707509399683202)
 @app_commands.describe(psn_id="Inserisci il tuo ID PlayStation Network")
 async def rpon(interaction: discord.Interaction, psn_id: str):
-    # Creazione dell'embed con focus su Status, Utente e PSN
-    embed = discord.Embed(
-        title="Server Status",
-        description=f"***Roleplay On da :*** {interaction.user.mention}",
-        color=discord.Color.blue()
-    )
+    # Risposta immediata per evitare che il comando scada durante il caricamento del file
+    await interaction.response.defer()
     
-    # Campo dedicato all'ID PSN
-    embed.add_field(name="🎮 ID PSN", value=f"**{psn_id}**", inline=False)
-    
-    # Footer opzionale per dare un tocco professionale
-    embed.set_footer(text="Evren City RP • Sessione Aperta")
-    
-    if interaction.guild.icon:
-        embed.set_thumbnail(url=interaction.guild.icon.url)
+    try:
+        # Recupera il percorso della cartella in cui si trova questo file di script (.py)
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        nome_file = "61C2B877-EED6-4FFB-A7AA-363D91B1F49D.png"
+        
+        # Unisce la cartella dello script con il nome del file per trovarlo nella repository
+        percorso_file = os.path.join(base_dir, nome_file)
 
-    await interaction.response.send_message(embed=embed)
+        # Verifica se il file esiste nella repository prima di procedere
+        if not os.path.exists(percorso_file):
+            await interaction.followup.send(f"❌ Errore: Il file `{nome_file}` non è stato trovato nella repository.")
+            return
+
+        # Prepara il file per l'invio su Discord
+        file_immagine = discord.File(percorso_file, filename=nome_file)
+
+        # Creazione dell'embed con focus su Status, Utente e PSN
+        embed = discord.Embed(
+            title="Server Status",
+            description=f"***Roleplay On da :*** {interaction.user.mention}",
+            color=discord.Color.blue()
+        )
+        
+        # Campo dedicato all'ID PSN
+        embed.add_field(name="🎮 ID PSN", value=f"**{psn_id}**", inline=False)
+        
+        # Footer opzionale per dare un tocco professionale
+        embed.set_footer(text="Evren City RP • Sessione Aperta")
+        
+        if interaction.guild.icon:
+            embed.set_thumbnail(url=interaction.guild.icon.url)
+
+        # Imposta l'immagine dell'embed usando il file allegato preso dalla repository
+        embed.set_image(url=f"attachment://{nome_file}")
+
+        # Invia l'embed con il file immagine allegato usando followup (necessario dopo il defer)
+        await interaction.followup.send(embed=embed, file=file_immagine)
+
+    except Exception as e:
+        # Gestione errori in caso di problemi di permessi o file mancanti
+        await interaction.followup.send(f"❌ Si è verificato un errore: {e}")
+
+import os
+import discord
+from discord import app_commands
 
 @bot.tree.command(name="sondaggio", description="Crea un sondaggio per l'orario dell'RP")
 @app_commands.describe(ora="Inserisci l'orario (es. 21:30)")
@@ -3089,6 +3124,21 @@ async def sondaggio(interaction: discord.Interaction, ora: str):
     await interaction.response.defer(ephemeral=True)
     
     try:
+        # Recupera il percorso della cartella in cui si trova questo file di script (.py)
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        nome_file = "A952433E-3432-46B5-9200-1E2FB62E4231.png"
+        
+        # Unisce la cartella dello script con il nome del file per trovarlo nella repository
+        percorso_file = os.path.join(base_dir, nome_file)
+
+        # Verifica se il file esiste effettivamente nella repository prima di procedere
+        if not os.path.exists(percorso_file):
+            await interaction.followup.send(f"❌ Errore: Il file `{nome_file}` non è stato trovato nella repository.")
+            return
+
+        # Prepara il file per l'invio su Discord
+        file_immagine = discord.File(percorso_file, filename=nome_file)
+
         # 1. Creazione dell'Embed per il canale
         embed = discord.Embed(
             title="🏙️ EVREN CITY RP - SESSIONE PROGRAMMATA",
@@ -3103,8 +3153,11 @@ async def sondaggio(interaction: discord.Interaction, ora: str):
         embed.add_field(name="🕒 Ritardo", value="In ritardo", inline=True)
         embed.set_footer(text="Evren City RP Staff")
         
-        # 2. Invio del messaggio nel canale con menzione @everyone
-        messaggio = await interaction.channel.send(content="@everyone", embed=embed)
+        # Imposta l'immagine dell'embed usando il file allegato
+        embed.set_image(url=f"attachment://{nome_file}")
+        
+        # 2. Invio del messaggio nel canale con menzione @everyone e il file preso dalla repository
+        messaggio = await interaction.channel.send(content="@everyone", embed=embed, file=file_immagine)
         
         # 3. Aggiunta delle reazioni per il voto
         await messaggio.add_reaction("✅")
