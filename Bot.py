@@ -4137,8 +4137,10 @@ async def deposita_item_fazione(interaction: Interaction, nome: str, quantita: i
     await interaction.response.defer()
     miei_ruoli = await get_miei_ruoli_fazione(interaction)
     if not miei_ruoli: return await interaction.followup.send("❌ No Fazione.")
+    
     nome_e = await cerca_item_smart(interaction, nome, "inventory")
-    if not nome_e: return
+    if not nome_e: 
+        return await interaction.followup.send("❌ Item non trovato nel tuo inventario.")
 
     async def procedi(inter, rid):
         conn = get_db_connection(); cur = conn.cursor()
@@ -4149,13 +4151,20 @@ async def deposita_item_fazione(interaction: Interaction, nome: str, quantita: i
         r_obj = inter.guild.get_role(int(rid))
         await inter.followup.send(f"✅ **{inter.user.display_name}** ha messo {quantita}x **{nome_e}** in **{r_obj.name}**.")
 
-    if len(miei_ruoli) == 1: await procedi(interaction, str(miei_ruoli[0].id))
+    if len(miei_ruoli) == 1: 
+        await procedi(interaction, str(miei_ruoli[0].id))
     else:
         view = discord.ui.View()
         sel = discord.ui.Select(options=[discord.SelectOption(label=r.name, value=str(r.id)) for r in miei_ruoli])
-        async def call(i):
+        
+        async def call(i: Interaction):
+            # Deferiamo subito l'interazione del Select per evitare il timeout
+            await i.response.defer()
             for it in view.children: it.disabled = True
-            await i.response.edit_message(view=view); await procedi(i, sel.values[0])
+            # Aggiorniamo il messaggio originale usando edit_original_response
+            await i.edit_original_response(view=view)
+            await procedi(i, sel.values[0])
+            
         sel.callback = call; view.add_item(sel)
         await interaction.followup.send("In quale magazzino depositi?", view=view, ephemeral=True)
 
@@ -4589,11 +4598,13 @@ async def aggiungi_item(interaction: Interaction, utente: discord.Member, nome: 
     if not is_staff(interaction):
         return await interaction.response.send_message("❌ Permessi insufficienti.", ephemeral=True)
     
+    # Avviamo il deferramento per dare tempo alla ricerca smart di elaborare
     await interaction.response.defer()
     
     # Cerca tra tutti gli item globali esistenti nel gioco
     nome_e = await cerca_item_smart(interaction, nome, "items")
-    if not nome_e: return
+    if not nome_e: 
+        return await interaction.followup.send("❌ Item non trovato nella ricerca globale.")
         
     conn = get_db_connection(); cur = conn.cursor()
     cur.execute(
@@ -4610,11 +4621,13 @@ async def rimuovi_item(interaction: Interaction, utente: discord.Member, nome: s
     if not is_staff(interaction):
         return await interaction.response.send_message("❌ Permessi insufficienti.", ephemeral=True)
     
+    # Avviamo il deferramento per dare tempo alla ricerca smart di elaborare
     await interaction.response.defer()
     
     # SMART FIX: Cerca solo nell'inventario dell'utente a cui stiamo per togliere l'item!
     nome_e = await cerca_item_smart(interaction, nome, "inventory", target_user_id=utente.id)
-    if not nome_e: return
+    if not nome_e: 
+        return await interaction.followup.send(f"❌ Item non trovato nell'inventario di {utente.display_name}.")
         
     conn = get_db_connection(); cur = conn.cursor()
     cur.execute(
