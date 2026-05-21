@@ -3192,17 +3192,48 @@ async def sondaggio(interaction: discord.Interaction, ora: str):
     except Exception as e:
         # Gestione errori in caso di problemi di permessi o altro
         await interaction.followup.send(f"❌ Si è verificato un errore: {e}")
+import os
+import discord
+from discord import app_commands
 
 # --- COMANDO RP OFF ---
 @bot.tree.command(name="rpoff", description="Segnala che l'RP è OFFLINE")
 @app_commands.checks.has_role(1253707509399683202)
 async def rpoff(interaction: discord.Interaction):
-    embed = discord.Embed(
-        title="🔴 RP OFFLINE",
-        description="La sessione di Roleplay è terminata. Grazie a tutti per aver partecipato!",
-        color=discord.Color.red()
-    )
-    await interaction.response.send_message(embed=embed)
+    # Risposta immediata per evitare il timeout di Discord durante il caricamento del file
+    await interaction.response.defer()
+    
+    try:
+        # Recupera il percorso della cartella della repository
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        nome_file = "AF86A47D-A6D1-4512-94EC-E87BFDDFFCD4.png"
+        percorso_file = os.path.join(base_dir, nome_file)
+
+        # Verifica se il file esiste nella repository prima di procedere
+        if not os.path.exists(percorso_file):
+            await interaction.followup.send(f"❌ Errore: Il file `{nome_file}` non è stato trovato nella repository.")
+            return
+
+        # Prepara il file per l'invio su Discord
+        file_immagine = discord.File(percorso_file, filename=nome_file)
+
+        # Creazione dell'embed
+        embed = discord.Embed(
+            title="🔴 RP OFFLINE",
+            description="La sessione di Roleplay è terminata. Grazie a tutti per aver partecipato!",
+            color=discord.Color.red()
+        )
+        
+        # Imposta l'immagine dell'embed usando il file preso dalla repository
+        embed.set_image(url=f"attachment://{nome_file}")
+
+        # Invia l'embed con il file immagine allegato
+        await interaction.followup.send(embed=embed, file=file_immagine)
+
+    except Exception as e:
+        # Gestione errori in caso di problemi imprevisti
+        await interaction.followup.send(f"❌ Si è verificato un errore: {e}")
+
 from discord import app_commands
 
 # --- GESTORE ERRORI GLOBALE PER I COMANDI SLASH ---
