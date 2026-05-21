@@ -166,7 +166,9 @@ async def cerca_item_smart(interaction: Interaction, nome_input: str, modo="item
     cur.close(); conn.close()
     
     if not risultati:
-        await interaction.followup.send(f"❌ Nessun oggetto trovato per '{nome_input}'.", ephemeral=True)
+        # Usiamo un messaggio normale (non ephemeral forzato se il comando base non lo è, 
+        # o lo lasciamo ephemeral se preferisci, ma followup.send si adatta al defer del comando principale)
+        await interaction.followup.send(f"❌ Nessun oggetto trovato per '{nome_input}'.")
         return None
     if len(risultati) == 1: 
         return risultati[0]
@@ -175,18 +177,33 @@ async def cerca_item_smart(interaction: Interaction, nome_input: str, modo="item
     select = discord.ui.Select(options=[discord.SelectOption(label=n) for n in risultati[:25]])
     
     async def callback(i: Interaction):
-        await i.response.defer_update()
+        # 1. Deferiamo l'interazione del Select per dare tempo al comando principale di finire senza timeout
+        await i.response.defer()
+        
+        # 2. Disabilitiamo il menu a tendina per evitare doppi click
         for item in view.children: 
             item.disabled = True
-        await i.followup.edit_message(message_id=i.message.id, view=view)
+            
+        # 3. Aggiorniamo il messaggio del Select usando edit_original_response
+        await i.edit_original_response(view=view)
+        
+        # 4. Salviamo il valore e sblocchiamo la view
         view.value = select.values[0]
         view.stop()
         
     select.callback = callback
     view.add_item(select); view.value = None
     
-    await interaction.followup.send("🤔 Più risultati, seleziona quello corretto:", view=view, ephemeral=True)
+    # Inviamo il menu a tendina
+    msg = await interaction.followup.send("🤔 Più risultati, seleziona quello corretto:", view=view, ephemeral=True)
+    
+    # Attendiamo che l'utente clicchi un'opzione
     await view.wait()
+    
+    # Se il tempo scade o chiudono la view senza selezionare nulla
+    if view.value is None:
+        return None
+        
     return view.value
 
 @bot.tree.command(name="say", description="[ADMIN] Invia un messaggio tramite il bot")
