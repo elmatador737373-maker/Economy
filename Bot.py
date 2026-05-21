@@ -281,6 +281,28 @@ from datetime import datetime  # <--- ASSICURATI CHE CI SIA QUESTO
 import discord
 from discord import app_commands
 from psycopg2.extras import RealDictCursor
+# --- FUNZIONE AUTOCOMPLETE PER LE TARGHE (SOLO VEICOLI PROPRI) ---
+async def targa_autocomplete(interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
+    conn = get_db_connection()
+    if not conn:
+        return []
+    
+    try:
+        cur = conn.cursor()
+        # Filtra per targa SIMILE a quella digitata E che appartiene all'ID di chi usa il comando
+        cur.execute(
+            "SELECT targa FROM veicoli WHERE proprietario_id = %s AND targa ILIKE %s LIMIT 25", 
+            (str(interaction.user.id), f"%{current}%")
+        )
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        
+        # Ritorna la lista delle sole targhe dell'utente
+        return [app_commands.Choice(name=row[0].upper(), value=row[0]) for row in rows]
+    except Exception as e:
+        print(f"⚠️ Errore nell'autocomplete privato della targa: {e}")
+        return []
 
 # --- COMANDO LIBRETTO CORETTO ---
 @bot.tree.command(name="libretto", description="Mostra il libretto di un tuo veicolo")
