@@ -299,20 +299,27 @@ import discord
 from discord import app_commands
 from psycopg2.extras import RealDictCursor
 # --- FUNZIONE AUTOCOMPLETE PER LE TARGHE (SOLO VEICOLI PROPRI) ---
+import discord
+from discord import app_commands
+from datetime import datetime
+# Assicurati di aver importato RealDictCursor se usi psycopg2
+# from psycopg2.extras import RealDictCursor 
+
+# --- AUTOCOMPLETE DELLA TARGA ---
 async def targa_autocomplete(interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
     conn = get_db_connection()
     if not conn:
         return []
     
     try:
-        cur = conn.cursor()
-        # Filtra per targa SIMILE a quella digitata E che appartiene all'ID di chi usa il comando
-        cur.execute(
-            "SELECT targa FROM veicoli WHERE proprietario_id = %s AND targa ILIKE %s LIMIT 25", 
-            (str(interaction.user.id), f"%{current}%")
-        )
-        rows = cur.fetchall()
-        cur.close()
+        # Usiamo il context manager (with) per essere sicuri che il cursore si chiuda
+        with conn.cursor() as cur:
+            # Filtra per targa SIMILE e che appartiene all'owner_id di chi usa il comando
+            cur.execute(
+                "SELECT targa FROM public.veicoli WHERE owner_id = %s AND targa ILIKE %s LIMIT 25", 
+                (str(interaction.user.id), f"%{current}%")
+            )
+            rows = cur.fetchall()
         conn.close()
         
         # Ritorna la lista delle sole targhe dell'utente
@@ -321,38 +328,35 @@ async def targa_autocomplete(interaction: discord.Interaction, current: str) -> 
         print(f"⚠️ Errore nell'autocomplete privato della targa: {e}")
         return []
 
-# --- COMANDO LIBRETTO CORETTO ---
+# --- COMANDO LIBRETTO ---
 @bot.tree.command(name="libretto", description="Mostra il libretto di un tuo veicolo")
-@app_commands.describe(targa="Scegli una delle tue trasformazioni")
+@app_commands.describe(targa="Inserisci o seleziona la targa del tuo veicolo")
 @app_commands.autocomplete(targa=targa_autocomplete)
 async def libretto(interaction: discord.Interaction, targa: str):
-    # Deferiamo subito per evitare il timeout di 3 secondi
+    # Deferiamo subito per evitare il timeout di 3 secondi di Discord
     await interaction.response.defer()
     
     targa_pulita = targa.upper().strip()
     
     try:
-        # Se interaction.client.db è una connessione diretta:
+        # Recupero dei dati dal database
         with interaction.client.db.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("SELECT * FROM public.veicoli WHERE targa = %s", (targa_pulita,))
             row = cur.fetchone()
 
         if not row:
-            # Nota: rimosso ephemeral=True perché dopo il defer() standard può dare problemi su alcuni client
             return await interaction.followup.send(f"❌ Nessun veicolo trovato con targa: `{targa_pulita}`")
 
-        # Controllo di sicurezza
+        # Controllo di sicurezza: il veicolo deve appartenere a chi esegue il comando
         if str(row['owner_id']) != str(interaction.user.id):
             return await interaction.followup.send("❌ Questo veicolo non ti appartiene.")
 
         # --- VERIFICA DINAMICA STATO ASSICURAZIONE/REVISIONE ---
         oggi = datetime.now().date()
-        scad_ass = row['data_scadenza_assicurazione']
-        scad_rev = row['data_scadenza_revisione']
+        scad_ass = row['data_scadenza_assicurazione']  # Tipo 'date' nel DB
+        scad_rev = row['data_scadenza_revisione']      # Tipo 'date' nel DB
 
         if scad_ass:
-            # Se il DB restituisce una stringa invece di un oggetto date, va convertito.
-            # Qui assumiamo sia già un oggetto date/datetime di psycopg2
             if scad_ass > oggi:
                 stato_assicurazione = f"🟢 ATTIVA (Scadenza: {scad_ass.strftime('%d/%m/%Y')})"
             else:
@@ -382,10 +386,8 @@ async def libretto(interaction: discord.Interaction, targa: str):
         embed.add_field(name="📦 Modello", value=row['modello'] if row['modello'] else "N/D", inline=True)
         embed.add_field(name="👤 Intestatario", value=f"<@{row['owner_id']}>", inline=True)
         
-        # Gestione della data di vendita
-        data_v = row['data_vendita']
-        data_str = data_v.strftime("%d/%m/%Y") if hasattr(data_v, 'strftime') else (str(data_v) if data_v else "N/D")
-        embed.add_field(name="📅 Data Vendita", value=data_str, inline=True)
+        # Gestione della data di vendita (Trattata come testo/stringa come da DB)
+        embed.add_field(name="📅 Data Vendita", value=row['data_vendita'] if row['data_vendita'] else "N/D", inline=True)
         
         # Stato amministrativo e scadenze stradali
         stato_legale = "❌ SEQUESTRATO / FERMO AMMINISTRATIVO" if row['sequestrato'] else "✅ REGOLARE"
@@ -393,19 +395,19 @@ async def libretto(interaction: discord.Interaction, targa: str):
         embed.add_field(name="🛡️ Assicurazione", value=stato_assicurazione, inline=True)
         embed.add_field(name="🔧 Revisione Statale", value=stato_revisione, inline=True)
         
-        # Mostriamo l'elenco delle modifiche montate dai meccanici
-        embed.add_field(name="⚙️ Modifiche Apportate", value=f"```\n{modifiche_installate}\n```", inline=False)
+        # Elenco delle modifiche
+        embed.add_field(name="⚙️ Modifiche Apportate", value=f"```\n{modifiche_installate}\n
+```", inline=False)
         
         embed.set_footer(text="Motorizzazione Civile - Dipartimento Trasporti")
 
-        # Invio finale
+        # Invio finale del messaggio alla chat di Discord
         await interaction.followup.send(
             content=f"**{interaction.user.display_name}** mostra il libretto di circolazione:",
             embed=embed
         )
         
     except Exception as e:
-        # Questo stamperà l'errore esatto nella console del tuo PC/Server così potrai leggerlo!
         print(f"--- ERRORE CRITICO NEL COMANDO LIBRETTO ---")
         import traceback
         traceback.print_exc() 
