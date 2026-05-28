@@ -395,10 +395,9 @@ async def libretto(interaction: discord.Interaction, targa: str):
         embed.add_field(name="🛡️ Assicurazione", value=stato_assicurazione, inline=True)
         embed.add_field(name="🔧 Revisione Statale", value=stato_revisione, inline=True)
         
-        # Elenco delle modifiche
-        embed.add_field(name="⚙️ Modifiche Apportate", value=f"```\n{modifiche_installate}\n
-```", inline=False)
-        
+        embed.add_field(name="⚙️ Modifiche Apportate", value=f"```\n{modifiche_installate}\n```", inline=False)
+
+
         embed.set_footer(text="Motorizzazione Civile - Dipartimento Trasporti")
 
         # Invio finale del messaggio alla chat di Discord
