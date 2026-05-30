@@ -4657,6 +4657,75 @@ async def rimuovi_item(interaction: Interaction, utente: discord.Member, nome: s
     
     await interaction.followup.send(f"✅ Admin ha rimosso {quantita}x **{nome_e}** a {utente.mention}")
 
+import discord
+from discord import app_commands, Interaction
+from discord.app_commands import Choice
+
+# Funzione per l'autocomplete dei nomi degli item dal database
+async def item_autocomplete(interaction: Interaction, current: str) -> list[Choice[str]]:
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    # Cerca nel database gli item che contengono il testo digitato (case-insensitive)
+    cur.execute(
+        "SELECT name FROM items WHERE name ILIKE %s LIMIT 25", 
+        (f"%{current}%",)
+    )
+    results = cur.fetchall()
+    cur.close()
+    conn.close()
+    
+    # Ritorna la lista di scelte per Discord (mostra il nome dell'item)
+    return [Choice(name=row[0], value=row[0]) for row in results]
+@bot.tree.command(name="modifica_item_shop", description="STAFF - Modifica un item esistente nello shop")
+@app_commands.autocomplete(nome=item_autocomplete) # Collega l'autocomplete al parametro 'nome'
+async def modifica_item_shop(
+    interaction: Interaction, 
+    nome: str, 
+    descrizione: str = None, 
+    prezzo: int = None, 
+    ruolo: discord.Role = None
+):
+    # Controllo permessi staff
+    if not is_staff(interaction):
+        return await interaction.response.send_message("❌ Permessi insufficienti.", ephemeral=True)
+    
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    # 1. Verifica se l'item esiste davvero nel database
+    cur.execute("SELECT name, description, price, role_required FROM items WHERE name = %s", (nome,))
+    item = cur.fetchone()
+    
+    if not item:
+        cur.close()
+        conn.close()
+        return await interaction.response.send_message(f"❌ L'item **{nome}** non esiste nello shop.", ephemeral=True)
+    
+    # 2. Mantieni i vecchi valori se quelli nuovi non vengono specificati (parametri opzionali)
+    nuova_descrizione = descrizione if descrizione is not None else item[1]
+    nuovo_prezzo = prezzo if prezzo is not None else item[2]
+    
+    if ruolo is not None:
+        nuovo_ruolo = str(ruolo.id)
+    else:
+        nuovo_ruolo = item[3] # Tiene il ruolo attuale se non passato nel comando
+
+    # 3. Esegui l'aggiornamento sul database
+    cur.execute(
+        """
+        UPDATE items 
+        SET description = %s, price = %s, role_required = %s 
+        WHERE name = %s
+        """,
+        (nuova_descrizione, nuovo_prezzo, nuovo_roolo, nome)
+    )
+    
+    conn.commit()
+    cur.close()
+    conn.close()
+    
+    await interaction.response.send_message(f"✅ Item **{nome}** modificato con successo nello shop.")
 @bot.tree.command(name="crea_item_shop", description="STAFF - Crea item shop")
 async def crea_item_shop(interaction: Interaction, nome: str, descrizione: str, prezzo: int, ruolo: discord.Role = None):
     if not is_staff(interaction):
@@ -4666,7 +4735,7 @@ async def crea_item_shop(interaction: Interaction, nome: str, descrizione: str, 
     conn = get_db_connection(); cur = conn.cursor()
     cur.execute("INSERT INTO items (name, description, price, role_required) VALUES (%s,%s,%s,%s) ON CONFLICT (name) DO UPDATE SET price=EXCLUDED.price, description=EXCLUDED.description, role_required=EXCLUDED.role_required", (nome, descrizione, prezzo, rid))
     conn.commit(); cur.close(); conn.close()
-    await interaction.response.send_message(f"✅ Item **{nome}** creato/aggiornato nello shop.")
+    await interaction.response.send_message(f"✅ Item **{nome}** creato nello shop.")
 
 @bot.tree.command(name="elimina_item_shop", description="STAFF - Elimina definitivamente item dallo shop")
 async def elimina_item_shop(interaction: Interaction, nome: str):
