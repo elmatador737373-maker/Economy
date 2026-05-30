@@ -504,7 +504,7 @@ async def bonifico(interaction: discord.Interaction, destinatario: discord.Membe
 
 
 # --- CONFIGURAZIONE ---
-ID_CANALE_ARCHIVIO = 1501928095865896990 
+ID_CANALE_ARCHIVIO = 1510190622638739567 
 
 # --- FUNZIONE CALCOLO DATE (Indispensabile per far funzionare il comando) ---
 import datetime
@@ -1422,7 +1422,7 @@ async def set_media_stato(interaction: discord.Interaction, tipo: str, file_gif:
     await interaction.response.defer(ephemeral=True)
     
     # Strada C: Archiviazione permanente
-    canale_archivio = bot.get_channel(1498308854633594890) 
+    canale_archivio = bot.get_channel(1510190622638739567) 
     msg_backup = await canale_archivio.send(content=f"📂 Backup: `{tipo}`", file=await file_gif.to_file())
     url_stabile = msg_backup.attachments[0].url
 
