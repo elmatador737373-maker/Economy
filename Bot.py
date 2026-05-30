@@ -484,7 +484,7 @@ async def bonifico(interaction: discord.Interaction, destinatario: discord.Membe
             ),
             color=discord.Color.blue()
         )
-        embed.set_footer(text="Evren City Banking System")
+        embed.set_footer(text="GreenWood Banking System")
         
         await interaction.followup.send(embed=embed)
 
@@ -1545,7 +1545,7 @@ async def execute_doc_registration(interaction, cittadino, titolo, dettagli_test
         embed.add_field(name="💰 Costo", value=f"**{costo}**", inline=True)
         embed.add_field(name="📋 Info", value=dettagli_testo, inline=False)
         embed.add_field(name="📝 Motivo", value=motivo, inline=False)
-        embed.set_footer(text=f"Sistema Documentale Evren City")
+        embed.set_footer(text=f"Sistema Documentale GreenWood")
 
         await interaction.response.send_message(content=f"📑 Registrazione completata per {cittadino.mention}", embed=embed)
 
@@ -2412,13 +2412,13 @@ async def esito_wl(interaction: discord.Interaction, utente: discord.Member, esi
     embed = discord.Embed(title=f"{emoji_status} | Approval notices", color=color)
     embed.set_thumbnail(url=interaction.guild.icon.url if interaction.guild.icon else None)
     
-    embed.add_field(name="Evrenians ❯❯", value=utente.mention, inline=False)
+    embed.add_field(name="Cittadino ❯❯", value=utente.mention, inline=False)
     embed.add_field(name="Esito ❯❯", value=f"**{esito.name}**", inline=True)
     embed.add_field(name="Errori ❯❯", value=f"**{errori}**", inline=True)
     embed.add_field(name="━━━━━━━━━━━━━━━━━━━━", value=" ", inline=False)
     embed.add_field(name=f"Da {display_staff_role} :", value=interaction.user.mention, inline=False)
     
-    embed.set_footer(text=f"Evren City RP • {discord.utils.utcnow().strftime('%d/%m/%Y')}")
+    embed.set_footer(text=f"GreenWood RP • {discord.utils.utcnow().strftime('%d/%m/%Y')}")
 
     await interaction.followup.send(content=utente.mention, embed=embed)
 
@@ -2624,7 +2624,7 @@ async def scassina(interaction: discord.Interaction):
     else:
         embed.add_field(name="Risultato:", value="• **FALLITO!** Il grimaldello si è spezzato.\n• Hai consumato 1x Grimaldello", inline=False)
 
-    embed.set_footer(text="Evren City RP - Sistema Sicurezza")
+    embed.set_footer(text="GreenWood RP - Sistema Sicurezza")
     
     # Modifica il messaggio finale trasformandolo nell'Embed del risultato
     await interaction.edit_original_response(content=None, embed=embed)
@@ -2655,7 +2655,7 @@ class BackgroundStaffView(discord.ui.View):
             # 1. Invio DM (Esito)
             embed_dm = discord.Embed(
                 title="✅ Background Accettato!",
-                description=f"Il tuo background per **Evren City** è stato approvato.\nIl tuo nick è stato impostato su: `{p_id}`.",
+                description=f"Il tuo background per **GreenWood Rp ** è stato approvato.\nIl tuo nick è stato impostato su: `{p_id}`.",
                 color=discord.Color.green()
             )
             try: await member.send(embed=embed_dm)
@@ -3137,7 +3137,7 @@ async def rpon(interaction: discord.Interaction, psn_id: str):
         embed.add_field(name="🎮 ID PSN", value=f"**{psn_id}**", inline=False)
         
         # Footer opzionale per dare un tocco professionale
-        embed.set_footer(text="Evren City RP • Sessione Aperta")
+        embed.set_footer(text="GreenWood RP • Sessione Aperta")
         
         if interaction.guild.icon:
             embed.set_thumbnail(url=interaction.guild.icon.url)
@@ -3181,7 +3181,7 @@ async def sondaggio(interaction: discord.Interaction, ora: str):
 
         # 1. Creazione dell'Embed per il canale
         embed = discord.Embed(
-            title="🏙️ EVREN CITY RP - SESSIONE PROGRAMMATA",
+            title="🏙️ GreenWood RP - SESSIONE PROGRAMMATA",
             description=f"È stata pianificata una nuova sessione!\n\n"
                         f"⏰ Orario: **{ora}**\n"
                         f"📍 Canale: {interaction.channel.mention}\n\n"
@@ -3191,7 +3191,7 @@ async def sondaggio(interaction: discord.Interaction, ora: str):
         embed.add_field(name="✅ Si", value="Presente", inline=True)
         embed.add_field(name="❌ No", value="Assente", inline=True)
         embed.add_field(name="🕒 Ritardo", value="In ritardo", inline=True)
-        embed.set_footer(text="Evren City RP Staff")
+        embed.set_footer(text="GreenWood RP Staff")
         
         # Imposta l'immagine dell'embed usando il file allegato
         embed.set_image(url=f"attachment://{nome_file}")
@@ -4264,7 +4264,7 @@ class ShopPaginationView(discord.ui.View):
         total_pages = (len(self.items) - 1) // self.items_per_page + 1
         
         embed = discord.Embed(
-            title="🛒 Catalogo Evren City",
+            title="🛒 Catalogo GreenWood",
             description=f"Pagina `{self.current_page + 1}/{total_pages}`\nUsa i bottoni verdi per acquistare.",
             color=0x2ECC71
         )
@@ -4279,7 +4279,7 @@ class ShopPaginationView(discord.ui.View):
                 value=f"{i.get('description', 'Nessuna descrizione')}{req}\n━━━━━━━━━━━━━━", 
                 inline=False
             )
-        embed.set_footer(text="Evren City RP - Il tuo destino ti aspetta")
+        embed.set_footer(text="GreenWood - Il tuo destino ti aspetta")
         return embed
 
     async def prev_page(self, interaction: discord.Interaction):
