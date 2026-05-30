@@ -502,6 +502,79 @@ async def bonifico(interaction: discord.Interaction, destinatario: discord.Membe
         except:
             pass
 
+import discord
+from discord, re # Usiamo re per estrarre l'ID dal testo dell'embed
+from discord import app_commands, Interaction, TextStyle
+from discord.ui import View, Select, Button, Modal, TextInput
+
+class VistaRisposta(View):
+    """Vista persistente per il pulsante 'Rispondi'"""
+    def __init__(self):
+        # timeout=None rende la vista persistente
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="Rispondi", style=discord.ButtonStyle.primary, custom_id="rispondi_cercapersone")
+    async def rispondi(self, interaction: Interaction, button: Button):
+        # Recuperiamo l'embed dal messaggio in cui si trova il pulsante
+        if not interaction.message.embeds:
+            return await interaction.response.send_message("❌ Impossibile recuperare i dati del mittente.", ephemeral=True)
+        
+        embed = interaction.message.embeds[0]
+        
+        # Estraiamo l'ID del mittente dal titolo dell'embed (es: "🔔 Hai ricevuto una risposta da: @Nome (ID: 123456)")
+        # Per sicurezza, conviene salvare l'ID dell'utente nel footer dell'embed quando lo inviamo.
+        try:
+            id_mittente = int(embed.footer.text.split(": ")[1])
+            mittente = interaction.client.get_user(id_mittente) or await interaction.client.fetch_user(id_mittente)
+        except Exception:
+            return await interaction.response.send_message("❌ Errore nel recupero del destinatario. Forse il messaggio è troppo vecchio.", ephemeral=True)
+
+        # Apre il modal per la risposta
+        modal = ModalInviaMessaggio(destinatario=mittente, e_risposta=True)
+        await interaction.response.send_modal(modal)
+
+
+class ModalInviaMessaggio(Modal):
+    """Il modulo pop-up (Modal) per scrivere il testo del messaggio"""
+    def __init__(self, destinatario: discord.User, e_risposta: bool = False):
+        titolo = "Risposta da inviare" if e_risposta else "Messaggio da inviare"
+        super().__init__(title=titolo)
+        self.destinatario = destinatario
+        self.e_risposta = e_risposta
+
+        self.messaggio = TextInput(
+            label="Cosa vorresti inviare? puoi farlo!",
+            style=TextStyle.paragraph,
+            placeholder="Scrivi qui il tuo messaggio...",
+            required=True,
+            max_length=500
+        )
+        self.add_item(self.messaggio)
+
+    async def on_submit(self, interaction: Interaction):
+        await interaction.response.defer(ephemeral=True)
+        
+        embed = discord.Embed(color=discord.Color.red())
+        if self.e_risposta:
+            embed.title = f"🔔 Hai ricevuto una risposta da: @{interaction.user.name}"
+        else:
+            embed.title = "🔔 Hai ricevuto un messaggio!"
+            
+        embed.description = f"**{self.messaggio.value}**"
+        
+        # Fondamentale per la persistenza: salviamo l'ID di chi sta inviando nel footer 
+        # in modo che il pulsante 'Rispondi' dall'altra parte sappia a chi tornare.
+        embed.set_footer(text=f"ID Mittente: {interaction.user.id}")
+        
+        try:
+            # Inviamo la vista senza passare argomenti a VistaRisposta()
+            vista = VistaRisposta()
+            await self.destinatario.send(embed=embed, view=vista)
+            
+            testo_conferma = f"✅ Risposta inviata!" if self.e_risposta else f"✅ Messaggio inviato a {self.destinatario.mention}!"
+            await interaction.followup.send(testo_conferma, ephemeral=True)
+        except discord.Forbidden:
+            await interaction.followup.send("❌ Impossibile inviare il messaggio: l'utente ha i DM chiusi.", ephemeral=True)
 
 # --- CONFIGURAZIONE ---
 ID_CANALE_ARCHIVIO = 1510190622638739567 
@@ -4868,6 +4941,7 @@ async def on_ready():
         bot.add_view(RapinaStaffView())
         bot.add_view(TurnoStaffView())
         bot.add_view(BackgroundStaffView())
+        bot.add_view(VistaRisposta())
         print('✅ Persistenza caricata: Verifica, Rapine e Turni.')
     except Exception as e:
         print(f"⚠️ Errore nel caricamento delle View: {e}")
