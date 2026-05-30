@@ -3124,7 +3124,7 @@ async def rpon(interaction: discord.Interaction, psn_id: str):
     try:
         # Recupera il percorso della cartella in cui si trova questo file di script (.py)
         base_dir = os.path.dirname(os.path.abspath(__file__))
-        nome_file = "61C2B877-EED6-4FFB-A7AA-363D91B1F49D.png"
+        nome_file = "RP_ON.png"
         
         # Unisce la cartella dello script con il nome del file per trovarlo nella repository
         percorso_file = os.path.join(base_dir, nome_file)
@@ -3177,7 +3177,7 @@ async def sondaggio(interaction: discord.Interaction, ora: str):
     try:
         # Recupera il percorso della cartella in cui si trova questo file di script (.py)
         base_dir = os.path.dirname(os.path.abspath(__file__))
-        nome_file = "A952433E-3432-46B5-9200-1E2FB62E4231.png"
+        nome_file = "RP_ON_2.png"
         
         # Unisce la cartella dello script con il nome del file per trovarlo nella repository
         percorso_file = os.path.join(base_dir, nome_file)
@@ -3235,7 +3235,7 @@ async def rpoff(interaction: discord.Interaction):
     try:
         # Recupera il percorso della cartella della repository
         base_dir = os.path.dirname(os.path.abspath(__file__))
-        nome_file = "AF86A47D-A6D1-4512-94EC-E87BFDDFFCD4.png"
+        nome_file = "RP_ON_1.png"
         percorso_file = os.path.join(base_dir, nome_file)
 
         # Verifica se il file esiste nella repository prima di procedere
