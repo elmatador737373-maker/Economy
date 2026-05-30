@@ -1422,7 +1422,7 @@ async def set_media_stato(interaction: discord.Interaction, tipo: str, file_gif:
     await interaction.response.defer(ephemeral=True)
     
     # Strada C: Archiviazione permanente
-    canale_archivio = bot.get_channel(1510190622638739567) 
+    canale_archivio = bot.get_channel(1510278397920673842) 
     msg_backup = await canale_archivio.send(content=f"📂 Backup: `{tipo}`", file=await file_gif.to_file())
     url_stabile = msg_backup.attachments[0].url
 
