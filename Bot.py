@@ -670,8 +670,10 @@ async def mostra_documento(interaction: discord.Interaction, cittadino: discord.
 
             if foto_res.status_code == 200:
                 user_img = Image.open(io.BytesIO(foto_res.content)).convert("RGBA")
-                user_img = user_img.resize((306, 387)) 
-                img.paste(user_img, (149, 311), user_img) 
+                # Ridimensionamento calcolato in base alle coordinate del riquadro (Larghezza, Altezza)
+                user_img = user_img.resize((263, 286)) 
+                # Incolla l'immagine centrata sul punto in alto a sinistra (P5)
+                img.paste(user_img, (121, 253), user_img) 
         except Exception as e:
             print(f"[DEBUG] Errore caricamento foto utente: {e}")
 
