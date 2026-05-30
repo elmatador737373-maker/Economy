@@ -4718,7 +4718,7 @@ async def modifica_item_shop(
         SET description = %s, price = %s, role_required = %s 
         WHERE name = %s
         """,
-        (nuova_descrizione, nuovo_prezzo, nuovo_roolo, nome)
+        (nuova_descrizione, nuovo_prezzo, nuovo_ruolo, nome)
     )
     
     conn.commit()
