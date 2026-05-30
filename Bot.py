@@ -507,19 +507,29 @@ async def bonifico(interaction: discord.Interaction, destinatario: discord.Membe
 ID_CANALE_ARCHIVIO = 1501928095865896990 
 
 # --- FUNZIONE CALCOLO DATE (Indispensabile per far funzionare il comando) ---
+import datetime
+
 def calcola_date_id(data_nascita):
-    """Calcola data emissione (oggi) e scadenza (fra 10 anni)"""
+    """Calcola data emissione (nel 1980) e scadenza (fra 10 anni, nel 1990)"""
     try:
-        oggi = datetime.date.today()
-        emissione = oggi.strftime("%d/%m/%Y")
-        # Scadenza standard: +10 anni
-        scadenza = (oggi.replace(year=oggi.year + 10)).strftime("%d/%m/%Y")
+        # Prendiamo il giorno e il mese di oggi, ma forziamo l'anno al 1980
+        oggi_reale = datetime.date.today()
+        
+        # Gestione dell'anno bisestile: se oggi è il 29 febbraio e il 1980 è bisestile, 
+        # usiamo replace in sicurezza. Il 1980 lo era, quindi non ci sono problemi.
+        oggi_1980 = oggi_reale.replace(year=1980)
+        
+        emissione = oggi_1980.strftime("%d/%m/%Y")
+        
+        # Scadenza: +10 anni rispetto al 1980 (quindi nel 1990)
+        scadenza = (oggi_1980.replace(year=oggi_1980.year + 10)).strftime("%d/%m/%Y")
+        
         return emissione, scadenza
     except Exception as e:
         print(f"[LOG ERROR] Errore nel calcolo date: {e}")
-        # Ritorno date di emergenza per non bloccare il comando
-        return "07/05/2026", "07/05/2036"
-        
+        # Date di emergenza impostate coerentemente nel 1980 e 1990
+        return "07/05/1980", "07/05/1990"
+
         
 @bot.tree.command(name="crea_documento", description="Registra la tua carta d'identità messicana")
 @app_commands.choices(sesso=[
@@ -623,7 +633,7 @@ async def mostra_documento(interaction: discord.Interaction, cittadino: discord.
             return await interaction.followup.send(f"❌ {target.display_name} non ha un documento registrato.")
 
         # Caricamento Template
-        img = Image.open("IMG_0453.png").convert("RGBA")
+        img = Image.open("IMG_0762.png").convert("RGBA")
         draw = ImageDraw.Draw(img)
         
         # Gestione Font
@@ -635,17 +645,16 @@ async def mostra_documento(interaction: discord.Interaction, cittadino: discord.
             font_id_type = ImageFont.load_default()
 
         # Testi sull'immagine
-        draw.text((496, 284), doc['tipo_documento'].upper(), fill=(60, 60, 60), font=font_id_type)
-        draw.text((494, 361), doc['cognome'].upper(), fill="black", font=font_arial)
-        draw.text((493, 436), doc['nome'].upper(), fill="black", font=font_arial)
-        draw.text((504, 512), str(doc['data_nascita']), fill="black", font=font_arial)
-        draw.text((501, 580), str(doc['sesso']), fill="black", font=font_arial)
-        draw.text((483, 657), str(doc['nazionalita']).upper(), fill="black", font=font_arial)
-        draw.text((992, 390), str(doc['luogo_nascita']).upper(), fill="black", font=font_arial)
-        draw.text((976, 490), str(doc['data_emissione']), fill="black", font=font_arial)
-        draw.text((984, 580), str(doc['data_scadenza']), fill="black", font=font_arial)
-        draw.text((983, 693), "MESSICO", fill="black", font=font_arial)
-
+        draw.text((427, 229), doc['tipo_documento'].upper(), fill=(60, 60, 60), font=font_id_type)
+        draw.text((419, 292), doc['cognome'].upper(), fill="black", font=font_arial)
+        draw.text((402, 360), doc['nome'].upper(), fill="black", font=font_arial)
+        draw.text((402, 415), str(doc['data_nascita']), fill="black", font=font_arial)
+        draw.text((432, 476), str(doc['sesso']), fill="black", font=font_arial)
+        draw.text((430, 541), str(doc['nazionalita']).upper(), fill="black", font=font_arial)
+        draw.text((805, 314), str(doc['luogo_nascita']).upper(), fill="black", font=font_arial)
+        draw.text((801, 406), str(doc['data_emissione']), fill="black", font=font_arial)
+        draw.text((983, 693), "GreenWood", fill="black", font=font_arial)
+        draw.text((800, 476), str(doc['data_scadenza']), fill="black", font=font_arial)
         # GESTIONE FOTO
         foto_url = doc['foto_url']
         headers = {'User-Agent': 'Mozilla/5.0'}
