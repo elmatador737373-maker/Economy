@@ -3115,7 +3115,7 @@ import discord
 from discord import app_commands
 
 @bot.tree.command(name="rpon", description="Segnala che l'RP è ONLINE")
-@app_commands.checks.has_role(1253707509399683202)
+@app_commands.checks.has_role(1507415636937277581)
 @app_commands.describe(psn_id="Inserisci il tuo ID PlayStation Network")
 async def rpon(interaction: discord.Interaction, psn_id: str):
     # Risposta immediata per evitare che il comando scada durante il caricamento del file
@@ -3169,7 +3169,7 @@ from discord import app_commands
 
 @bot.tree.command(name="sondaggio", description="Crea un sondaggio per l'orario dell'RP")
 @app_commands.describe(ora="Inserisci l'orario (es. 21:30)")
-@app_commands.checks.has_role(1253707509399683202)
+@app_commands.checks.has_role(1507415636937277581)
 async def sondaggio(interaction: discord.Interaction, ora: str):
     # Risposta immediata per confermare la ricezione del comando
     await interaction.response.defer(ephemeral=True)
@@ -3227,7 +3227,7 @@ from discord import app_commands
 
 # --- COMANDO RP OFF ---
 @bot.tree.command(name="rpoff", description="Segnala che l'RP è OFFLINE")
-@app_commands.checks.has_role(1253707509399683202)
+@app_commands.checks.has_role(1507415636937277581)
 async def rpoff(interaction: discord.Interaction):
     # Risposta immediata per evitare il timeout di Discord durante il caricamento del file
     await interaction.response.defer()
