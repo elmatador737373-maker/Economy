@@ -275,6 +275,206 @@ def calcola_date_id(data_nascita_str):
     return data_emissione, data_scadenza
     
 from menu_bellevue import MENU_DATI
+import discord
+
+# Link dell'immagine caricata su GitHub
+GITHUB_THUMBNAIL_URL = "https://raw.githubusercontent.com/TUO_USER/TUO_REPO/main/immagine.png"
+CANALE_LOG_STAFF = 1507753857667829941
+
+# --- 1. MODAL FINALE: STORIA E ASPIRAZIONI ---
+class StoryModal(discord.ui.Modal, title="Storia e Aspirazioni"):
+    storia = discord.ui.TextInput(label="Storia (Minimo 15 righe)", style=discord.TextStyle.paragraph, placeholder="Scrivi una storia, lunga minimo 15 righe!", required=True)
+    oscuro_segreto = discord.ui.TextInput(label="Oscuro segreto", style=discord.TextStyle.paragraph, placeholder="Scrivi l'oscuro segreto attinente alla storia!", required=True)
+    obiettivo_finale = discord.ui.TextInput(label="Obiettivo finale", style=discord.TextStyle.paragraph, placeholder="Scrivi l'obiettivo finale, attinente alla storia!", required=True)
+
+    def __init__(self, data):
+        super().__init__()
+        self.data = data
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        
+        self.data["storia"] = self.storia.value
+        self.data["oscuro_segreto"] = self.oscuro_segreto.value
+        self.data["obiettivo_finale"] = self.obiettivo_finale.value
+
+        # Conferma all'utente (Video: ScreenRecording_06-02-2026 00-06-33_1.mp4)
+        embed_user = discord.Embed(
+            title="GreenWood Valley Background",
+            description=f"Complimenti, hai finito il background! 👤 Ti lascio qui ciò che hai scritto.\n\n**Nome e cognome:** {self.data['ic_nome']}\n**Data di nascita:** {self.data['ic_nascita']}",
+            color=discord.Color.green()
+        )
+        await interaction.followup.send(embed=embed_user, ephemeral=True)
+
+        # Invio allo Staff Log
+        staff_channel = interaction.client.get_channel(CANALE_LOG_STAFF)
+        if staff_channel:
+            embed_staff = discord.Embed(
+                title=f"Background di {interaction.user.name}",
+                color=discord.Color.orange()
+            )
+            embed_staff.set_thumbnail(url=GITHUB_THUMBNAIL_URL)
+            
+            embed_staff.add_field(name="📋 INFORMAZIONI OOC", value=f"**Nome:** {self.data['ooc_nome']}\n**Età:** {self.data['ooc_eta']}\n**Esperienza:** {self.data['ooc_esperienza']}", inline=False)
+            embed_staff.add_field(name="🎭 INFORMAZIONI IC", value=f"**Nome e Cognome:** {self.data['ic_nome']}\n**Data di Nascita:** {self.data['ic_nascita']}\n**Luogo di Nascita:** {self.data['ic_luogo']}\n**Etnia:** {self.data['etnia']}\n**Caratteristica:** {self.data['caratteristica']}", inline=False)
+            embed_staff.add_field(name="📖 STORIA", value=self.data['storia'], inline=False)
+            embed_staff.add_field(name="🤫 OSCURO SEGRETO", value=self.data['oscuro_segreto'], inline=False)
+            embed_staff.add_field(name="🎯 OBIETTIVO FINALE", value=self.data['obiettivo_finale'], inline=False)
+
+            # Passiamo i dati direttamente alla view per la gestione dell'accettazione
+            await staff_channel.send(embed=embed_staff, view=StaffActionView(self.data))
+
+# --- 2. MODAL INTERMEDIO: DATI ANAGRAFICI IC ---
+class AnagraficaICModal(discord.ui.Modal, title="Dati anagrafici"):
+    nome_ic = discord.ui.TextInput(label="Nome e cognome", placeholder="Inserisci Nome e Cognome del PG", required=True)
+    data_nascita = discord.ui.TextInput(label="Data di nascita", placeholder="xx/xx/xxxx (E.g. 31/04/2029)", min_length=10, max_length=10, required=True)
+    luogo_nascita = discord.ui.TextInput(label="Luogo di nascita", placeholder="Es.: Houston, Texas", required=True)
+
+    def __init__(self, data):
+        super().__init__()
+        self.data = data
+
+    async def on_submit(self, interaction: discord.Interaction):
+        self.data["ic_nome"] = self.nome_ic.value
+        self.data["ic_nascita"] = self.data_nascita.value
+        self.data["ic_luogo"] = self.luogo_nascita.value
+
+        # Bottone "Continua" intermedio (Video: ScreenRecording_06-02-2026 00-04-58_1.mp4)
+        embed = discord.Embed(
+            title="GreenWood Valley Background",
+            description="Ottimo! Ora, vediamo cosa ha passato il tuo personaggio prima di venire a GreenWood!",
+            color=discord.Color.blurple()
+        )
+        view = discord.ui.View()
+        view.add_item(discord.ui.Button(label="Continua", style=discord.ButtonStyle.primary, custom_id="continue_to_story"))
+        
+        async def continue_callback(inter: discord.Interaction):
+            await inter.response.send_modal(StoryModal(self.data))
+            
+        view.children[0].callback = continue_callback
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+# --- 3. VIEW INTERMEDIA: SELECT MENU ETNIA E CARATTERISTICA ---
+class DropdownSelectionView(discord.ui.View):
+    def __init__(self, data):
+        super().__init__(timeout=None)
+        self.data = data
+
+    @discord.ui.select(
+        custom_id="select_etnia",
+        placeholder="Etnia...",
+        options=[
+            discord.SelectOption(label="Americana"), discord.SelectOption(label="Africana"),
+            discord.SelectOption(label="Europea"), discord.SelectOption(label="Asiatica"),
+            discord.SelectOption(label="Latina")
+        ]
+    )
+    async def etnia_callback(self, interaction: discord.Interaction, select: discord.ui.Select):
+        self.data["etnia"] = select.values[0]
+        await interaction.response.defer()
+
+    @discord.ui.select(
+        custom_id="select_caratteristica",
+        placeholder="Caratteristica...",
+        options=[
+            discord.SelectOption(label="Odia ogni tipo di Africano"), discord.SelectOption(label="Aiuta sempre un'Americano"),
+            discord.SelectOption(label="Odia ogni Americano"), discord.SelectOption(label="È omosessuale"),
+            discord.SelectOption(label="Ama particolarmente la droga"), discord.SelectOption(label="Ama i coltelli"),
+            discord.SelectOption(label="Fuma sempre una sigaretta prima di..."), discord.SelectOption(label="È un tipo solitario"),
+            discord.SelectOption(label="Ama il lusso"), discord.SelectOption(label="Ama se stesso/è narcisista")
+        ]
+    )
+    async def caratteristica_callback(self, interaction: discord.Interaction, select: discord.ui.Select):
+        self.data["caratteristica"] = select.values[0]
+        
+        if "etnia" not in self.data:
+            await interaction.response.send_message("Seleziona prima un'etnia!", ephemeral=True)
+            return
+
+        await interaction.response.send_modal(AnagraficaICModal(self.data))
+
+# --- 4. FIRST MODAL: INFORMAZIONI OOC ---
+class InfoOOCModal(discord.ui.Modal, title="Informazioni"):
+    nome_reale = discord.ui.TextInput(label="Nome reale", placeholder="Non inserire il cognome!", required=True)
+    eta_reale = discord.ui.TextInput(label="Età reale", placeholder="Inserisci la tua età", required=True)
+    esperienza = discord.ui.TextInput(label="Esperienza", placeholder="In quali server rp sei stato?", required=True)
+    psn_id = discord.ui.TextInput(label="Identification PSN", placeholder="Qual'è il tuo nome playstation?", required=True)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        user_data = {
+            "user_id": interaction.user.id,
+            "ooc_nome": self.nome_reale.value,
+            "ooc_eta": self.eta_reale.value,
+            "ooc_esperienza": self.esperienza.value,
+            "ooc_psn": self.psn_id.value
+        }
+        
+        embed = discord.Embed(
+            title="GreenWood Valley Background",
+            description="Perfetto, ora cominciamo a strutturare il tuo background, nel menu scegli una razza e una caratteristica!",
+            color=discord.Color.blurple()
+        )
+        await interaction.response.send_message(embed=embed, view=DropdownSelectionView(user_data), ephemeral=True)
+
+# --- 5. PERSISTENT VIEW: BOTTONE COMPILA (UTENTI) ---
+class PersistentCompileView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="Compila", style=discord.ButtonStyle.primary, custom_id="btn_compila_background")
+    async def compila_callback(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(
+            "Salve @everyone, pronto a compilare il background?\nBene, ma prima partiamo da te!",
+            ephemeral=True
+        )
+        await interaction.followup.send_modal(InfoOOCModal())
+
+# --- 6. MODAL VALUTAZIONE: NOTE DELLO STAFF ---
+class StaffNotesModal(discord.ui.Modal, title="Note sul background"):
+    nota = discord.ui.TextInput(label="Nota aggiuntiva", style=discord.TextStyle.paragraph, placeholder="Esprimi la tua opinione", required=True)
+
+    def __init__(self, approved: bool, user_data: dict, original_embed: discord.Embed):
+        super().__init__()
+        self.approved = approved
+        self.user_data = user_data
+        self.original_embed = original_embed
+
+    async def on_submit(self, interaction: discord.Interaction):
+        status_text = "🟢 Approvato" if self.approved else "🔴 Non approvato"
+        color = discord.Color.green() if self.approved else discord.Color.red()
+        emoji = "✅" if self.approved else "❌"
+
+        # Embed esito finale (Video: ScreenRecording_06-02-2026 00-06-33_1.mp4)
+        result_embed = discord.Embed(
+            title=f"Analisi PG {emoji}",
+            description=f"📝 **Background di:** <@{self.user_data.get('user_id', interaction.user.id)}>\n"
+                        f"📊 **Risultato valutazione:** {status_text}\n"
+                        f"📌 **Note aggiuntive:** {self.nota.value}\n"
+                        f"👤 **Valutatore:** {interaction.user.mention}",
+            color=color
+        )
+        result_embed.set_thumbnail(url=GITHUB_THUMBNAIL_URL)
+
+        await interaction.response.edit_message(embed=self.original_embed, view=None)
+        await interaction.channel.send(embed=result_embed)
+
+# --- 7. PERSISTENT VIEW: BOTTONI VALUTAZIONE (STAFF) ---
+class StaffActionView(discord.ui.View):
+    def __init__(self, user_data=None):
+        super().__init__(timeout=None)
+        self.user_data = user_data or {}
+
+    @discord.ui.button(label="Accetta", style=discord.ButtonStyle.success, custom_id="staff_accept_bg")
+    async def accept_callback(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed = interaction.message.embeds[0]
+        await interaction.response.send_modal(StaffNotesModal(approved=True, user_data=self.user_data, original_embed=embed))
+
+    @discord.ui.button(label="Rifiuta", style=discord.ButtonStyle.danger, custom_id="staff_reject_bg")
+    async def reject_callback(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed = interaction.message.embeds[0]
+        await interaction.response.send_modal(StaffNotesModal(approved=False, user_data=self.user_data, original_embed=embed))
+
+
 
 # --- COMANDO ADMIN PER IL SYNC (!) ---
 # Questo serve per forzare Discord a vedere i nuovi comandi /
@@ -4942,6 +5142,10 @@ async def on_ready():
         bot.add_view(TurnoStaffView())
         bot.add_view(BackgroundStaffView())
         bot.add_view(VistaRisposta())
+        bot.add_view(PersistentCompileView())
+        bot.add_view(StaffActionView())
+       
+
         print('✅ Persistenza caricata: Verifica, Rapine e Turni.')
     except Exception as e:
         print(f"⚠️ Errore nel caricamento delle View: {e}")
