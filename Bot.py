@@ -703,7 +703,9 @@ async def bonifico(interaction: discord.Interaction, destinatario: discord.Membe
             pass
 
 import discord
-from discord, re # Usiamo re per estrarre l'ID dal testo dell'embed
+import discord
+import re 
+
 from discord import app_commands, Interaction, TextStyle
 from discord.ui import View, Select, Button, Modal, TextInput
 
