@@ -336,12 +336,12 @@ class GTAHackingView(discord.ui.View):
                 self.add_item(button)
                 
         elif self.stage == 2:
-            # Bottoni rossi per i codici in stile "destrutturazione matrice"
+            # Sostituito il separatore con "!" così non si rompe con i codici complessi
             for hex_code in self.hex_pool:
                 button = discord.ui.Button(
                     label=f"⚡ {hex_code}", 
                     style=discord.ButtonStyle.danger, 
-                    custom_id=f"hex_{hex_code.replace(':', '_')}"
+                    custom_id=f"hex!{hex_code}"
                 )
                 button.callback = self.handle_stage_two
                 self.add_item(button)
@@ -384,7 +384,6 @@ class GTAHackingView(discord.ui.View):
             self.stage = 2
             self.update_buttons()
             
-            # Grafica Fase 2 avanzata con schema di memoria e indizio strutturato
             next_stage_text = (
                 f"```fix\n"
                 f"┌────────────────────────────────────────────────┐\n"
@@ -442,7 +441,8 @@ class GTAHackingView(discord.ui.View):
                 self.stop()
 
     async def handle_stage_two(self, interaction: discord.Interaction):
-        selected_hex = interaction.data["custom_id"].split("_")[1].replace("_", ":")
+        # Ora splittiamo usando "!" così estraiamo l'intero codice Hex originale senza troncarlo
+        selected_hex = interaction.data["custom_id"].split("!")[1]
         self.clear_items()
         
         if selected_hex == self.correct_hex:
