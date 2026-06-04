@@ -279,13 +279,17 @@ import random
 import discord
 from discord import app_commands
 
+import random
+import discord
+from discord import app_commands
+
 class GTAHackingView(discord.ui.View):
     def __init__(self, target_name: str, author_id: int):
-        super().__init__(timeout=60.0)
+        super().__init__(timeout=120.0)
         self.target_name = target_name
         self.author_id = author_id
         
-        # Generazione dinamica interna di Difficoltà e Reward (visto che l'input è libero)
+        # Generazione dinamica interna di Difficoltà e Reward
         self.difficulty = random.choice(["Facile", "Media", "Difficile", "Estrema"])
         
         if self.difficulty == "Facile":
@@ -297,16 +301,22 @@ class GTAHackingView(discord.ui.View):
         else:
             self.reward = random.randint(50000, 115000)
             
-        # Stato dell'hacking (Fase 1: Bypass Frequenza, Fase 2: Codici Hex)
         self.stage = 1  
+        self.attempts_left = 3 
         
-        # Generazione parametri casuali per la Fase 1
-        self.correct_frequency = random.randint(1, 4)
-        self.frequencies = ["87.5 MHz (Disturbato)", "101.2 MHz (Instabile)", "144.9 MHz (Frequenza Sicura)", "433.0 MHz (Protetto)"]
+        # Fase 1: Frequenze analogiche
+        self.frequencies_data = [87.5, 101.2, 144.9, 433.0]
+        self.correct_channel_idx = random.randint(0, 3) 
+        self.target_frequency = self.frequencies_data[self.correct_channel_idx]
         
-        # Generazione parametri casuali per la Fase 2 (Stile Matrix/GTA Hack)
+        # Fase 2: Codici Hex e sistema avanzato di indizi
         self.hex_pool = ["A3:BC:12:F3", "FF:2A:44:0B", "99:D1:EC:A8", "3C:B9:77:E1"]
         self.correct_hex = random.choice(self.hex_pool)
+        
+        # Generiamo le esche e calcoliamo l'indizio per la Fase 2
+        wrong_hex_options = [h for h in self.hex_pool if h != self.correct_hex]
+        self.fake_hex_1 = wrong_hex_options[0]
+        self.fake_hex_2 = wrong_hex_options[1]
         
         self.update_buttons()
 
@@ -315,10 +325,10 @@ class GTAHackingView(discord.ui.View):
         self.clear_items()
         
         if self.stage == 1:
-            for idx, freq in enumerate(self.frequencies, 1):
+            for idx, freq in enumerate(self.frequencies_data, 1):
                 style = discord.ButtonStyle.primary if idx % 2 == 0 else discord.ButtonStyle.secondary
                 button = discord.ui.Button(
-                    label=f"Sintonizza CH-{idx}", 
+                    label=f"📡 CH-{idx} ({freq} MHz)", 
                     style=style, 
                     custom_id=f"freq_{idx}"
                 )
@@ -326,9 +336,10 @@ class GTAHackingView(discord.ui.View):
                 self.add_item(button)
                 
         elif self.stage == 2:
+            # Bottoni rossi per i codici in stile "destrutturazione matrice"
             for hex_code in self.hex_pool:
                 button = discord.ui.Button(
-                    label=hex_code, 
+                    label=f"⚡ {hex_code}", 
                     style=discord.ButtonStyle.danger, 
                     custom_id=f"hex_{hex_code.replace(':', '_')}"
                 )
@@ -336,15 +347,14 @@ class GTAHackingView(discord.ui.View):
                 self.add_item(button)
                 
         # Bottone universale per interrompere l'incursione
-        abort_btn = discord.ui.Button(label="Interrompi Incursione", style=discord.ButtonStyle.grey, custom_id="abort")
+        abort_btn = discord.ui.Button(label="🛑 Interrompi", style=discord.ButtonStyle.grey, custom_id="abort")
         abort_btn.callback = self.handle_abort
         self.add_item(abort_btn)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        """Garantisce che solo l'utente che ha avviato il comando possa giocare."""
         if interaction.user.id != self.author_id:
             await interaction.response.send_message(
-                "```diff\n- [ERRORE DI CONNESSIONE] -\nQuesto terminale è protetto da cifratura biometrica. Non puoi interferire.\n```", 
+                "```diff\n- [ERRORE DI SICUREZZA BIOMETRICA] -\nQuesto terminale risponde solo alle impronte digitali dell'operatore originale.\n```", 
                 ephemeral=True
             )
             return False
@@ -354,56 +364,82 @@ class GTAHackingView(discord.ui.View):
         self.clear_items()
         abort_text = (
             f"```diff\n"
-            f"==================================================\n"
-            f"             !!! INTRUSIONE ANNULLATA !!!         \n"
-            f"==================================================\n"
-            f"[-] Collegamento dial-up interrotto volontariamente.\n"
-            f"[-] Sovrascrittura della memoria RAM effettuata.\n"
-            f"[-] Nessuna firma IP o traccia lasciata su {self.target_name}.\n"
-            f"==================================================\n"
+            f"┌────────────────────────────────────────────────┐\n"
+            f"│          !!! INTRUSIONE ANNULLATA !!!          │\n"
+            f"└────────────────────────────────────────────────┘\n"
+            f"[-] Sgancio dei nodi dial-up completato.\n"
+            f"[-] Pulizia del buffer di memoria... OK.\n"
+            f"[-] Nessuna firma digitale lasciata su {self.target_name}.\n"
+            f"──────────────────────────────────────────────────\n"
             f"```"
         )
         await interaction.response.edit_message(content=abort_text, view=self)
         self.stop()
 
     async def handle_stage_one(self, interaction: discord.Interaction):
-        selected_idx = int(interaction.data["custom_id"].split("_")[1])
+        selected_idx = int(interaction.data["custom_id"].split("_")[1]) - 1 
+        selected_freq = self.frequencies_data[selected_idx]
         
-        # Se indovina la frequenza (o se la difficoltà è Facile)
-        if selected_idx == self.correct_frequency or self.difficulty == "Facile":
+        if selected_idx == self.correct_channel_idx:
             self.stage = 2
             self.update_buttons()
             
+            # Grafica Fase 2 avanzata con schema di memoria e indizio strutturato
             next_stage_text = (
                 f"```fix\n"
-                f"==================================================\n"
-                f"     FASE 1 COMPLETATA: PORTANTE ANALOGICA OK     \n"
-                f"==================================================\n"
-                f"[✓] Connessione modem stabilita su: {self.frequencies[selected_idx-1]}\n\n"
-                f"SISTEMA OBIETTIVO: {self.target_name}\n"
-                f"DIFFICOLTÀ RILEVATA: {self.difficulty}\n"
-                f"DISPOSITIVO DI SICUREZZA: Crittografia a blocchi Hex\n"
-                f"CHIAVE DI DECRITTAZIONE DA TROVARE: [{self.correct_hex}]\n\n"
-                f"AZIONE RICHIESTA: Seleziona la sequenza esatta prima del timeout!\n"
-                f"==================================================\n"
+                f"┌────────────────────────────────────────────────┐\n"
+                f"│    FASE 1 COMPLETATA: AGGANCIO PORTANTE OK     │\n"
+                f"└────────────────────────────────────────────────┘\n"
+                f"[✓] Modem sincronizzato su: CH-{selected_idx+1} ({selected_freq} MHz)\n"
+                f"[✓] Tunnel SSH stabilito con successo.\n\n"
+                f"🎯 TARGET SYSTEM: {self.target_name}\n"
+                f"🔒 CRITTOGRAFIA: Blocchi di memoria sequenziali HEX\n"
+                f"🔑 CHIAVE CORRETTA DA INIETTARE: >>> [{self.correct_hex}] <<<\n\n"
+                f"📊 DUMP DELLA MEMORIA RAM RILEVATO (ANALISI MODULI):\n"
+                f" ├─ [0x00F1] {self.fake_hex_1} ── RILEVATO: 100% CORROTTO (Esca)\n"
+                f" ├─ [0x04A2] {self.fake_hex_2} ── RILEVATO: Firma instabile (Invalido)\n"
+                f" └─ [RETE] Cerca il blocco intatto nei bottoni sottostanti.\n\n"
+                f"🚨 ATTENZIONE: Seleziona la sequenza esatta per forzare il root!\n"
+                f"──────────────────────────────────────────────────\n"
                 f"```"
             )
             await interaction.response.edit_message(content=next_stage_text, view=self)
+            
         else:
-            self.clear_items()
-            fail_text = (
-                f"```diff\n"
-                f"==================================================\n"
-                f"             !!! ACCESSO NEGATO !!!               \n"
-                f"==================================================\n"
-                f"[-] Frequenza errata sintonizzata su {self.target_name}.\n"
-                f"[-] Il rumore bianco ha innescato il protocollo IDS.\n\n"
-                f"HACKING FALLITO! La sicurezza sta tracciando la chiamata. 🚨\n"
-                f"==================================================\n"
-                f"```"
-            )
-            await interaction.response.edit_message(content=fail_text, view=self)
-            self.stop()
+            self.attempts_left -= 1
+            
+            if self.attempts_left > 0:
+                indizio = "PIÙ ALTA (▲)" if selected_freq < self.target_frequency else "PIÙ BASSA (▼)"
+                
+                retry_text = (
+                    f"```yaml\n"
+                    f"┌────────────────────────────────────────────────┐\n"
+                    f"│        [!] AVVISO: FREQUENZA ERRATA [!]        │\n"
+                    f"└────────────────────────────────────────────────┘\n"
+                    f"[-] Sintonizzazione fallita su {selected_freq} MHz.\n"
+                    f"[-] Onde analogiche fuori spettro (Rumore di fondo rilevato).\n\n"
+                    f"📡 [DEBUG TERMINALE]:\n"
+                    f"La portante corretta del mainframe si trova più in {indizio}.\n\n"
+                    f"⏳ SLOT DI SICUREZZA RIMASTI: [{self.attempts_left}/3]\n"
+                    f"──────────────────────────────────────────────────\n"
+                    f"```"
+                )
+                await interaction.response.edit_message(content=retry_text, view=self)
+            else:
+                self.clear_items()
+                fail_text = (
+                    f"```diff\n"
+                    f"┌────────────────────────────────────────────────┐\n"
+                    f"│             !!! ACCESSO NEGATO !!!             │\n"
+                    f"└────────────────────────────────────────────────┘\n"
+                    f"[-] Tentativi esauriti su {self.target_name}.\n"
+                    f"[-] Iniezione pacchetti bloccata dai sistemi IDS.\n\n"
+                    f"HACKING FALLITO! La tracciatura IP è completata. Evacuare! 🚨\n"
+                    f"──────────────────────────────────────────────────\n"
+                    f"```"
+                )
+                await interaction.response.edit_message(content=fail_text, view=self)
+                self.stop()
 
     async def handle_stage_two(self, interaction: discord.Interaction):
         selected_hex = interaction.data["custom_id"].split("_")[1].replace("_", ":")
@@ -412,30 +448,30 @@ class GTAHackingView(discord.ui.View):
         if selected_hex == self.correct_hex:
             success_text = (
                 f"```ini\n"
-                f"==================================================\n"
-                f"     INTRUSIONE COMPLETATA! ACCESSO ROOT OTTENUTO \n"
-                f"==================================================\n"
-                f"[✓] Protocollo di sicurezza bypassato correttamente.\n"
-                f"[✓] File sensibili scaricati nel floppy drive localmente.\n\n"
-                f"DATABASE VIOLATO: {self.target_name}\n"
-                f"DIFFICOLTÀ SUPERATA: {self.difficulty}\n"
-                f"OPERATORE LOGGATO: {interaction.user.display_name}\n"
-                f"BOTTINO ESTRATTO: ${self.reward:,} 💰\n"
-                f"==================================================\n"
+                f"┌────────────────────────────────────────────────┐\n"
+                f"│    INTRUSIONE COMPLETATA - ACCESSO ROOT OK     │\n"
+                f"└────────────────────────────────────────────────┘\n"
+                f"[✓] Sottosistemi di sicurezza bypassati.\n"
+                f"[✓] Cifratura disattivata. Download del DB completato.\n\n"
+                f"📁 DATABASE VIOLATO : {self.target_name}\n"
+                f"📈 DIFFICOLTÀ RETE  : {self.difficulty}\n"
+                f"👤 OPERATORE LOGGATO: {interaction.user.display_name}\n"
+                f"💰 BOTTINO ESTRATTO : ${self.reward:,} \n"
+                f"──────────────────────────────────────────────────\n"
                 f"```"
             )
             await interaction.response.edit_message(content=success_text, view=self)
         else:
             failure_text = (
                 f"```diff\n"
-                f"==================================================\n"
-                f"              !!! ERRORE CRITICO !!!              \n"
-                f"==================================================\n"
-                f"[-] Sequenza errata inserita: {selected_hex}\n"
-                f"[-] Il blocco di memoria valido era: {self.correct_hex}\n\n"
-                f"I sistemi ausiliari hanno bloccato la porta di comunicazione.\n"
-                f"HACKING FALLITO! Rilevato tentativo di violazione. 🚨\n"
-                f"==================================================\n"
+                f"┌────────────────────────────────────────────────┐\n"
+                f"│           !!! VIOLAZIONE RILEVATA !!!          │\n"
+                f"└────────────────────────────────────────────────┘\n"
+                f"[-] Stringa errata iniettata: {selected_hex}\n"
+                f"[-] Il settore di memoria valido era: {self.correct_hex}\n\n"
+                f"Il nodo centrale ha attivato il blocco termico della CPU.\n"
+                f"HACKING FALLITO! Chiusura forzata della sessione. 🚨\n"
+                f"──────────────────────────────────────────────────\n"
                 f"```"
             )
             await interaction.response.edit_message(content=failure_text, view=self)
@@ -445,7 +481,6 @@ class GTAHackingView(discord.ui.View):
 
 @bot.tree.command(name="hackera", description="Avvia un terminale di hacking interattivo a messaggio singolo in stile GTA")
 async def hackera(interaction: discord.Interaction, bersaglio: str):
-    # Controllo del ruolo richiesto (ID: 1512070782665228429)
     ha_ruolo = any(ruolo.id == 1512070782665228429 for ruolo in interaction.user.roles)
     
     if not ha_ruolo:
@@ -457,33 +492,29 @@ async def hackera(interaction: discord.Interaction, bersaglio: str):
         )
         return
 
-    # Prepariamo la View passandogli solo il nome e l'ID dell'autore
-    view = GTAHackingView(
-        target_name=bersaglio, 
-        author_id=interaction.user.id
-    )
+    view = GTAHackingView(target_name=bersaglio, author_id=interaction.user.id)
 
-    # Mostriamo nel testo di benvenuto le info che la View ha generato dinamicamente per questa sessione
     intro_text = (
         f"```fix\n"
-        f"==================================================\n"
-        f"       COMMODORE HACKING TERMINAL v0.85-BETA      \n"
-        f"==================================================\n"
-        f"CONNESSIONE DIAL-UP: Accoppiatore acustico [LINEA ATTIVA]\n"
-        f"IP BERSAGLIO: {random.randint(10, 99)}.{random.randint(100, 999)}.{random.randint(1, 9)}.{random.randint(10, 99)}\n"
-        f"SISTEMA DESTINAZIONE: {view.target_name}\n"
-        f"DIFFICOLTÀ RETE: {view.difficulty}\n"
-        f"VALORE DATI STIMATO: ${view.reward:,}\n"
-        f"--------------------------------------------------\n"
-        f"FASE 1: Allineamento della frequenza d'onda analogica.\n"
-        f"Trova il canale corretto per connetterti al modem interno!\n"
-        f"==================================================\n"
+        f"┌────────────────────────────────────────────────┐\n"
+        f"│    COMMODORE HACKING TERMINAL v1.00-STABLE     │\n"
+        f"└────────────────────────────────────────────────┘\n"
+        f"📡 DIAL-UP LINK: Accoppiatore acustico  [LINEA ATTIVA]\n"
+        f"🌐 IP BERSAGLIO: {random.randint(10, 99)}.{random.randint(100, 999)}.{random.randint(1, 9)}.{random.randint(10, 99)}\n"
+        f"🎯 OBIETTIVO   : {view.target_name}\n"
+        f"📊 DIFFICOLTÀ  : {view.difficulty}\n"
+        f"💰 STIMA REWARD: ${view.reward:,}\n"
+        f"──────────────────────────────────────────────────\n"
+        f"📖 GUIDA OPERATIVA - FASE 1:\n"
+        f"Sintonizza la portante analogica sul modem del server.\n"
+        f"Scegli uno dei canali (CH) di frequenza sotto.\n"
+        f"I sensori indicheranno se muoversi più in alto o in basso.\n"
+        f"Sicurezza attiva: massimo 3 TENTATIVI concessi.\n"
+        f"──────────────────────────────────────────────────\n"
         f"```"
     )
     
-    # Invia il messaggio che farà partire il minigioco
     await interaction.response.send_message(intro_text, view=view)
-
 
 # --- COMANDO ADMIN PER IL SYNC (!) ---
 # Questo serve per forzare Discord a vedere i nuovi comandi /
