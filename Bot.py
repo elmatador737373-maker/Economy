@@ -438,11 +438,11 @@ async def hackera(interaction: discord.Interaction, bersaglio: str):
     ha_ruolo = any(ruolo.id == 1512070782665228429 for ruolo in interaction.user.roles)
     
     if not ha_ruolo:
+        # Stringa corretta su più righe senza interruzioni di sintassi
         await interaction.response.send_message(
             "```diff\n- [ERRORE DI SISTEMA]\n"
             "Questo terminale di rete richiede credenziali speciali di Livello 1512.\n"
-            "Interfaccia bloccata.\n
-```", 
+            "Interfaccia bloccata.\n```", 
             ephemeral=True
         )
         return
@@ -459,21 +459,17 @@ async def hackera(interaction: discord.Interaction, bersaglio: str):
         f"FASE 1: Allineamento della frequenza d'onda analogica.\n"
         f"Trova il canale corretto per connetterti al modem interno!\n"
         f"==================================================\n"
-        f"
-```"
+        f"```"
     )
     
-    # Passa il nome inserito direttamente alla View. 
-    # NOTA: Se la tua GTAHackingView originale richiedeva obbligatoriamente 
-    # i parametri reward e difficulty, puoi passarli come None o rimuoverli dalla View stessa.
+    # Inizializza la View passando il bersaglio libero
     view = GTAHackingView(
         target_name=bersaglio, 
         author_id=interaction.user.id
     )
     
-    # Invia l'unico messaggio iniziale che conterrà l'intero gioco
+    # Invia il messaggio che farà partire il gioco
     await interaction.response.send_message(intro_text, view=view)
-
 
 
 
