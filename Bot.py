@@ -274,205 +274,207 @@ def calcola_date_id(data_nascita_str):
     
     return data_emissione, data_scadenza
     
-from menu_bellevue import MENU_DATI
-import discord
 
-# Link dell'immagine caricata su GitHub
-GITHUB_THUMBNAIL_URL = "https://raw.githubusercontent.com/TUO_USER/TUO_REPO/main/immagine.png"
-CANALE_LOG_STAFF = 1507753857667829941
-
-# --- 1. MODAL FINALE: STORIA E ASPIRAZIONI ---
-class StoryModal(discord.ui.Modal, title="Storia e Aspirazioni"):
-    storia = discord.ui.TextInput(label="Storia (Minimo 15 righe)", style=discord.TextStyle.paragraph, placeholder="Scrivi una storia, lunga minimo 15 righe!", required=True)
-    oscuro_segreto = discord.ui.TextInput(label="Oscuro segreto", style=discord.TextStyle.paragraph, placeholder="Scrivi l'oscuro segreto attinente alla storia!", required=True)
-    obiettivo_finale = discord.ui.TextInput(label="Obiettivo finale", style=discord.TextStyle.paragraph, placeholder="Scrivi l'obiettivo finale, attinente alla storia!", required=True)
-
-    def __init__(self, data):
-        super().__init__()
-        self.data = data
-
-    async def on_submit(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
+class GTAHackingView(discord.ui.View):
+    def __init__(self, target_name: str, reward: int, difficulty: str, author_id: int):
+        super().__init__(timeout=60.0)
+        self.target_name = target_name
+        self.reward = reward
+        self.difficulty = difficulty
+        self.author_id = author_id
         
-        self.data["storia"] = self.storia.value
-        self.data["oscuro_segreto"] = self.oscuro_segreto.value
-        self.data["obiettivo_finale"] = self.obiettivo_finale.value
+        # Stato dell'hacking (Fase 1: Bypass Frequenza, Fase 2: Codici Hex)
+        self.stage = 1  
+        
+        # Generazione parametri casuali per la Fase 1
+        self.correct_frequency = random.randint(1, 4)
+        self.frequencies = ["87.5 MHz (Disturbato)", "101.2 MHz (Instabile)", "144.9 MHz (Frequenza Sicura)", "433.0 MHz (Protetto)"]
+        
+        # Generazione parametri casuali per la Fase 2 (Stile Matrix/GTA Hack)
+        self.hex_pool = ["A3:BC:12:F3", "FF:2A:44:0B", "99:D1:EC:A8", "3C:B9:77:E1"]
+        self.correct_hex = random.choice(self.hex_pool)
+        
+        self.update_buttons()
 
-        # Conferma all'utente (Video: ScreenRecording_06-02-2026 00-06-33_1.mp4)
-        embed_user = discord.Embed(
-            title="GreenWood Valley Background",
-            description=f"Complimenti, hai finito il background! 👤 Ti lascio qui ciò che hai scritto.\n\n**Nome e cognome:** {self.data['ic_nome']}\n**Data di nascita:** {self.data['ic_nascita']}",
-            color=discord.Color.green()
-        )
-        await interaction.followup.send(embed=embed_user, ephemeral=True)
+    def update_buttons(self):
+        """Rigenera dinamicamente i bottoni per la fase corrente."""
+        self.clear_items()
+        
+        if self.stage == 1:
+            for idx, freq in enumerate(self.frequencies, 1):
+                style = discord.ButtonStyle.primary if idx % 2 == 0 else discord.ButtonStyle.secondary
+                button = discord.ui.Button(
+                    label=f"Sintonizza CH-{idx}", 
+                    style=style, 
+                    custom_id=f"freq_{idx}"
+                )
+                button.callback = self.handle_stage_one
+                self.add_item(button)
+                
+        elif self.stage == 2:
+            for hex_code in self.hex_pool:
+                button = discord.ui.Button(
+                    label=hex_code, 
+                    style=discord.ButtonStyle.danger, 
+                    custom_id=f"hex_{hex_code.replace(':', '_')}"
+                )
+                button.callback = self.handle_stage_two
+                self.add_item(button)
+                
+        # Bottone universale per interrompere l'incursione
+        abort_btn = discord.ui.Button(label="Interrompi Incursione", style=discord.ButtonStyle.grey, custom_id="abort")
+        abort_btn.callback = self.handle_abort
+        self.add_item(abort_btn)
 
-        # Invio allo Staff Log
-        staff_channel = interaction.client.get_channel(CANALE_LOG_STAFF)
-        if staff_channel:
-            embed_staff = discord.Embed(
-                title=f"Background di {interaction.user.name}",
-                color=discord.Color.orange()
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        """Garantisce che solo l'utente che ha avviato il comando possa giocare."""
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message(
+                "```diff\n- [ERRORE DI CONNESSIONE] -\nQuesto terminale è protetto da cifratura biometrica. Non puoi interferire.\n```", 
+                ephemeral=True
             )
-            embed_staff.set_thumbnail(url=GITHUB_THUMBNAIL_URL)
-            
-            embed_staff.add_field(name="📋 INFORMAZIONI OOC", value=f"**Nome:** {self.data['ooc_nome']}\n**Età:** {self.data['ooc_eta']}\n**Esperienza:** {self.data['ooc_esperienza']}", inline=False)
-            embed_staff.add_field(name="🎭 INFORMAZIONI IC", value=f"**Nome e Cognome:** {self.data['ic_nome']}\n**Data di Nascita:** {self.data['ic_nascita']}\n**Luogo di Nascita:** {self.data['ic_luogo']}\n**Etnia:** {self.data['etnia']}\n**Caratteristica:** {self.data['caratteristica']}", inline=False)
-            embed_staff.add_field(name="📖 STORIA", value=self.data['storia'], inline=False)
-            embed_staff.add_field(name="🤫 OSCURO SEGRETO", value=self.data['oscuro_segreto'], inline=False)
-            embed_staff.add_field(name="🎯 OBIETTIVO FINALE", value=self.data['obiettivo_finale'], inline=False)
+            return False
+        return True
 
-            # Passiamo i dati direttamente alla view per la gestione dell'accettazione
-            await staff_channel.send(embed=embed_staff, view=StaffActionView(self.data))
-
-# --- 2. MODAL INTERMEDIO: DATI ANAGRAFICI IC ---
-class AnagraficaICModal(discord.ui.Modal, title="Dati anagrafici"):
-    nome_ic = discord.ui.TextInput(label="Nome e cognome", placeholder="Inserisci Nome e Cognome del PG", required=True)
-    data_nascita = discord.ui.TextInput(label="Data di nascita", placeholder="xx/xx/xxxx (E.g. 31/04/2029)", min_length=10, max_length=10, required=True)
-    luogo_nascita = discord.ui.TextInput(label="Luogo di nascita", placeholder="Es.: Houston, Texas", required=True)
-
-    def __init__(self, data):
-        super().__init__()
-        self.data = data
-
-    async def on_submit(self, interaction: discord.Interaction):
-        self.data["ic_nome"] = self.nome_ic.value
-        self.data["ic_nascita"] = self.data_nascita.value
-        self.data["ic_luogo"] = self.luogo_nascita.value
-
-        # Bottone "Continua" intermedio (Video: ScreenRecording_06-02-2026 00-04-58_1.mp4)
-        embed = discord.Embed(
-            title="GreenWood Valley Background",
-            description="Ottimo! Ora, vediamo cosa ha passato il tuo personaggio prima di venire a GreenWood!",
-            color=discord.Color.blurple()
+    async def handle_abort(self, interaction: discord.Interaction):
+        self.clear_items()
+        abort_text = (
+            f"```diff\n"
+            f"==================================================\n"
+            f"             !!! INTRUSIONE ANNULLATA !!!         \n"
+            f"==================================================\n"
+            f"[-] Collegamento dial-up interrotto volontariamente.\n"
+            f"[-] Sovrascrittura della memoria RAM effettuata.\n"
+            f"[-] Nessuna firma IP o traccia lasciata su {self.target_name}.\n"
+            f"==================================================\n"
+            f"```"
         )
-        view = discord.ui.View()
-        view.add_item(discord.ui.Button(label="Continua", style=discord.ButtonStyle.primary, custom_id="continue_to_story"))
+        await interaction.response.edit_message(content=abort_text, view=self)
+        self.stop()
+
+    async def handle_stage_one(self, interaction: discord.Interaction):
+        selected_idx = int(interaction.data["custom_id"].split("_")[1])
         
-        async def continue_callback(inter: discord.Interaction):
-            await inter.response.send_modal(StoryModal(self.data))
+        # Se indovina la frequenza (o se la difficoltà è Facile)
+        if selected_idx == self.correct_frequency or self.difficulty == "Facile":
+            self.stage = 2
+            self.update_buttons()
             
-        view.children[0].callback = continue_callback
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+            next_stage_text = (
+                f"```fix\n"
+                f"==================================================\n"
+                f"     FASE 1 COMPLETATA: PORTANTE ANALOGICA OK     \n"
+                f"==================================================\n"
+                f"[✓] Connessione modem stabilita su: {self.frequencies[selected_idx-1]}\n\n"
+                f"SISTEMA OBIETTIVO: {self.target_name}\n"
+                f"DISPOSITIVO DI SICUREZZA: Crittografia a blocchi Hex\n"
+                f"CHIAVE DI DECRITTAZIONE DA TROVARE: [{self.correct_hex}]\n\n"
+                f"AZIONE RICHIESTA: Seleziona la sequenza esatta prima del timeout!\n"
+                f"==================================================\n"
+                f"```"
+            )
+            # Modifica il messaggio corrente senza inviarne di nuovi
+            await interaction.response.edit_message(content=next_stage_text, view=self)
+        else:
+            self.clear_items()
+            fail_text = (
+                f"```diff\n"
+                f"==================================================\n"
+                f"             !!! ACCESSO NEGATO !!!               \n"
+                f"==================================================\n"
+                f"[-] Frequenza errata sintonizzata su {self.target_name}.\n"
+                f"[-] Il rumore bianco ha innescato il protocollo IDS.\n\n"
+                f"HACKING FALLITO! La sicurezza sta tracciando la chiamata. 🚨\n"
+                f"==================================================\n"
+                f"```"
+            )
+            await interaction.response.edit_message(content=fail_text, view=self)
+            self.stop()
 
-# --- 3. VIEW INTERMEDIA: SELECT MENU ETNIA E CARATTERISTICA ---
-class DropdownSelectionView(discord.ui.View):
-    def __init__(self, data):
-        super().__init__(timeout=None)
-        self.data = data
-
-    @discord.ui.select(
-        custom_id="select_etnia",
-        placeholder="Etnia...",
-        options=[
-            discord.SelectOption(label="Americana"), discord.SelectOption(label="Africana"),
-            discord.SelectOption(label="Europea"), discord.SelectOption(label="Asiatica"),
-            discord.SelectOption(label="Latina")
-        ]
-    )
-    async def etnia_callback(self, interaction: discord.Interaction, select: discord.ui.Select):
-        self.data["etnia"] = select.values[0]
-        await interaction.response.defer()
-
-    @discord.ui.select(
-        custom_id="select_caratteristica",
-        placeholder="Caratteristica...",
-        options=[
-            discord.SelectOption(label="Odia ogni tipo di Africano"), discord.SelectOption(label="Aiuta sempre un'Americano"),
-            discord.SelectOption(label="Odia ogni Americano"), discord.SelectOption(label="È omosessuale"),
-            discord.SelectOption(label="Ama particolarmente la droga"), discord.SelectOption(label="Ama i coltelli"),
-            discord.SelectOption(label="Fuma sempre una sigaretta prima di..."), discord.SelectOption(label="È un tipo solitario"),
-            discord.SelectOption(label="Ama il lusso"), discord.SelectOption(label="Ama se stesso/è narcisista")
-        ]
-    )
-    async def caratteristica_callback(self, interaction: discord.Interaction, select: discord.ui.Select):
-        self.data["caratteristica"] = select.values[0]
+    async def handle_stage_two(self, interaction: discord.Interaction):
+        selected_hex = interaction.data["custom_id"].split("_")[1].replace("_", ":")
+        self.clear_items()
         
-        if "etnia" not in self.data:
-            await interaction.response.send_message("Seleziona prima un'etnia!", ephemeral=True)
-            return
+        if selected_hex == self.correct_hex:
+            success_text = (
+                f"```ini\n"
+                f"==================================================\n"
+                f"     INTRUSIONE COMPLETATA! ACCESSO ROOT OTTENUTO \n"
+                f"==================================================\n"
+                f"[✓] Protocollo di sicurezza bypassato correttamente.\n"
+                f"[✓] File sensibili scaricati nel floppy drive localmente.\n\n"
+                f"DATABASE VIOLATO: {self.target_name}\n"
+                f"OPERATORE LOGGATO: {interaction.user.display_name}\n"
+                f"BOTTINO ESTRATTO: ${self.reward:,} 💰\n"
+                f"==================================================\n"
+                f"```"
+            )
+            await interaction.response.edit_message(content=success_text, view=self)
+        else:
+            failure_text = (
+                f"```diff\n"
+                f"==================================================\n"
+                f"              !!! ERRORE CRITICO !!!              \n"
+                f"==================================================\n"
+                f"[-] Sequenza errata inserita: {selected_hex}\n"
+                f"[-] Il blocco di memoria valido era: {self.correct_hex}\n\n"
+                f"I sistemi ausiliari hanno bloccato la porta di comunicazione.\n"
+                f"HACKING FALLITO! Rilevato tentativo di violazione. 🚨\n"
+                f"==================================================\n"
+                f"```"
+            )
+            await interaction.response.edit_message(content=failure_text, view=self)
+            
+        self.stop()
 
-        await interaction.response.send_modal(AnagraficaICModal(self.data))
 
-# --- 4. FIRST MODAL: INFORMAZIONI OOC ---
-class InfoOOCModal(discord.ui.Modal, title="Informazioni"):
-    nome_reale = discord.ui.TextInput(label="Nome reale", placeholder="Non inserire il cognome!", required=True)
-    eta_reale = discord.ui.TextInput(label="Età reale", placeholder="Inserisci la tua età", required=True)
-    esperienza = discord.ui.TextInput(label="Esperienza", placeholder="In quali server rp sei stato?", required=True)
-    psn_id = discord.ui.TextInput(label="Identification PSN", placeholder="Qual'è il tuo nome playstation?", required=True)
+import random
+import discord
+from discord import app_commands
 
-    async def on_submit(self, interaction: discord.Interaction):
-        user_data = {
-            "user_id": interaction.user.id,
-            "ooc_nome": self.nome_reale.value,
-            "ooc_eta": self.eta_reale.value,
-            "ooc_esperienza": self.esperienza.value,
-            "ooc_psn": self.psn_id.value
-        }
-        
-        embed = discord.Embed(
-            title="GreenWood Valley Background",
-            description="Perfetto, ora cominciamo a strutturare il tuo background, nel menu scegli una razza e una caratteristica!",
-            color=discord.Color.blurple()
-        )
-        await interaction.response.send_message(embed=embed, view=DropdownSelectionView(user_data), ephemeral=True)
-
-# --- 5. PERSISTENT VIEW: BOTTONE COMPILA (UTENTI) ---
-class PersistentCompileView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
-
-    @discord.ui.button(label="Compila", style=discord.ButtonStyle.primary, custom_id="btn_compila_background")
-    async def compila_callback(self, interaction: discord.Interaction, button: discord.ui.Button):
+@bot.tree.command(name="hackera", description="Avvia un terminale di hacking interattivo a messaggio singolo in stile GTA")
+async def hackera(interaction: discord.Interaction, bersaglio: str):
+    # Controllo del ruolo richiesto (ID: 1512070782665228429)
+    ha_ruolo = any(ruolo.id == 1512070782665228429 for ruolo in interaction.user.roles)
+    
+    if not ha_ruolo:
         await interaction.response.send_message(
-            "Salve @everyone, pronto a compilare il background?\nBene, ma prima partiamo da te!",
+            "```diff\n- [ERRORE DI SISTEMA]\n"
+            "Questo terminale di rete richiede credenziali speciali di Livello 1512.\n"
+            "Interfaccia bloccata.\n
+```", 
             ephemeral=True
         )
-        await interaction.followup.send_modal(InfoOOCModal())
+        return
 
-# --- 6. MODAL VALUTAZIONE: NOTE DELLO STAFF ---
-class StaffNotesModal(discord.ui.Modal, title="Note sul background"):
-    nota = discord.ui.TextInput(label="Nota aggiuntiva", style=discord.TextStyle.paragraph, placeholder="Esprimi la tua opinione", required=True)
+    intro_text = (
+        f"```fix\n"
+        f"==================================================\n"
+        f"       COMMODORE HACKING TERMINAL v0.85-BETA      \n"
+        f"==================================================\n"
+        f"CONNESSIONE DIAL-UP: Accoppiatore acustico [LINEA ATTIVA]\n"
+        f"IP BERSAGLIO: {random.randint(10, 99)}.{random.randint(100, 999)}.{random.randint(1, 9)}.{random.randint(10, 99)}\n"
+        f"SISTEMA DESTINAZIONE: {bersaglio}\n"
+        f"--------------------------------------------------\n"
+        f"FASE 1: Allineamento della frequenza d'onda analogica.\n"
+        f"Trova il canale corretto per connetterti al modem interno!\n"
+        f"==================================================\n"
+        f"
+```"
+    )
+    
+    # Passa il nome inserito direttamente alla View. 
+    # NOTA: Se la tua GTAHackingView originale richiedeva obbligatoriamente 
+    # i parametri reward e difficulty, puoi passarli come None o rimuoverli dalla View stessa.
+    view = GTAHackingView(
+        target_name=bersaglio, 
+        author_id=interaction.user.id
+    )
+    
+    # Invia l'unico messaggio iniziale che conterrà l'intero gioco
+    await interaction.response.send_message(intro_text, view=view)
 
-    def __init__(self, approved: bool, user_data: dict, original_embed: discord.Embed):
-        super().__init__()
-        self.approved = approved
-        self.user_data = user_data
-        self.original_embed = original_embed
 
-    async def on_submit(self, interaction: discord.Interaction):
-        status_text = "🟢 Approvato" if self.approved else "🔴 Non approvato"
-        color = discord.Color.green() if self.approved else discord.Color.red()
-        emoji = "✅" if self.approved else "❌"
-
-        # Embed esito finale (Video: ScreenRecording_06-02-2026 00-06-33_1.mp4)
-        result_embed = discord.Embed(
-            title=f"Analisi PG {emoji}",
-            description=f"📝 **Background di:** <@{self.user_data.get('user_id', interaction.user.id)}>\n"
-                        f"📊 **Risultato valutazione:** {status_text}\n"
-                        f"📌 **Note aggiuntive:** {self.nota.value}\n"
-                        f"👤 **Valutatore:** {interaction.user.mention}",
-            color=color
-        )
-        result_embed.set_thumbnail(url=GITHUB_THUMBNAIL_URL)
-
-        await interaction.response.edit_message(embed=self.original_embed, view=None)
-        await interaction.channel.send(embed=result_embed)
-
-# --- 7. PERSISTENT VIEW: BOTTONI VALUTAZIONE (STAFF) ---
-class StaffActionView(discord.ui.View):
-    def __init__(self, user_data=None):
-        super().__init__(timeout=None)
-        self.user_data = user_data or {}
-
-    @discord.ui.button(label="Accetta", style=discord.ButtonStyle.success, custom_id="staff_accept_bg")
-    async def accept_callback(self, interaction: discord.Interaction, button: discord.ui.Button):
-        embed = interaction.message.embeds[0]
-        await interaction.response.send_modal(StaffNotesModal(approved=True, user_data=self.user_data, original_embed=embed))
-
-    @discord.ui.button(label="Rifiuta", style=discord.ButtonStyle.danger, custom_id="staff_reject_bg")
-    async def reject_callback(self, interaction: discord.Interaction, button: discord.ui.Button):
-        embed = interaction.message.embeds[0]
-        await interaction.response.send_modal(StaffNotesModal(approved=False, user_data=self.user_data, original_embed=embed))
 
 
 
