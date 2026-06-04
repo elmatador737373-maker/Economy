@@ -275,14 +275,28 @@ def calcola_date_id(data_nascita_str):
     return data_emissione, data_scadenza
     
 
+import random
+import discord
+from discord import app_commands
+
 class GTAHackingView(discord.ui.View):
-    def __init__(self, target_name: str, reward: int, difficulty: str, author_id: int):
+    def __init__(self, target_name: str, author_id: int):
         super().__init__(timeout=60.0)
         self.target_name = target_name
-        self.reward = reward
-        self.difficulty = difficulty
         self.author_id = author_id
         
+        # Generazione dinamica interna di Difficoltà e Reward (visto che l'input è libero)
+        self.difficulty = random.choice(["Facile", "Media", "Difficile", "Estrema"])
+        
+        if self.difficulty == "Facile":
+            self.reward = random.randint(500, 1500)
+        elif self.difficulty == "Media":
+            self.reward = random.randint(2500, 7500)
+        elif self.difficulty == "Difficile":
+            self.reward = random.randint(12000, 35000)
+        else:
+            self.reward = random.randint(50000, 115000)
+            
         # Stato dell'hacking (Fase 1: Bypass Frequenza, Fase 2: Codici Hex)
         self.stage = 1  
         
@@ -367,13 +381,13 @@ class GTAHackingView(discord.ui.View):
                 f"==================================================\n"
                 f"[✓] Connessione modem stabilita su: {self.frequencies[selected_idx-1]}\n\n"
                 f"SISTEMA OBIETTIVO: {self.target_name}\n"
+                f"DIFFICOLTÀ RILEVATA: {self.difficulty}\n"
                 f"DISPOSITIVO DI SICUREZZA: Crittografia a blocchi Hex\n"
                 f"CHIAVE DI DECRITTAZIONE DA TROVARE: [{self.correct_hex}]\n\n"
                 f"AZIONE RICHIESTA: Seleziona la sequenza esatta prima del timeout!\n"
                 f"==================================================\n"
                 f"```"
             )
-            # Modifica il messaggio corrente senza inviarne di nuovi
             await interaction.response.edit_message(content=next_stage_text, view=self)
         else:
             self.clear_items()
@@ -404,6 +418,7 @@ class GTAHackingView(discord.ui.View):
                 f"[✓] Protocollo di sicurezza bypassato correttamente.\n"
                 f"[✓] File sensibili scaricati nel floppy drive localmente.\n\n"
                 f"DATABASE VIOLATO: {self.target_name}\n"
+                f"DIFFICOLTÀ SUPERATA: {self.difficulty}\n"
                 f"OPERATORE LOGGATO: {interaction.user.display_name}\n"
                 f"BOTTINO ESTRATTO: ${self.reward:,} 💰\n"
                 f"==================================================\n"
@@ -428,17 +443,12 @@ class GTAHackingView(discord.ui.View):
         self.stop()
 
 
-import random
-import discord
-from discord import app_commands
-
 @bot.tree.command(name="hackera", description="Avvia un terminale di hacking interattivo a messaggio singolo in stile GTA")
 async def hackera(interaction: discord.Interaction, bersaglio: str):
     # Controllo del ruolo richiesto (ID: 1512070782665228429)
     ha_ruolo = any(ruolo.id == 1512070782665228429 for ruolo in interaction.user.roles)
     
     if not ha_ruolo:
-        # Stringa corretta su più righe senza interruzioni di sintassi
         await interaction.response.send_message(
             "```diff\n- [ERRORE DI SISTEMA]\n"
             "Questo terminale di rete richiede credenziali speciali di Livello 1512.\n"
@@ -447,6 +457,13 @@ async def hackera(interaction: discord.Interaction, bersaglio: str):
         )
         return
 
+    # Prepariamo la View passandogli solo il nome e l'ID dell'autore
+    view = GTAHackingView(
+        target_name=bersaglio, 
+        author_id=interaction.user.id
+    )
+
+    # Mostriamo nel testo di benvenuto le info che la View ha generato dinamicamente per questa sessione
     intro_text = (
         f"```fix\n"
         f"==================================================\n"
@@ -454,7 +471,9 @@ async def hackera(interaction: discord.Interaction, bersaglio: str):
         f"==================================================\n"
         f"CONNESSIONE DIAL-UP: Accoppiatore acustico [LINEA ATTIVA]\n"
         f"IP BERSAGLIO: {random.randint(10, 99)}.{random.randint(100, 999)}.{random.randint(1, 9)}.{random.randint(10, 99)}\n"
-        f"SISTEMA DESTINAZIONE: {bersaglio}\n"
+        f"SISTEMA DESTINAZIONE: {view.target_name}\n"
+        f"DIFFICOLTÀ RETE: {view.difficulty}\n"
+        f"VALORE DATI STIMATO: ${view.reward:,}\n"
         f"--------------------------------------------------\n"
         f"FASE 1: Allineamento della frequenza d'onda analogica.\n"
         f"Trova il canale corretto per connetterti al modem interno!\n"
@@ -462,16 +481,8 @@ async def hackera(interaction: discord.Interaction, bersaglio: str):
         f"```"
     )
     
-    # Inizializza la View passando il bersaglio libero
-    view = GTAHackingView(
-        target_name=bersaglio, 
-        author_id=interaction.user.id
-    )
-    
-    # Invia il messaggio che farà partire il gioco
+    # Invia il messaggio che farà partire il minigioco
     await interaction.response.send_message(intro_text, view=view)
-
-
 
 
 # --- COMANDO ADMIN PER IL SYNC (!) ---
