@@ -6,4 +6,11 @@ psycopg2-binary
 requests
 Pillow
 aiohttp
+discord.py
+Flask
+python-dotenv
+requests
+aiohttp
+PyNaCl
+audioop-lts
 
