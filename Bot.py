@@ -78,12 +78,15 @@ def is_emoji(char: str) -> bool:
 
 # --- TRASFORMAZIONE PER I CANALI (Nuovo Stile: 🦹‍♀️〴𝐶ℎ𝑎𝑡-𝐴𝑚𝑚𝑖𝑛𝑖𝑠𝑡𝑟𝑎𝑧𝑖𝑜𝑛𝑒) ---
 def transform_channel_name(old_name: str) -> str:
-    # 1. Isola le emoji custom di Discord
-    discord_emoji_pattern = re.compile(r'(<a?:\w+:\d+>)')
-    discord_emojis = discord_emoji_pattern.findall(old_name)
-    text_without_custom = discord_emoji_pattern.sub('', old_name)
+    # 1. Rimuove totalmente i vecchi separatori (compresi apici, accenti e la vecchia barretta)
+    cleaned_base = old_name.replace('∫', '').replace('´', '').replace("'", '').replace('〃', '').replace('〴', '')
     
-    # 2. Isola le emoji standard
+    # 2. Isola le emoji custom di Discord (<:nome:id>)
+    discord_emoji_pattern = re.compile(r'(<a?:\w+:\d+>)')
+    discord_emojis = discord_emoji_pattern.findall(cleaned_base)
+    text_without_custom = discord_emoji_pattern.sub('', cleaned_base)
+    
+    # 3. Isola le emoji standard
     standard_emojis = []
     text_chars_only = []
     for char in text_without_custom:
@@ -95,23 +98,28 @@ def transform_channel_name(old_name: str) -> str:
     all_emojis = "".join(discord_emojis + standard_emojis).strip()
     remaining_text = "".join(text_chars_only).strip()
     
-    # Rimuove vecchi e nuovi separatori dal testo pulito per evitare pasticci
-    remaining_text = remaining_text.replace('∫', '').replace('´', '').replace('〃', '').replace('〴', '')
-    
-    # 3. Pulisce e converte il testo in Italic
+    # 4. Pulisce il testo e lo riporta a caratteri normali (rimuovendo simboli spuri)
     normal_text = clean_to_normal_text(remaining_text)
+    
+    # Dividiamo le parole basandoci su spazi, trattini o trattini bassi preesistenti
     words_split = normal_text.replace('-', ' ').replace('_', ' ').split()
     
     if not words_split:
         return all_emojis if all_emojis else old_name
         
-    # Capitalizza e rende italic ogni parola
-    italic_words = [convert_to_italic(word.capitalize()) for word in words_split]
+    # Forza la prima lettera in MAIUSCOLO e il resto in minuscolo, poi converte nel font corretto
+    italic_words = []
+    for word in words_split:
+        # Crea la parola con la prima lettera Grande (es: Chat, Amministrazione)
+        capitalized_word = word.capitalize()
+        # La converte in Mathematical Italic mantenendo la distinzione Maiuscole/Minuscole
+        italic_word = convert_to_italic(capitalized_word)
+        italic_words.append(italic_word)
     
-    # Unisce le parole con il trattino "-" come richiesto (es: 𝐶ℎ𝑎𝑡-𝐴𝑚𝑚𝑖𝑛𝑖𝑠𝑡𝑟𝑎𝑧𝑖𝑜𝑛𝑒)
+    # Unisce le parole rigorosamente con il trattino "-" (SENZA ALCUN APICE O ACCENTO)
     formatted_text = "-".join(italic_words)
     
-    # 4. Ricompone con il nuovo separatore "〴"
+    # 5. Ricompone incollando la nuova barretta "〴" subito dopo l'emoji
     if all_emojis:
         new_name = f"{all_emojis}〴{formatted_text}"
     else:
