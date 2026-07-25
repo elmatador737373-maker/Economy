@@ -34,8 +34,8 @@ intents.members = True
 
 STAFF_MGMT_ROLE_ID = 1455297916708192373
 STAFF_GENERAL_ROLE_ID = 1455297926468468777  # Ruolo taggato all'apertura del ticket
-LOG_CHANNEL_ID = 1455298169415012547        # 👈 INSERISCI QUI L'ID DEL CANALE LOG/ARCHIVIO
-TICKET_CATEGORY_ID = 1455298169415012547    # 👈 CATEGORIA IN CUI VENGONO APERTI I TICKET
+LOG_CHANNEL_ID = 1487393847830122597        # ⚠️ INSERISCI QUI L'ID DEL CANALE LOG CORRETTO (ora usa una variabile pulita)
+TICKET_CATEGORY_ID = 1455298169415012547    # Categoria in cui vengono aperti i ticket
 
 class CustomBot(commands.Bot):
     def __init__(self):
@@ -124,7 +124,6 @@ class ClosedTranscriptView(discord.ui.View):
         owner_id = data.get("owner_id")
         messages = data.get("messages", [])
 
-        # Configurazione permessi canale
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(read_messages=False),
             guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True)
@@ -137,17 +136,14 @@ class ClosedTranscriptView(discord.ui.View):
         if staff_role:
             overwrites[staff_role] = discord.PermissionOverwrite(read_messages=True, send_messages=True, attach_files=True)
 
-        # Trova la categoria dei ticket
         category = guild.get_channel(TICKET_CATEGORY_ID)
 
-        # Creazione del nuovo canale ticket all'interno della categoria specificata
         new_channel = await guild.create_text_channel(
             name=f"reopen-{channel_name}", 
             overwrites=overwrites,
             category=category if isinstance(category, discord.CategoryChannel) else None
         )
 
-        # Creazione del Webhook per la ricostruzione chat
         webhook = await new_channel.create_webhook(name="Transcript Replicator")
 
         header_embed = discord.Embed(
@@ -157,7 +153,6 @@ class ClosedTranscriptView(discord.ui.View):
         )
         await new_channel.send(embed=header_embed)
 
-        # Ricostruzione messaggi tramite Webhook
         for msg in messages:
             try:
                 attachments_text = "\n".join(msg["attachments"]) if msg["attachments"] else ""
@@ -190,12 +185,12 @@ class TicketControlView(discord.ui.View):
     @discord.ui.button(label="🔒 Chiudi ed Elimina", style=discord.ButtonStyle.red, custom_id="btn_ticket_close")
     async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
         channel = interaction.channel
-        await interaction.response.send_message("🔒 Generazione automatica del transcript ed eliminazione in corso...")
+        await interaction.response.defer(thinking=True, ephemeral=True)
 
         owner_id = None
-        for overwrite, perms in channel.overwrites.items():
-            if isinstance(overwrite, discord.Member) and not overwrite.bot:
-                owner_id = overwrite.id
+        for overwrite_target, overwrite_perms in channel.overwrites.items():
+            if isinstance(overwrite_target, discord.Member) and not overwrite_target.bot:
+                owner_id = overwrite_target.id
                 break
 
         messages_data = []
@@ -217,7 +212,7 @@ class TicketControlView(discord.ui.View):
             "messages": messages_data
         }
 
-        filename = f"transcript-{channel.name}.json"
+        filename = f"transcript-{channel.id}.json"
         with open(filename, "w", encoding="utf-8") as f:
             json.dump(transcript_payload, f, ensure_ascii=False, indent=4)
 
@@ -230,9 +225,9 @@ class TicketControlView(discord.ui.View):
             )
             await log_channel.send(embed=embed_log, file=discord.File(filename), view=ClosedTranscriptView())
 
-        await asyncio.sleep(3)
         if os.path.exists(filename):
             os.remove(filename)
+
         await channel.delete()
 
     @discord.ui.button(label="🙋‍♂️ Reclama", style=discord.ButtonStyle.green, custom_id="btn_ticket_claim")
@@ -296,10 +291,8 @@ class TicketSelect(discord.ui.Select):
         if staff_role:
             overwrites[staff_role] = discord.PermissionOverwrite(read_messages=True, send_messages=True, attach_files=True)
 
-        # Trova la categoria dei ticket
         category = guild.get_channel(TICKET_CATEGORY_ID)
 
-        # Creazione del canale all'interno della categoria impostata
         ticket_channel = await guild.create_text_channel(
             name=channel_name, 
             overwrites=overwrites,
@@ -379,7 +372,7 @@ async def ticket_remove(interaction: discord.Interaction, member: discord.Member
 
 @ticket_group.command(name="rename", description="Rinomina il ticket attuale")
 @app_commands.checks.has_permissions(manage_channels=True)
-async def ticket_rename(interaction: discord.Interaction, new_name: str):
+async def ticket_name(interaction: discord.Interaction, new_name: str):
     await interaction.channel.edit(name=f"ticket-{new_name}")
     await interaction.response.send_message(f"✏️ Ticket rinominato in `ticket-{new_name}`.")
 
