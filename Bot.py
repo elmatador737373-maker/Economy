@@ -34,7 +34,8 @@ intents.members = True
 
 STAFF_MGMT_ROLE_ID = 1455297916708192373
 STAFF_GENERAL_ROLE_ID = 1455297926468468777  # Ruolo taggato all'apertura del ticket
-LOG_CHANNEL_ID = 1487393847830122597        # 👈 INSERISCI QUI L'ID DEL CANALE LOG/ARCHIVIO
+LOG_CHANNEL_ID = 1455298169415012547        # 👈 INSERISCI QUI L'ID DEL CANALE LOG/ARCHIVIO
+TICKET_CATEGORY_ID = 1455298169415012547    # 👈 CATEGORIA IN CUI VENGONO APERTI I TICKET
 
 class CustomBot(commands.Bot):
     def __init__(self):
@@ -43,7 +44,7 @@ class CustomBot(commands.Bot):
     async def setup_hook(self):
         self.add_view(TicketSelectView())
         self.add_view(TicketControlView())
-        self.add_view(ClosedTranscriptView()) # Registrazione View persistente per il bottone nei log
+        self.add_view(ClosedTranscriptView())
         self.add_view(StaffApplicationView())
 
 bot = CustomBot()
@@ -136,8 +137,15 @@ class ClosedTranscriptView(discord.ui.View):
         if staff_role:
             overwrites[staff_role] = discord.PermissionOverwrite(read_messages=True, send_messages=True, attach_files=True)
 
-        # Creazione del nuovo canale ticket
-        new_channel = await guild.create_text_channel(name=f"reopen-{channel_name}", overwrites=overwrites)
+        # Trova la categoria dei ticket
+        category = guild.get_channel(TICKET_CATEGORY_ID)
+
+        # Creazione del nuovo canale ticket all'interno della categoria specificata
+        new_channel = await guild.create_text_channel(
+            name=f"reopen-{channel_name}", 
+            overwrites=overwrites,
+            category=category if isinstance(category, discord.CategoryChannel) else None
+        )
 
         # Creazione del Webhook per la ricostruzione chat
         webhook = await new_channel.create_webhook(name="Transcript Replicator")
@@ -220,7 +228,6 @@ class TicketControlView(discord.ui.View):
                 description=f"**Chiuso da:** {interaction.user.mention}\nClicca il bottone sottostante per riaprire automaticamente questo ticket.",
                 color=discord.Color.red()
             )
-            # Invia il file JSON allegato insieme al bottone persistente per la riapertura
             await log_channel.send(embed=embed_log, file=discord.File(filename), view=ClosedTranscriptView())
 
         await asyncio.sleep(3)
@@ -289,7 +296,15 @@ class TicketSelect(discord.ui.Select):
         if staff_role:
             overwrites[staff_role] = discord.PermissionOverwrite(read_messages=True, send_messages=True, attach_files=True)
 
-        ticket_channel = await guild.create_text_channel(name=channel_name, overwrites=overwrites)
+        # Trova la categoria dei ticket
+        category = guild.get_channel(TICKET_CATEGORY_ID)
+
+        # Creazione del canale all'interno della categoria impostata
+        ticket_channel = await guild.create_text_channel(
+            name=channel_name, 
+            overwrites=overwrites,
+            category=category if isinstance(category, discord.CategoryChannel) else None
+        )
 
         await interaction.response.send_message(f"✅ Ticket creato: {ticket_channel.mention}", ephemeral=True)
 
