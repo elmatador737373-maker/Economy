@@ -50,6 +50,33 @@ class CustomBot(commands.Bot):
 bot = CustomBot()
 
 # ---------------------------------------------------------
+# EVENTO WELCOME (Da inserire prima del blocco di avvio)
+# ---------------------------------------------------------
+@bot.event
+async def on_member_join(member: discord.Member):
+    # ⚠️ SOSTITUISCI QUESTO ID CON QUELLO DEL CANALE DI BENVENUTO REALE
+    WELCOME_CHANNEL_ID = 1455298181003743394  
+    
+    channel = member.guild.get_channel(WELCOME_CHANNEL_ID)
+    if not channel:
+        return
+
+    # Nome del file immagine presente nella stessa repository/cartella del bot
+    image_filename = "1A88159A-78B8-4D55-A308-E39A31B4F1D8.png"
+    file = discord.File(image_filename, filename="welcome.png")
+
+    embed = discord.Embed(
+        title="🇮🇹 Benvenuto su Discord Italia V4!",
+        description=f"Ciao {member.mention}, benvenuto nel nostro server ufficiale! Siamo felici di averti qui con noi.",
+        color=discord.Color.from_rgb(0, 146, 70)
+    )
+    embed.set_thumbnail(url=member.display_avatar.url)
+    embed.set_image(url="attachment://welcome.png")
+    embed.set_footer(text=f"Utente #{len(member.guild.members)} • Discord Italia 🇮🇹")
+
+    await channel.send(content=f"🎉 Benvenuto {member.mention}!", embed=embed, file=file)
+
+# ---------------------------------------------------------
 # 3. MODAL BANDO STAFF
 # ---------------------------------------------------------
 class StaffApplicationModal(discord.ui.Modal, title="📋 MODULO CANDIDATURA STAFF"):
