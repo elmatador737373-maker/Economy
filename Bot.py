@@ -509,18 +509,6 @@ class TicketSelectView(discord.ui.View):
         super().__init__(timeout=None)
         self.add_item(TicketSelect())
 
-# ---------------------------------------------------------
-# 7. COMANDI SLASH (SETUP)
-# ---------------------------------------------------------
-@bot.event
-async def on_ready():
-    print(f"✅ Bot operativo come {bot.user}")
-    try:
-        synced = await bot.tree.sync()
-        print(f"🔄 Sincronizzati {len(synced)} comandi Slash.")
-    except Exception as e:
-        print(f"❌ Errore sync: {e}")
-
 @bot.tree.command(name="setup_ticket", description="Invia il pannello principale dei Ticket (Solo Admin)")
 @app_commands.checks.has_permissions(administrator=True)
 async def setup_ticket(interaction: discord.Interaction):
@@ -635,6 +623,19 @@ async def on_member_update(before: discord.Member, after: discord.Member):
 @bot.event
 async def on_member_remove(member: discord.Member):
     await aggiorna_messaggio(member.guild)
+
+# ---------------------------------------------------------
+# 7. COMANDI SLASH (SETUP)
+# ---------------------------------------------------------
+@bot.event
+async def on_ready():
+    print(f"✅ Bot operativo come {bot.user}")
+    try:
+        synced = await bot.tree.sync()
+        print(f"🔄 Sincronizzati {len(synced)} comandi Slash.")
+    except Exception as e:
+        print(f"❌ Errore sync: {e}")
+
 
 # ---------------------------------------------------------
 # 8. AVVIO
