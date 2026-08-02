@@ -123,8 +123,6 @@ MESSAGGI_GIORNI = {
     }
 }
 
-intents = discord.Intents.default()
-bot = discord.Client(intents=intents)
 
 
 # --- EVENTO 1: AVVIO E ATTIVAZIONE TASK ---
