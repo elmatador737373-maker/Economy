@@ -32,22 +32,35 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 
-STAFF_MGMT_ROLE_ID = 1455297916708192373
-STAFF_GENERAL_ROLE_ID = 1455297926468468777  # Ruolo taggato all'apertura del ticket
-LOG_CHANNEL_ID = 1487393847830122597        # ⚠️ INSERISCI QUI L'ID DEL CANALE LOG CORRETTO (ora usa una variabile pulita)
-TICKET_CATEGORY_ID = 1455298169415012547    # Categoria in cui vengono aperti i ticket
-
+# ---------------------------------------------------------
+# 3. DEFINIZIONE DEL BOT (CustomBot)
+# ---------------------------------------------------------
 class CustomBot(commands.Bot):
     def __init__(self):
         super().__init__(command_prefix="!", intents=intents)
 
     async def setup_hook(self):
-        self.add_view(TicketSelectView())
-        self.add_view(TicketControlView())
-        self.add_view(ClosedTranscriptView())
-        self.add_view(StaffApplicationView())
+        # Aggiunta delle viste persistenti (assicurati che le classi siano definite prima)
+        # self.add_view(TicketSelectView())
+        # self.add_view(TicketControlView())
+        # self.add_view(ClosedTranscriptView())
+        # self.add_view(StaffApplicationView())
 
+        # Sincronizzazione dei comandi slash con Discord
+        await self.tree.sync()
+        print("Albero dei comandi sincronizzato con successo.")
+
+    async def on_ready(self):
+        print(f"Logged in as {self.user} (ID: {self.user.id})")
+
+# Inizializzazione dell'istanza del bot
 bot = CustomBot()
+
+STAFF_MGMT_ROLE_ID = 1455297916708192373
+STAFF_GENERAL_ROLE_ID = 1455297926468468777  # Ruolo taggato all'apertura del ticket
+LOG_CHANNEL_ID = 1487393847830122597        # ⚠️ INSERISCI QUI L'ID DEL CANALE LOG CORRETTO (ora usa una variabile pulita)
+TICKET_CATEGORY_ID = 1455298169415012547    # Categoria in cui vengono aperti i ticket
+
 
 import discord
 from discord.ext import tasks
