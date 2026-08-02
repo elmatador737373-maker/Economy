@@ -49,6 +49,151 @@ class CustomBot(commands.Bot):
 
 bot = CustomBot()
 
+import discord
+from discord.ext import tasks
+import datetime
+import pytz
+
+# --- CONFIGURAZIONE PRINCIPALE ---
+ID_CANALE_SALUTI = 1455298208413520014  # Inserisci l'ID del canale dove inviare i messaggi
+
+# --- FUSO ORARIO E PERSONALIZZAZIONE ORARI ---
+TZ_ITALIA = pytz.timezone("Europe/Rome")
+
+# Personalizza qui l'ora (hour) e i minuti (minute) di invio
+ORARIO_BUONGIORNO = datetime.time(hour=8, minute=0, second=0, tzinfo=TZ_ITALIA)
+ORARIO_BUONASERA  = datetime.time(hour=21, minute=0, second=0, tzinfo=TZ_ITALIA)
+
+# --- MESSAGGI GIORNALIERI (STYLE DISCORD ITALIA 🇮🇹) ---
+MESSAGGI_GIORNI = {
+    "Monday": {
+        "titolo": "🇮🇹 ☕ Buon Lunedì & GG di inizio settimana!",
+        "descrizione": "Il Lunedì è tornato a fare il raid alla nostra pazienza, ma noi non molliamo. Caffè alla mano, accendete i PC e preparatevi a spaccare su **Discord Italia 🇮🇹**!",
+        "quote": "🔥 *Nuova settimana, nuove quest da completare.*",
+        "colore": "#5865F2"
+    },
+    "Tuesday": {
+        "titolo": "🇮🇹 ⚡ Buon Martedì Community!",
+        "descrizione": "Motori caldi e settimana ormai avviata. Passo rapido in voice o chat testuale prima di ripartire? Ci si becca nei canali!",
+        "quote": "🎯 *Focus sull'obiettivo e niente tilt oggi.*",
+        "colore": "#3ba55c"
+    },
+    "Wednesday": {
+        "titolo": "🇮🇹 🐫 Buon Mercoledì & Mid-Week!",
+        "descrizione": "Siamo ufficialmente a metà strada! Il weekend inizia a vedersi all'orizzonte. Chi si fa due chiacchiere o una partita stasera?",
+        "quote": "🎮 *La metà della settimana si supera meglio in Voice.*",
+        "colore": "#faa61a"
+    },
+    "Thursday": {
+        "titolo": "🇮🇹 🚀 Buon Giovedì GG WP!",
+        "descrizione": "Quasi nel weekend, manca pochissimo! Carichi per le ultime cose prima del relax totale?",
+        "quote": "⚔️ *Resistere: il fine settimana è alle porte!*",
+        "colore": "#eb459e"
+    },
+    "Friday": {
+        "titolo": "🇮🇹 🎉 FINALLY FRIDAY! Buon Venerdì!",
+        "descrizione": "Venerdì! Si stacca tutto, si aprono le lobby e ci si gode il weekend. Quali sono i programmi per stasera su Discord Italia 🇮🇹?",
+        "quote": "🍕 *Lobby pronte, stasera non si va a dormire presto.*",
+        "colore": "#f47b67"
+    },
+    "Saturday": {
+        "titolo": "🇮🇹 🎮 Buon Sabato & Mode: Full Gaming!",
+        "descrizione": "Zero pensieri, solo relax, sessioni di gaming, musica ed eventi del server. Godetevi la giornata!",
+        "quote": "🕹️ *Sabato = No stress, solo divertimento.*",
+        "colore": "#9b59b6"
+    },
+    "Sunday": {
+        "titolo": "🇮🇹 ☀️ Buona Domenica Chill!",
+        "descrizione": "Domenica in totale relax. Ricarichiamo le batterie insieme in community prima del riavvio di domani!",
+        "quote": "🛋️ *Mood di oggi: chill e chiacchiere in serenità.*",
+        "colore": "#e74c3c"
+    }
+}
+
+intents = discord.Intents.default()
+bot = discord.Client(intents=intents)
+
+
+# --- EVENTO 1: AVVIO E ATTIVAZIONE TASK ---
+@bot.event
+async def on_ready():
+    if not invia_buongiorno_automatico.is_running():
+        invia_buongiorno_automatico.start()
+    if not invia_buonasera_automatica.is_running():
+        invia_buonasera_automatica.start()
+    print(f"✅ Modulo Saluti attivo ed operativo per: {bot.user}")
+
+
+# --- EVENTO 2: TASK AUTOMATICO BUONGIORNO ---
+@tasks.loop(time=ORARIO_BUONGIORNO)
+async def invia_buongiorno_automatico():
+    canale = bot.get_channel(ID_CANALE_SALUTI)
+    if not canale:
+        return
+
+    ora_attuale = datetime.datetime.now(TZ_ITALIA)
+    nome_giorno = ora_attuale.strftime("%A")
+    data_formattata = ora_attuale.strftime("%d/%m/%Y")
+    info_giorno = MESSAGGI_GIORNI.get(nome_giorno, MESSAGGI_GIORNI["Monday"])
+
+    embed = discord.Embed(
+        title=info_giorno['titolo'],
+        description=f"{info_giorno['descrizione']}\n\n{info_giorno['quote']}",
+        color=discord.Color.from_str(info_giorno['colore']),
+        timestamp=ora_attuale
+    )
+
+    if canale.guild.icon:
+        embed.set_thumbnail(url=canale.guild.icon.url)
+
+    embed.add_field(name="📅 Data", value=f"`{data_formattata}`", inline=True)
+    embed.add_field(name="👥 Squadra Server", value=f"`{canale.guild.member_count}` Membri", inline=True)
+    embed.add_field(
+        name="📌 Note dalla Community",
+        value="Controlla i canali testuali/vocali, rispetta la regolation e unisciti ai match del giorno! 🇮🇹",
+        inline=False
+    )
+    embed.set_footer(text="Discord Italia 🇮🇹 • Make your day awesome!", icon_url=canale.guild.icon.url if canale.guild.icon else None)
+
+    await canale.send(
+        content="@everyone",
+        embed=embed,
+        allowed_mentions=discord.AllowedMentions(everyone=True)
+    )
+
+
+# --- EVENTO 3: TASK AUTOMATICO BUONASERA ---
+@tasks.loop(time=ORARIO_BUONASERA)
+async def invia_buonasera_automatica():
+    canale = bot.get_channel(ID_CANALE_SALUTI)
+    if not canale:
+        return
+
+    ora_attuale = datetime.datetime.now(TZ_ITALIA)
+    data_formattata = ora_attuale.strftime("%d/%m/%Y")
+
+    embed = discord.Embed(
+        title="🇮🇹 🌙 Good Night & Night Vibes — Discord Italia!",
+        description="La giornata volge al termine, ma la notte su Discord Italia 🇮🇹 è appena iniziata! Sessioni di gaming notturno o chiacchiere chill?",
+        color=discord.Color.from_str("#2b2d31"),
+        timestamp=ora_attuale
+    )
+
+    if canale.guild.icon:
+        embed.set_thumbnail(url=canale.guild.icon.url)
+
+    embed.add_field(name="🎧 Canali Vocali", value="Entra nelle room vocali per fare due chiacchiere o unirti alle partite in corso!", inline=False)
+    embed.add_field(name="✨ Server Stats", value=f"Siamo in **{canale.guild.member_count}** su **{canale.guild.name}** 🇮🇹", inline=True)
+    embed.add_field(name="📅 Data", value=f"`{data_formattata}`", inline=True)
+
+    embed.set_footer(text="Discord Italia 🇮🇹 • Buona serata e GG a tutti!", icon_url=canale.guild.icon.url if canale.guild.icon else None)
+
+    await canale.send(
+        content="@everyone",
+        embed=embed,
+        allowed_mentions=discord.AllowedMentions(everyone=True)
+    )
+
 # ---------------------------------------------------------
 # EVENTO WELCOME (Da inserire prima del blocco di avvio)
 # ---------------------------------------------------------
