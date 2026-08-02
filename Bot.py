@@ -405,6 +405,79 @@ async def ticket_name(interaction: discord.Interaction, new_name: str):
 
 bot.tree.add_command(ticket_group)
 
+ID_CANALE_JSON = 1533471957939654758  # Sostituisci con l'ID numerico del canale di backup
+
+
+@bot.tree.command(name="gerarchia", description="Invia il pannello gerarchia e salva la configurazione JSON.")
+@app_commands.checks.has_permissions(administrator=True)
+async def comando_gerarchia(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+
+    canale_json = interaction.guild.get_channel(ID_CANALE_JSON)
+    if not canale_json:
+        await interaction.followup.send("❌ Canale JSON non trovato. Verifica l'ID inserito nel codice.", ephemeral=True)
+        return
+
+    # Salvataggio ID canale principale e canale backup
+    data_store["main_channel_id"] = interaction.channel_id
+    data_store["json_backup_channel_id"] = ID_CANALE_JSON
+
+    # Rilevamento automatico ID ruoli
+    data_store["roles_map"] = {
+        item["name"]: discord.utils.get(interaction.guild.roles, name=item["name"]).id
+        for item in RUOLI_GERARCHIA if discord.utils.get(interaction.guild.roles, name=item["name"])
+    }
+
+    # Assegnazione membro solo al ruolo più alto
+    utenti_processati = set()
+    mappa_membri = {item["name"]: [] for item in RUOLI_GERARCHIA}
+
+    for item in RUOLI_GERARCHIA:
+        role_id = data_store["roles_map"].get(item["name"])
+        if role_id:
+            role = interaction.guild.get_role(role_id)
+            if role:
+                for member in role.members:
+                    if member.id not in utenti_processati and not member.bot:
+                        mappa_membri[item["name"]].append(member.mention)
+                        utenti_processati.add(member.id)
+
+    # Costruzione testo
+    descrizione = ""
+    for item in RUOLI_GERARCHIA:
+        membri = mappa_membri.get(item["name"], [])
+        lista = ", ".join(membri) if membri else "*Nessuno*"
+        descrizione += f"{item['label']} : {lista}\n\n"
+
+    embed = discord.Embed(title="👑 GERARCHIA STAFF", description=descrizione, color=discord.Color.from_str("#2b2d31"))
+    msg = await interaction.channel.send(embed=embed)
+    data_store["main_message_id"] = msg.id
+
+    # Salvataggio ed invio file JSON sul canale specificato nel codice
+    with open("hierarchy_data.json", "w", encoding="utf-8") as f:
+        json.dump(data_store, f, indent=4, ensure_ascii=False)
+
+    buffer = io.BytesIO(json.dumps(data_store, indent=4, ensure_ascii=False).encode('utf-8'))
+    await canale_json.send("📦 **Backup Configurazione Gerarchia (JSON)**", file=discord.File(buffer, filename="hierarchy_data.json"))
+
+    await interaction.followup.send(f"✅ Gerarchia inviata ed attivata!\n📦 Backup salvato in: {canale_json.mention}", ephemeral=True)
+
+
+@comando_gerarchia.error
+async def gerarchia_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, app_commands.MissingPermissions):
+        await interaction.response.send_message("❌ Solo gli **Amministratori** possono usare questo comando.", ephemeral=True)
+
+
+@bot.event
+async def on_member_update(before: discord.Member, after: discord.Member):
+    if before.roles != after.roles:
+        await aggiorna_messaggio(after.guild)
+
+@bot.event
+async def on_member_remove(member: discord.Member):
+    await aggiorna_messaggio(member.guild)
+
 # ---------------------------------------------------------
 # 8. AVVIO
 # ---------------------------------------------------------
