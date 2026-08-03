@@ -40,11 +40,10 @@ class CustomBot(commands.Bot):
         super().__init__(command_prefix="!", intents=intents)
 
     async def setup_hook(self):
-        # Aggiunta delle viste persistenti (assicurati che le classi siano definite prima)
-        # self.add_view(TicketSelectView())
-        # self.add_view(TicketControlView())
-        # self.add_view(ClosedTranscriptView())
-        # self.add_view(StaffApplicationView())
+        self.add_view(TicketSelectView())
+        self.add_view(TicketControlView())
+        self.add_view(ClosedTranscriptView())
+        self.add_view(StaffApplicationView())
 
         # Sincronizzazione dei comandi slash con Discord
         await self.tree.sync()
