@@ -11,8 +11,8 @@ load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
 
 # Configura qui direttamente il Guild ID e l'User ID (in formato intero)
-GUILD_ID = 123456789012345678  # Sostituisci con l'ID del tuo server
-USER_ID_SPECIFICO = 987654321098765432  # Sostituisci con l'ID dell'utente
+GUILD_ID = 1348947150641303583  # Sostituisci con l'ID del tuo server
+USER_ID_SPECIFICO = 1191824316376043580  # Sostituisci con l'ID dell'utente
 
 # --- CONFIGURAZIONE FLASK ---
 app = Flask(__name__)
