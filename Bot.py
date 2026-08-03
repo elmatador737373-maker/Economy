@@ -1,20 +1,36 @@
 import os
+import threading
 import discord
 from dotenv import load_dotenv
+from flask import Flask
 
 # Carica il token dal file .env
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
 
 # Configura qui direttamente il Guild ID e l'User ID (in formato intero)
-GUILD_ID = 1348947150641303583  # Sostituisci con l'ID del tuo server
-USER_ID_SPECIFICO = 1191824316376043580  # Sostituisci con l'ID dell'utente
+GUILD_ID = 123456789012345678  # Sostituisci con l'ID del tuo server
+USER_ID_SPECIFICO = 987654321098765432  # Sostituisci con l'ID dell'utente
 
-# Configurazione dei Intents
+# --- CONFIGURAZIONE FLASK ---
+app = Flask(__name__)
+
+
+@app.route("/")
+def home():
+  return "Il bot Discord è attivo e online!"
+
+
+def run_flask():
+  # Avvia Flask sulla porta 5000 (puoi cambiarla se necessario)
+  app.run(host="0.0.0.0", port=5000)
+
+
+# --- CONFIGURAZIONE DISCORD ---
 intents = discord.Intents.default()
 intents.guilds = True
 intents.bans = True
-intents.members = True  # Necessario per monitorare l'ingresso e gestire i ruoli
+intents.members = True
 
 client = discord.Client(intents=intents)
 
@@ -43,12 +59,10 @@ async def on_ready():
 
 @client.event
 async def on_member_join(member):
-  # Controlla che sia il server corretto E che l'utente sia esattamente quello specificato
   if member.guild.id != GUILD_ID or member.id != USER_ID_SPECIFICO:
     return
 
   try:
-    # Trova il ruolo più alto che il bot può assegnare
     bot_top_role = member.guild.me.top_role
 
     assignable_roles = [
@@ -80,5 +94,13 @@ async def on_member_join(member):
     print(f"Errore imprevisto durante l'assegnazione del ruolo: {e}")
 
 
-# Avvia il bot
-client.run(TOKEN)
+# --- AVVIO CONCRETO ---
+if __name__ == "__main__":
+  # Avvia Flask in un thread separato (background)
+  flask_thread = threading.Thread(target=run_flask)
+  flask_thread.daemon = True
+  flask_thread.start()
+  print("Server Flask avviato sulla porta 5000.")
+
+  # Avvia il bot Discord sul thread principale
+  client.run(TOKEN)
