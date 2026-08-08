@@ -13,7 +13,7 @@ from discord.ext import commands, tasks
 # ---------------------------------------------------------
 # VARIABILE GLOBALE PER ATTIVARE/DISATTIVARE L'IA
 # ---------------------------------------------------------
-ATTIVA_IA = True  # Imposta su False per disattivare completamente l'IA
+ATTIVA_IA = False  # Imposta su False per disattivare completamente l'IA
 
 # ---------------------------------------------------------
 # 1. SERVER FLASK INTEGRATO (Keep-Alive)
