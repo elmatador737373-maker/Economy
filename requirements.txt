@@ -14,3 +14,4 @@ aiohttp
 PyNaCl
 audioop-lts
 pytz
+openai
