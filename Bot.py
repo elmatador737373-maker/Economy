@@ -16,7 +16,7 @@ from supabase import create_client, Client
 # ---------------------------------------------------------
 # VARIABILE GLOBALE PER ATTIVARE/DISATTIVARE L'IA
 # ---------------------------------------------------------
-ATTIVA_IA = True  # Impostato su True per testare le nuove funzioni
+ATTIVA_IA = False  # Impostato su True per testare le nuove funzioni
 
 # ---------------------------------------------------------
 # 1. SERVER FLASK INTEGRATO (Keep-Alive)
