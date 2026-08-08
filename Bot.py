@@ -308,17 +308,39 @@ class TicketSelect(discord.ui.Select):
 class TicketSelectView(discord.ui.View):
     def __init__(self): super().__init__(timeout=None); self.add_item(TicketSelect())
 
-@bot.tree.command(name="setup_ticket", description="Invia il pannello principale dei Ticket (Solo Admin)")
+@bot.tree.command(name="setup_ticket", description="Invia il pannello principale avanzato dei Ticket (Solo Admin)")
 @app_commands.checks.has_permissions(administrator=True)
 async def setup_ticket(interaction: discord.Interaction):
-    await interaction.response.send_message("✅ Pannello in invio...", ephemeral=True)
+    await interaction.response.send_message("✅ Pannello avanzato in invio...", ephemeral=True)
+    
     embed = discord.Embed(
-        title="🇮🇹 Assistenza & Supporto - Discord Italia",
-        description="Seleziona dal menu a tendina la categoria desiderata per aprire un ticket.",
+        title="🇮🇹 Assistenza & Supporto Ufficiale - Discord Italia",
+        description=(
+            "Benvenuto nel centro assistenza di **Discord Italia**. "
+            "Se hai bisogno di supporto, vuoi proporre una partnership o candidarti nello staff, "
+            "puoi aprire un ticket dedicato selezionando l'opzione corretta dal menu sottostante.\n\n"
+            "### 📌 Categorie Disponibili:\n"
+            "📩 **Ticket Generale**\n"
+            "└ *Per qualsiasi dubbio, domanda generale o assistenza sul server.*\n\n"
+            "🤝 **Partnership**\n"
+            "└ *Per richiedere una partnership ufficiale con il tuo server Discord.*\n\n"
+            "📋 **Bando Staff**\n"
+            "└ *Per inviare la tua candidatura ed entrare a far parte del nostro team.*\n\n"
+            "👑 **Amministrazione**\n"
+            "└ *Per questioni urgenti, importanti o comunicazioni dirette con i vertici.*\n\n"
+            "🎨 **Grafiche & Bot**\n"
+            "└ *Per richieste inerenti a grafiche personalizzate, banner o supporto bot.*\n\n"
+            "⚠️ **Nota Importante:**\n"
+            "• Apri un ticket solo se strettamente necessario.\n"
+            "• Mantieni sempre un comportamento educato e rispettoso con lo staff."
+        ),
         color=discord.Color.from_rgb(0, 146, 70)
     )
+    embed.set_footer(text="Discord Italia • Sistema di Supporto Automatico", icon_url=interaction.guild.icon.url if interaction.guild.icon else None)
+    
     await interaction.channel.send(embed=embed, view=TicketSelectView())
-    print(f"📢 [PANNELLO INVIATO]: Pannello dei ticket pubblicato da {interaction.user} in #{interaction.channel.name}")
+    print(f"📢 [PANNELLO INVIATO]: Pannello avanzato dei ticket pubblicato da {interaction.user} in #{interaction.channel.name}")
+
 
 @bot.tree.command(name="staff", description="Invia la gerarchia dello staff e avvia l'aggiornamento in tempo reale.")
 @app_commands.default_permissions(administrator=True)
