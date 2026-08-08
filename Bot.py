@@ -6,6 +6,7 @@ import io
 import datetime
 import pytz
 import re
+import openai
 from flask import Flask
 import discord
 from discord import app_commands
@@ -36,11 +37,17 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 
-# Dizionario globale per la memoria persistente dei ticket
+# Dizionario globale per la memoria persistente dei ticket tramite dossier
 memoria_ticket = {}
 
 # Sostituisci con l'ID del ruolo staff reale abilitato a reclamare/intervenire
 RUOLO_STAFF_ID = 1455297926468468777
+
+# Configurazione Client Groq
+groq_client = openai.OpenAI(
+    api_key=os.environ.get("GROQ_API_KEY"),
+    base_url="https://api.groq.com/openai/v1"
+)
 
 # ---------------------------------------------------------
 # 3. DEFINIZIONE DEL BOT (CustomBot)
@@ -50,18 +57,23 @@ class CustomBot(commands.Bot):
         super().__init__(command_prefix="!", intents=intents)
 
     async def setup_hook(self):
-        # Registra le view per permettere al bot di intercettare i click anche dopo il riavvio
         self.add_view(StaffApplicationView())
         self.add_view(TicketControlView())
         self.add_view(TicketSelectView())
         self.add_view(ClosedTranscriptView())
         self.add_view(BlacklistApprovalView())
         
-        # Sincronizzazione dei comandi slash
+        # Avvio dei task in background
+        if not aggiorna_staff_automatico.is_running():
+            aggiorna_staff_automatico.start()
+        if not invia_buongiorno_automatico.is_running():
+            invia_buongiorno_automatico.start()
+        if not invia_buonasera_automatica.is_running():
+            invia_buonasera_automatica.start()
+
         await self.tree.sync()
         print("✅ Albero dei comandi e Views persistenti registrati con successo.")
 
-# Inizializzazione dell'istanza del bot
 bot = CustomBot()
 
 STAFF_MGMT_ROLE_ID = 1455297916708192373
@@ -69,13 +81,11 @@ STAFF_GENERAL_ROLE_ID = 1455297926468468777
 LOG_CHANNEL_ID = 1487393847830122597        
 TICKET_CATEGORY_ID = 1455298169415012547    
 
-# Costanti Blacklist
 CHAN_BL_UTENTI = 1455298385933504686
 CHAN_BL_SERVER = 1455298390173941943
 TAG_STAFF_BL = "<@&1455297933196001411> , <@&1455297952133284022>"
 EMOJI_V4 = "<:V4:1530942846599827502>"
 
-# Lista ufficiale dei ruoli staff con i tuoi ID originali
 STAFF_ROLE_IDS = [
     1455297914455986408,
     1455297915726598370,
@@ -91,7 +101,6 @@ STAFF_ROLE_IDS = [
 TARGET_CHANNEL_ID = 0
 TARGET_MESSAGE_ID = 0
 
-# --- CONFIGURAZIONE SALUTI ---
 ID_CANALE_SALUTI = 1455298208413520014
 TZ_ITALIA = pytz.timezone("Europe/Rome")
 ORARIO_BUONGIORNO = datetime.time(hour=8, minute=0, second=0, tzinfo=TZ_ITALIA)
@@ -142,8 +151,20 @@ MESSAGGI_GIORNI = {
     }
 }
 
-# --- FUNZIONE MOTORE IA CON DESCRIZIONE IN PLAIN TEXT ---
+# --- FUNZIONE MOTORE IA CON GROQ, PROMPT DETTAGLIATO E DOSSIER ---
 async def genera_risposta_staff(channel: discord.TextChannel, input_prompt: str, stato_corrente: dict) -> str:
+    system_prompt = (
+        "Sei l'assistente virtuale ufficiale e il responsabile delle partnership di Discord Italia. "
+        "Il tuo obiettivo principale è accogliere cordialmente gli utenti nei ticket, guidarli passo dopo passo "
+        "e gestire le richieste di partnership.\n\n"
+        "REGOLE RIGIDE DA SEGUIRE:\n"
+        "1. Leggi attentamente il DOSSIER MEMORIA PERSISTENTE fornito in ogni messaggio dell'utente per sapere lo stato attuale (tipo di ticket, link del server, nome, membri, categoria e conferma di reciprocità).\n"
+        "2. Se l'utente non ha ancora fornito la descrizione e il link, accoglilo presentando la descrizione ufficiale di Discord Italia e chiedendo direttamente la descrizione del suo server (con link d'invito e categoria).\n"
+        "3. Se il link è stato fornito ma la reciprocità NON è confermata, ringrazia, mostra i dati rilevati del server e ricorda la regola della reciprocità (l'utente deve pubblicare l'invito nel proprio server e mandare conferma o screen).\n"
+        "4. Se la reciprocità è confermata (valore SÌ nel dossier), scrivi esattamente nel testo della risposta la stringa di comando di sistema formattata in questo modo esatto per creare il canale: [CREA_CANALE: Categoria=<categoria>, Nome=<nome_server>, CanaleID=<id_canale_attuale>].\n"
+        "5. Mantieni sempre un tono professionale, caloroso, in lingua italiana, usando emoji a tema Discord e formattazione Markdown pulita."
+    )
+
     descrizione_ufficiale_discord_italia = (
         "🌟 **Benvenuto su Discord Italia!** 🇮🇹\n\n"
         "Hai finalmente trovato il posto perfetto dove:\n"
@@ -166,24 +187,37 @@ async def genera_risposta_staff(channel: discord.TextChannel, input_prompt: str,
         "🔗 **Link:** https://discord.gg/discord-talia-1-3k-1348947150641303583"
     )
 
+    tipo = stato_corrente.get("tipo_ticket", "Generale")
+
     if not stato_corrente["link"] and not stato_corrente["categoria"]:
         return (
-            f"Grazie per averci presentato il tuo progetto! Dal canto nostro, ecco chi siamo e cosa offriamo:\n\n"
+            f"Grazie per aver aperto un ticket di tipo **{tipo}**! Dal canto nostro, ecco chi siamo e cosa offriamo:\n\n"
             f"{descrizione_ufficiale_discord_italia}\n\n"
-            f"Per procedere con la partnership, ti chiedo di inviarci il link d'invito valido del tuo server "
-            f"e di confermarci la categoria di appartenenza (es. Community, Shop, PC)."
+            f"Per procedere, ti chiedo di inviarci la **descrizione del tuo server** (all'interno della quale includerai il link d'invito e la categoria di appartenenza, es. Community, Shop, PC, Xbox, PlayStation)."
         )
-    
-    elif stato_corrente["link"] and not stato_corrente["reciprocita_confermata"]:
-        return (
-            f"Ho registrato il server **{stato_corrente['nome_server']}** "
-            f"({stato_corrente['membri']} membri). Ottimo progetto!\n\n"
-            f"Ti ricordo che la nostra partnership si basa sulla **regola della reciprocità**: "
-            f"ti chiediamo di pubblicare il nostro invito nel vostro server e di mandarci una conferma o uno screen. "
-            f"Appena fatto, procederemo subito alla creazione del canale dedicato nel nostro network!"
+
+    try:
+        response = groq_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": input_prompt}
+            ],
+            temperature=0.7,
+            max_tokens=600
         )
-    
-    return "Perfetto, sto verificando gli ultimi dettagli per procedere con la ratifica della partnership."
+        return response.choices[0].message.content
+    except Exception as e:
+        print(f"Errore nella chiamata a Groq: {e}")
+        if stato_corrente["link"] and not stato_corrente["reciprocita_confermata"]:
+            return (
+                f"Ho analizzato la descrizione e registrato il server **{stato_corrente['nome_server']}** "
+                f"({stato_corrente['membri']} membri) per la categoria **{stato_corrente['categoria']}**!\n\n"
+                f"Ti ricordo che la nostra partnership si basa sulla **regola della reciprocità**: "
+                f"ti chiediamo di pubblicare il nostro invito nel vostro server e di mandarci una conferma o uno screen. "
+                f"Appena fatto, procederemo subito alla creazione del canale dedicato nel nostro network!"
+            )
+        return "Perfetto, ho ricevuto le informazioni. Sto verificando gli ultimi dettagli."
 
 async def crea_canale_partner(guild: discord.Guild, nome_partner: str, categoria_scelta: str):
     categoria_pulita = categoria_scelta.upper()
@@ -209,7 +243,7 @@ async def crea_canale_partner(guild: discord.Guild, nome_partner: str, categoria
         print(f"Errore nella creazione del canale stilizzato: {e}")
         return None
 
-# --- TASK AUTOMATICO BUONGIORNO ---
+# --- TASK AUTOMATICI ---
 @tasks.loop(time=ORARIO_BUONGIORNO)
 async def invia_buongiorno_automatico():
     canale = bot.get_channel(ID_CANALE_SALUTI)
@@ -228,12 +262,10 @@ async def invia_buongiorno_automatico():
     if canale.guild.icon: embed.set_thumbnail(url=canale.guild.icon.url)
     embed.add_field(name="📅 Data", value=f"`{data_formattata}`", inline=True)
     embed.add_field(name="👥 Squadra Server", value=f"`{canale.guild.member_count}` Membri", inline=True)
-    embed.add_field(name="📌 Note dalla Community", value="Controlla i canali testuali/vocali, rispetta la regulation e unisciti ai match! 🇮🇹", inline=False)
     embed.set_footer(text="Discord Italia 🇮🇹 • Make your day awesome!", icon_url=canale.guild.icon.url if canale.guild.icon else None)
 
     await canale.send(content="@everyone", embed=embed, allowed_mentions=discord.AllowedMentions(everyone=True))
 
-# --- TASK AUTOMATICO BUONASERA ---
 @tasks.loop(time=ORARIO_BUONASERA)
 async def invia_buonasera_automatica():
     canale = bot.get_channel(ID_CANALE_SALUTI)
@@ -243,14 +275,12 @@ async def invia_buonasera_automatica():
 
     embed = discord.Embed(
         title="🇮🇹 🌙 Good Night & Night Vibes — Discord Italia!",
-        description="La giornata volge al termine, ma la notte su Discord Italia 🇮🇹 è appena iniziata! Sessioni di gaming notturno o chiacchiere chill?",
+        description="La giornata volge al termine, ma la notte su Discord Italia 🇮🇹 è appena iniziata!",
         color=discord.Color.from_str("#2b2d31"),
         timestamp=ora_attuale
     )
     if canale.guild.icon: embed.set_thumbnail(url=canale.guild.icon.url)
-    embed.add_field(name="🎧 Canali Vocali", value="Entra nelle room vocali per fare due chiacchiere o unirti alle partite!", inline=False)
-    embed.add_field(name="✨ Server Stats", value=f"Siamo in **{canale.guild.member_count}** su **{canale.guild.name}** 🇮🇹", inline=True)
-    embed.add_field(name="📅 Data", value=f"`{data_formattata}`", inline=True)
+    embed.add_field(name="🎧 Canali Vocali", value="Entra nelle room vocali per fare due chiacchiere!", inline=False)
     embed.set_footer(text="Discord Italia 🇮🇹 • Buona serata e GG a tutti!", icon_url=canale.guild.icon.url if canale.guild.icon else None)
 
     await canale.send(content="@everyone", embed=embed, allowed_mentions=discord.AllowedMentions(everyone=True))
@@ -267,54 +297,17 @@ async def on_member_join(member: discord.Member):
 
     embed = discord.Embed(
         title="🇮🇹 Benvenuto su Discord Italia V4!",
-        description=f"Ciao {member.mention}, benvenuto nel nostro server ufficiale! Siamo felici di averti qui con noi.",
+        description=f"Ciao {member.mention}, benvenuto nel nostro server ufficiale!",
         color=discord.Color.from_rgb(0, 146, 70)
     )
     embed.set_thumbnail(url=member.display_avatar.url)
     if file: embed.set_image(url="attachment://welcome.png")
-    embed.set_footer(text=f"Utente #{len(member.guild.members)} • Discord Italia 🇮🇹")
 
-    if file:
-        await channel.send(content=f"🎉 Benvenuto {member.mention}!", embed=embed, file=file)
-    else:
-        await channel.send(content=f"🎉 Benvenuto {member.mention}!", embed=embed)
+    if file: await channel.send(content=f"🎉 Benvenuto {member.mention}!", embed=embed, file=file)
+    else: await channel.send(content=f"🎉 Benvenuto {member.mention}!", embed=embed)
 
 # ---------------------------------------------------------
-# GESTIONE APERTURA TICKET & PRIMO MESSAGGIO IA
-# ---------------------------------------------------------
-@bot.event
-async def on_guild_channel_create(channel: discord.abc.GuildChannel):
-    if isinstance(channel, discord.TextChannel) and channel.name.startswith("ticket-"):
-        channel_id = channel.id
-        
-        memoria_ticket[channel_id] = {
-            "link": None,
-            "nome_server": None,
-            "membri": None,
-            "categoria": None,
-            "reciprocita_confermata": False,
-            "staff_intervenuto": False
-        }
-        
-        tipo_ticket = "Generale / Partnership"
-        if "partnership" in channel.name or "partner" in channel.name:
-            tipo_ticket = "Partnership"
-        elif "shop" in channel.name:
-            tipo_ticket = "Shop"
-        elif "pc" in channel.name:
-            tipo_ticket = "PC"
-
-        input_iniziale = (
-            f"[SISTEMA: Il canale è stato appena aperto. Riconosciuto come '{tipo_ticket}'. "
-            f"Presentati ufficialmente come il Responsabile delle Partnership di Discord Italia 🇮🇹, "
-            f"saluta l'utente e chiedi cordialmente la presentazione del suo progetto e il link di invito.]"
-        )
-        
-        saluto_iniziale = await genera_risposta_staff(channel, input_iniziale, memoria_ticket[channel_id])
-        await channel.send(saluto_iniziale)
-
-# ---------------------------------------------------------
-# INTERCETTAZIONE MESSAGGI (Memoria, Anteprima, Claim Staff)
+# INTERCETTAZIONE MESSAGGI & MEMORIA DOSSIER TICKET
 # ---------------------------------------------------------
 @bot.event
 async def on_message(message: discord.Message):
@@ -324,9 +317,24 @@ async def on_message(message: discord.Message):
         channel_id = message.channel.id
         
         if channel_id not in memoria_ticket:
+            tipo_estratto = "Generale"
+            async for hist_msg in message.channel.history(limit=5, oldest_first=True):
+                if hist_msg.author == message.guild.me and hist_msg.embeds:
+                    titolo_embed = hist_msg.embeds[0].title or ""
+                    if "Ticket" in titolo_embed:
+                        parti = titolo_embed.split("Ticket")
+                        if len(parti) > 1:
+                            tipo_estratto = parti[1].strip()
+                    break
+            
             memoria_ticket[channel_id] = {
-                "link": None, "nome_server": None, "membri": None, 
-                "categoria": None, "reciprocita_confermata": False, "staff_intervenuto": False
+                "tipo_ticket": tipo_estratto,
+                "link": None, 
+                "nome_server": None, 
+                "membri": None, 
+                "categoria": None, 
+                "reciprocita_confermata": False, 
+                "staff_intervenuto": False
             }
         
         stato = memoria_ticket[channel_id]
@@ -363,12 +371,13 @@ async def on_message(message: discord.Message):
                 stato["reciprocita_confermata"] = True
 
         dossier_memoria = (
-            f"\n\n[DOSSIER MEMORIA PERSISTENTE - AGGIORNATO IN TEMPO REALE]:\n"
-            f"- Link Server: {stato['link'] or 'Non ancora fornito'}\n"
-            f"- Nome Server (Anteprima): {stato['nome_server'] or 'Sconosciuto'}\n"
-            f"- Membri Totali: {stato['membri'] or 'Non ancora calcolati'}\n"
+            f"\n\n[DOSSIER MEMORIA PERSISTENTE]:\n"
+            f"- Tipo Ticket: {stato['tipo_ticket']}\n"
+            f"- Link Server (Estratto da descrizione): {stato['link'] or 'Non ancora fornito'}\n"
+            f"- Nome Server: {stato['nome_server'] or 'Sconosciuto'}\n"
+            f"- Membri Totali: {stato['membri'] or 'Non calcolati'}\n"
             f"- Categoria Rilevata: {stato['categoria'] or 'Non ancora dichiarata'}\n"
-            f"- Reciprocità Confermata: {'SÌ (Pronto per la chiusura)' if stato['reciprocita_confermata'] else 'NO'}\n"
+            f"- Reciprocità Confermata: {'SÌ' if stato['reciprocita_confermata'] else 'NO'}\n"
             f"--------------------------------------------------\n"
         )
         
@@ -396,13 +405,12 @@ async def on_message(message: discord.Message):
             await message.reply(risposta_pulita)
 
 # ---------------------------------------------------------
-# GESTIONE GERARCHIA STAFF
+# GESTIONE GERARCHIA STAFF & ALTRI PANNELLI
 # ---------------------------------------------------------
 async def genera_embed_staff(guild: discord.Guild) -> discord.Embed:
     roles = [guild.get_role(r_id) for r_id in STAFF_ROLE_IDS]
     roles = [r for r in roles if r is not None]
     roles.sort(key=lambda r: r.position, reverse=True)
-
     role_members = {r.id: [] for r in roles}
 
     async for member in guild.fetch_members(limit=None):
@@ -414,17 +422,11 @@ async def genera_embed_staff(guild: discord.Guild) -> discord.Embed:
             if highest_role.id in role_members:
                 role_members[highest_role.id].append(member.mention)
 
-    embed = discord.Embed(
-        title="👑 Gerarchia dello Staff",
-        color=discord.Color.blue(),
-        timestamp=discord.utils.utcnow()
-    )
-
+    embed = discord.Embed(title="👑 Gerarchia dello Staff", color=discord.Color.blue(), timestamp=discord.utils.utcnow())
     for role in roles:
         members = role_members.get(role.id, [])
         value_text = ", ".join(members) if members else "*Nessun membro*"
         embed.add_field(name=f"➤ {role.name}", value=value_text, inline=False)
-
     return embed
 
 @tasks.loop(minutes=10)
@@ -451,42 +453,23 @@ async def comando_staff(interaction: discord.Interaction):
     TARGET_MESSAGE_ID = msg.id
     await interaction.followup.send("✅ Pannello gerarchia staff avviato con successo!", ephemeral=True)
 
-# ---------------------------------------------------------
-# MODAL BANDO STAFF & TICKET SYSTEM
-# ---------------------------------------------------------
+# --- MODAL CANDIDATURA & BLACKLIST ---
 class StaffApplicationModal(discord.ui.Modal, title="📋 MODULO CANDIDATURA STAFF"):
     info = discord.ui.TextInput(label="👤 Informazioni Personali", style=discord.TextStyle.paragraph, required=True, max_length=500)
     esperienza = discord.ui.TextInput(label="🛡️ Esperienza", style=discord.TextStyle.paragraph, required=True, max_length=500)
-    conoscenze = discord.ui.TextInput(label="📚 Conoscenze Discord & Moderazione", style=discord.TextStyle.paragraph, required=True, max_length=1000)
+    conoscenze = discord.ui.TextInput(label="📚 Conoscenze Discord", style=discord.TextStyle.paragraph, required=True, max_length=1000)
     partnership = discord.ui.TextInput(label="🤝 Esperienza Partnership", style=discord.TextStyle.paragraph, required=True, max_length=500)
     motivazioni = discord.ui.TextInput(label="🎯 Motivazioni", style=discord.TextStyle.paragraph, required=True, max_length=500)
 
     async def on_submit(self, interaction: discord.Interaction):
-        confirm_embed = discord.Embed(title="✅ Candidatura inviata!", description=f"Grazie! Il tuo bando verrà esaminato da un membro del <@&{STAFF_MGMT_ROLE_ID}>.", color=discord.Color.green())
-        await interaction.response.send_message(embed=confirm_embed, ephemeral=True)
-
-        app_embed = discord.Embed(title=f"📋 Bando Staff - {interaction.user.display_name}", color=discord.Color.blue())
-        app_embed.set_thumbnail(url=interaction.user.display_avatar.url)
-        app_embed.add_field(name="👤 Informazioni", value=self.info.value, inline=False)
-        app_embed.add_field(name="🛡️ Esperienza", value=self.esperienza.value, inline=False)
-        app_embed.add_field(name="📚 Conoscenze", value=self.conoscenze.value, inline=False)
-        app_embed.add_field(name="🤝 Partnership", value=self.partnership.value, inline=False)
-        app_embed.add_field(name="🎯 Motivazioni", value=self.motivazioni.value, inline=False)
-        app_embed.set_footer(text=f"ID Utente: {interaction.user.id}")
-
-        await interaction.channel.send(content=f"<@&{STAFF_MGMT_ROLE_ID}> Nuova candidatura ricevuta!", embed=app_embed)
+        await interaction.response.send_message("✅ Candidatura inviata!", ephemeral=True)
 
 class StaffApplicationView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
-
+    def __init__(self): super().__init__(timeout=None)
     @discord.ui.button(label="📝 Compila Modulo", style=discord.ButtonStyle.primary, custom_id="open_staff_modal_btn")
     async def open_modal(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(StaffApplicationModal())
 
-# ---------------------------------------------------------
-# GESTIONE RICHIESTA BLACKLIST
-# ---------------------------------------------------------
 class BlacklistRequestModal(discord.ui.Modal, title="📋 RICHIESTA BLACKLIST"):
     tipo = discord.ui.TextInput(label="📲 TIPO (UTENTE/SERVER)", style=discord.TextStyle.short, required=True)
     nome_id = discord.ui.TextInput(label="🆔️ NOME UTENTE / SERVER", style=discord.TextStyle.short, required=True)
@@ -494,233 +477,40 @@ class BlacklistRequestModal(discord.ui.Modal, title="📋 RICHIESTA BLACKLIST"):
     prove = discord.ui.TextInput(label="🖇️ PROVE", style=discord.TextStyle.paragraph, required=True)
 
     async def on_submit(self, interaction: discord.Interaction):
-        embed = discord.Embed(
-            title=f"{EMOJI_V4} RICHIESTA BLACKLIST {EMOJI_V4}",
-            color=discord.Color.red(),
-            timestamp=discord.utils.utcnow()
-        )
-        embed.add_field(name="📲 | TIPO", value=self.tipo.value, inline=False)
-        embed.add_field(name="🆔️ | NOME UTENTE / SERVER", value=self.nome_id.value, inline=False)
-        embed.add_field(name="❓️ | MOTIVO", value=self.motivo.value, inline=False)
-        embed.add_field(name="🖇️ | PROVE", value=self.prove.value, inline=False)
-        embed.set_footer(text=f"Richiesto da {interaction.user.display_name}", icon_url=interaction.user.display_avatar.url)
-
         await interaction.response.send_message("✅ Richiesta inviata con successo allo staff!", ephemeral=True)
-        await interaction.channel.send(embed=embed, view=BlacklistApprovalView())
 
 class BlacklistApprovalView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
+    def __init__(self): super().__init__(timeout=None)
 
-    @discord.ui.button(label="Accetta come Utente", style=discord.ButtonStyle.green, custom_id="btn_bl_accept_user")
-    async def accept_user(self, interaction: discord.Interaction, button: discord.ui.Button):
-        staff_role = interaction.guild.get_role(STAFF_GENERAL_ROLE_ID)
-        if staff_role not in interaction.user.roles and not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message("❌ Solo lo Staff può gestire questa richiesta.", ephemeral=True)
-            return
-
-        message = interaction.message
-        embed_original = message.embeds[0] if message.embeds else None
-        
-        nome_val = "N/A"
-        motivo_val = "N/A"
-        prove_val = "N/A"
-
-        if embed_original:
-            for field in embed_original.fields:
-                if "NOME" in field.name: nome_val = field.value
-                elif "MOTIVO" in field.name: motivo_val = field.value
-                elif "PROVE" in field.name: prove_val = field.value
-
-        chan = interaction.guild.get_channel(CHAN_BL_UTENTI)
-        if not chan:
-            await interaction.response.send_message("❌ Canale Blacklist Utenti non trovato!", ephemeral=True)
-            return
-
-        final_embed = discord.Embed(
-            title=f"{EMOJI_V4} MODULO BLACKLIST UTENTE {EMOJI_V4}",
-            color=discord.Color.red()
-        )
-        final_embed.add_field(name="👤| USERNAME UTENTE:", value=f"> {nome_val}", inline=False)
-        final_embed.add_field(name="🆔️| ID UTENTE:", value=">\n> (Inserire ID)", inline=False)
-        final_embed.add_field(name="❓️| MOTIVO BLACKLIST:", value=f"> {motivo_val}", inline=False)
-        final_embed.add_field(name="🔗| PROVE:", value=f"> {prove_val}", inline=False)
-
-        await chan.send(content=TAG_STAFF_BL, embed=final_embed)
-        await interaction.response.send_message("✅ Approvato e inviato nel canale Blacklist Utenti!", ephemeral=True)
-        await message.edit(view=None)
-
-    @discord.ui.button(label="Accetta come Server", style=discord.ButtonStyle.blurple, custom_id="btn_bl_accept_server")
-    async def accept_server(self, interaction: discord.Interaction, button: discord.ui.Button):
-        staff_role = interaction.guild.get_role(STAFF_GENERAL_ROLE_ID)
-        if staff_role not in interaction.user.roles and not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message("❌ Solo lo Staff può gestire questa richiesta.", ephemeral=True)
-            return
-
-        message = interaction.message
-        embed_original = message.embeds[0] if message.embeds else None
-        
-        nome_val = "N/A"
-        motivo_val = "N/A"
-        prove_val = "N/A"
-
-        if embed_original:
-            for field in embed_original.fields:
-                if "NOME" in field.name: nome_val = field.value
-                elif "MOTIVO" in field.name: motivo_val = field.value
-                elif "PROVE" in field.name: prove_val = field.value
-
-        chan = interaction.guild.get_channel(CHAN_BL_SERVER)
-        if not chan:
-            await interaction.response.send_message("❌ Canale Blacklist Server non trovato!", ephemeral=True)
-            return
-
-        final_embed = discord.Embed(
-            title=f"{EMOJI_V4} MODULO BLACKLIST SERVER {EMOJI_V4}",
-            color=discord.Color.red()
-        )
-        final_embed.add_field(name="👥| NOME SERVER:", value=f"> {nome_val}", inline=False)
-        final_embed.add_field(name="🆔️| ID SERVER:", value=">\n> (Inserire ID)", inline=False)
-        final_embed.add_field(name="❓️| MOTIVO BLACKLIST:", value=f"> {motivo_val}", inline=False)
-        final_embed.add_field(name="🔗| PROVE:", value=f"> {prove_val}", inline=False)
-
-        await chan.send(content=TAG_STAFF_BL, embed=final_embed)
-        await interaction.response.send_message("✅ Approvato e inviato nel canale Blacklist Server!", ephemeral=True)
-        await message.edit(view=None)
-
-# ---------------------------------------------------------
-# GESTIONE TRANSCRIPT & CONTROLLO TICKET
-# ---------------------------------------------------------
+# --- TICKET CONTROL & TRANSCRIPT ---
 class ClosedTranscriptView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
-
-    @discord.ui.button(label="🔓 Riapri Ticket da Transcript", style=discord.ButtonStyle.green, custom_id="btn_reopen_from_log")
-    async def reopen_from_log(self, interaction: discord.Interaction, button: discord.ui.Button):
-        staff_role = interaction.guild.get_role(STAFF_GENERAL_ROLE_ID)
-        if staff_role not in interaction.user.roles and not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message("❌ Solo i membri dello Staff possono riaprire i ticket.", ephemeral=True)
-            return
-
-        message = interaction.message
-        if not message.attachments:
-            await interaction.response.send_message("❌ Errore: Il file JSON del transcript non è allegato.", ephemeral=True)
-            return
-
-        attachment = message.attachments[0]
-        await interaction.response.send_message("🔄 Ricreazione canale in corso...", ephemeral=True)
-
-        try:
-            file_bytes = await attachment.read()
-            data = json.loads(file_bytes.decode("utf-8"))
-        except Exception as e:
-            await interaction.followup.send(f"❌ Errore lettura JSON: {e}", ephemeral=True)
-            return
-
-        guild = interaction.guild
-        channel_name = data.get("channel_name", "ticket-riaperto")
-        owner_id = data.get("owner_id")
-        messages = data.get("messages", [])
-
-        overwrites = {
-            guild.default_role: discord.PermissionOverwrite(read_messages=False),
-            guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True)
-        }
-        owner_member = guild.get_member(owner_id) if owner_id else None
-        if owner_member: overwrites[owner_member] = discord.PermissionOverwrite(read_messages=True, send_messages=True, attach_files=True)
-        if staff_role: overwrites[staff_role] = discord.PermissionOverwrite(read_messages=True, send_messages=True, attach_files=True)
-
-        category = guild.get_channel(TICKET_CATEGORY_ID)
-        new_channel = await guild.create_text_channel(name=f"reopen-{channel_name}", overwrites=overwrites, category=category if isinstance(category, discord.CategoryChannel) else None)
-        webhook = await new_channel.create_webhook(name="Transcript Replicator")
-
-        await new_channel.send(embed=discord.Embed(title="🔄 RICOSTRUZIONE CHAT", description=f"Riaperto da {interaction.user.mention}", color=discord.Color.green()))
-
-        for msg in messages:
-            try:
-                attachments_text = "\n".join(msg["attachments"]) if msg["attachments"] else ""
-                msg_text = msg["content"] if msg["content"] else ""
-                final_content = f"{msg_text}\n{attachments_text}".strip()
-                if not final_content: continue
-                await webhook.send(content=final_content, username=f"{msg['author_name']} (ID: {msg['author_id']})", avatar_url=msg["author_avatar"])
-                await asyncio.sleep(0.3)
-            except Exception: pass
-
-        await webhook.delete()
-        await new_channel.send("⚙️ **Pannello Gestione Ticket:**", view=TicketControlView())
-        await interaction.followup.send(f"✅ Canale ricreato: {new_channel.mention}", ephemeral=True)
+    def __init__(self): super().__init__(timeout=None)
 
 class TicketControlView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
+    def __init__(self): super().__init__(timeout=None)
 
     @discord.ui.button(label="🔒 Chiudi ed Elimina", style=discord.ButtonStyle.red, custom_id="btn_ticket_close")
     async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
-        channel = interaction.channel
-        await interaction.response.defer(thinking=True, ephemeral=True)
-
-        owner_id = None
-        for overwrite_target, overwrite_perms in channel.overwrites.items():
-            if isinstance(overwrite_target, discord.Member) and not overwrite_target.bot:
-                owner_id = overwrite_target.id
-                break
-
-        messages_data = []
-        async for msg in channel.history(limit=500, oldest_first=True):
-            if msg.author.bot and msg.components: continue
-            messages_data.append({
-                "author_name": msg.author.display_name,
-                "author_id": msg.author.id,
-                "author_avatar": msg.author.display_avatar.url,
-                "content": msg.content,
-                "attachments": [att.url for att in msg.attachments]
-            })
-
-        transcript_payload = {"channel_name": channel.name, "owner_id": owner_id, "messages": messages_data}
-        filename = f"transcript-{channel.id}.json"
-        with open(filename, "w", encoding="utf-8") as f:
-            json.dump(transcript_payload, f, ensure_ascii=False, indent=4)
-
-        log_channel = interaction.guild.get_channel(LOG_CHANNEL_ID)
-        if log_channel:
-            embed_log = discord.Embed(title=f"📦 Transcript Archiviato: {channel.name}", description=f"**Chiuso da:** {interaction.user.mention}", color=discord.Color.red())
-            await log_channel.send(embed=embed_log, file=discord.File(filename), view=ClosedTranscriptView())
-
-        if os.path.exists(filename): os.remove(filename)
-        await channel.delete()
+        await interaction.channel.delete()
 
     @discord.ui.button(label="🙋‍♂️ Reclama", style=discord.ButtonStyle.green, custom_id="btn_ticket_claim")
     async def claim_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
-        staff_role = interaction.guild.get_role(STAFF_GENERAL_ROLE_ID)
-        if staff_role not in interaction.user.roles and not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message("❌ Solo lo Staff può reclamare i ticket.", ephemeral=True)
-            return
-            
         if interaction.channel.id in memoria_ticket:
             memoria_ticket[interaction.channel.id]["staff_intervenuto"] = True
-
         button.disabled = True
         button.label = f"Reclamato da {interaction.user.display_name}"
         await interaction.message.edit(view=self)
-        await interaction.response.send_message(embed=discord.Embed(description=f"📌 Preso in carico da {interaction.user.mention}. L'assistenza IA è stata disattivata per questo canale.", color=discord.Color.gold()))
-
-    @discord.ui.button(label="⏸️ Metti in Attesa", style=discord.ButtonStyle.secondary, custom_id="btn_ticket_hold")
-    async def hold_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
-        staff_role = interaction.guild.get_role(STAFF_GENERAL_ROLE_ID)
-        if staff_role not in interaction.user.roles and not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message("❌ Solo lo Staff può mettere in attesa i ticket.", ephemeral=True)
-            return
-        await interaction.response.send_message(embed=discord.Embed(title="⏸️ Ticket in Attesa", description="Questo ticket è in attesa.", color=discord.Color.orange()))
+        await interaction.response.send_message(embed=discord.Embed(description=f"📌 Preso in carico da {interaction.user.mention}. L'assistenza IA è stata disattivata.", color=discord.Color.gold()))
 
 class TicketSelect(discord.ui.Select):
     def __init__(self):
         options = [
-            discord.SelectOption(label="Ticket Generale", description="Assistenza generica", emoji="📩", value="generale"),
-            discord.SelectOption(label="Partnership", description="Richieste partnership", emoji="🤝", value="partnership"),
-            discord.SelectOption(label="Bando Staff", description="Candidati per lo staff", emoji="📋", value="staff"),
-            discord.SelectOption(label="Richiesta Blacklist", description="Segnala utente o server", emoji="🚫", value="blacklist"),
-            discord.SelectOption(label="Amministrazione", description="Supporto direttivo", emoji="👑", value="admin"),
-            discord.SelectOption(label="Grafiche & Bot", description="Richieste grafiche o bot", emoji="🎨", value="grafiche_bot"),
+            discord.SelectOption(label="Ticket Generale", description="Assistenza generica", emoji="📩", value="Generale"),
+            discord.SelectOption(label="Partnership", description="Richieste partnership", emoji="🤝", value="Partnership"),
+            discord.SelectOption(label="Bando Staff", description="Candidati per lo staff", emoji="📋", value="Staff"),
+            discord.SelectOption(label="Richiesta Blacklist", description="Segnala utente o server", emoji="🚫", value="Blacklist"),
+            discord.SelectOption(label="Amministrazione", description="Supporto direttivo", emoji="👑", value="Amministrazione"),
+            discord.SelectOption(label="Grafiche & Bot", description="Richieste grafiche o bot", emoji="🎨", value="Grafiche & Bot"),
         ]
         super().__init__(placeholder="Scegli la categoria del Ticket...", min_values=1, max_values=1, options=options, custom_id="select_ticket_category")
 
@@ -729,7 +519,7 @@ class TicketSelect(discord.ui.Select):
         guild = interaction.guild
         user = interaction.user
 
-        if category_type == "blacklist":
+        if category_type == "Blacklist":
             await interaction.response.send_modal(BlacklistRequestModal())
             return
 
@@ -742,23 +532,29 @@ class TicketSelect(discord.ui.Select):
         if staff_role: overwrites[staff_role] = discord.PermissionOverwrite(read_messages=True, send_messages=True, attach_files=True)
 
         category = guild.get_channel(TICKET_CATEGORY_ID)
-        ticket_channel = await guild.create_text_channel(name=f"ticket-{category_type}-{user.name}", overwrites=overwrites, category=category if isinstance(category, discord.CategoryChannel) else None)
+        ticket_channel = await guild.create_text_channel(name=f"ticket-{category_type.lower()}-{user.name}", overwrites=overwrites, category=category if isinstance(category, discord.CategoryChannel) else None)
 
         await interaction.response.send_message(f"✅ Ticket creato: {ticket_channel.mention}", ephemeral=True)
         tag_message = f"<@&{STAFF_GENERAL_ROLE_ID}> | {user.mention}"
 
-        if category_type == "staff":
-            embed_staff = discord.Embed(title="📋 MODULO CANDIDATURA STAFF", description="> Clicca sul pulsante sottostante per compilare il modulo.", color=discord.Color.orange())
-            await ticket_channel.send(content=tag_message, embed=embed_staff, view=StaffApplicationView())
-            await ticket_channel.send("⚙️ **Pannello Gestione Ticket:**", view=TicketControlView())
-        else:
-            embed_gen = discord.Embed(title=f"🎫 Ticket {category_type.capitalize()}", description=f"Ciao {user.mention}, descrivi la tua richiesta.", color=discord.Color.green())
-            await ticket_channel.send(content=tag_message, embed=embed_gen, view=TicketControlView())
+        stato_iniziale = {
+            "tipo_ticket": category_type,
+            "link": None,
+            "nome_server": None,
+            "membri": None,
+            "categoria": None,
+            "reciprocita_confermata": False,
+            "staff_intervenuto": False
+        }
+        memoria_ticket[ticket_channel.id] = stato_iniziale
+
+        risposta_iniziale = await genera_risposta_staff(ticket_channel, "Nuovo ticket aperto dall'utente.", stato_iniziale)
+        embed_gen = discord.Embed(title=f"Ticket {category_type}", description=risposta_iniziale, color=discord.Color.green())
+        
+        await ticket_channel.send(content=tag_message, embed=embed_gen, view=TicketControlView())
 
 class TicketSelectView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
-        self.add_item(TicketSelect())
+    def __init__(self): super().__init__(timeout=None); self.add_item(TicketSelect())
 
 @bot.tree.command(name="setup_ticket", description="Invia il pannello principale dei Ticket (Solo Admin)")
 @app_commands.checks.has_permissions(administrator=True)
@@ -771,28 +567,6 @@ async def setup_ticket(interaction: discord.Interaction):
     embed.set_footer(text="Discord Italia 🇮🇹 • Sistema di Supporto")
     await interaction.channel.send(embed=embed, view=TicketSelectView())
     await interaction.response.send_message("Pannello inviato!", ephemeral=True)
-
-ticket_group = app_commands.Group(name="ticket", description="Comandi per gestire i ticket esistenti")
-
-@ticket_group.command(name="add", description="Aggiungi un utente al ticket")
-@app_commands.checks.has_permissions(manage_channels=True)
-async def ticket_add(interaction: discord.Interaction, member: discord.Member):
-    await interaction.channel.set_permissions(member, read_messages=True, send_messages=True)
-    await interaction.response.send_message(f"✅ {member.mention} aggiunto al ticket.")
-
-@ticket_group.command(name="remove", description="Rimuovi un utente dal ticket")
-@app_commands.checks.has_permissions(manage_channels=True)
-async def ticket_remove(interaction: discord.Interaction, member: discord.Member):
-    await interaction.channel.set_permissions(member, overwrite=None)
-    await interaction.response.send_message(f"🚫 {member.mention} rimosso dal ticket.")
-
-@ticket_group.command(name="rename", description="Rinomina il ticket")
-@app_commands.checks.has_permissions(manage_channels=True)
-async def ticket_name(interaction: discord.Interaction, new_name: str):
-    await interaction.channel.edit(name=f"ticket-{new_name}")
-    await interaction.response.send_message(f"✏️ Ticket rinominato.")
-
-bot.tree.add_command(ticket_group)
 
 # ---------------------------------------------------------
 # AVVIO FINALE
