@@ -11,6 +11,11 @@ from discord import app_commands
 from discord.ext import commands, tasks
 
 # ---------------------------------------------------------
+# VARIABILE GLOBALE PER ATTIVARE/DISATTIVARE L'IA
+# ---------------------------------------------------------
+ATTIVA_IA = True  # Imposta su False per disattivare completamente l'IA
+
+# ---------------------------------------------------------
 # 1. SERVER FLASK INTEGRATO (Keep-Alive)
 # ---------------------------------------------------------
 app = Flask(__name__)
@@ -347,9 +352,12 @@ class TicketSelect(discord.ui.Select):
         # 2. INVIO DELLA DESCRIZIONE UFFICIALE DI DISCORD ITALIA ALL'APERTURA DEL TICKET
         await ticket_channel.send(content=DESCRIZIONE_UFFICIALE_DISCORD_ITALIA)
 
-        # 3. PRIMO MESSAGGIO DELL'IA
-        risposta_iniziale = await genera_risposta_staff(memoria_ticket[ticket_channel.id], "Apertura ticket.")
-        await ticket_channel.send(content=risposta_iniziale)
+        # 3. PRIMO MESSAGGIO DELL'IA (Se attiva)
+        if ATTIVA_IA:
+            risposta_iniziale = await genera_risposta_staff(memoria_ticket[ticket_channel.id], "Apertura ticket.")
+            await ticket_channel.send(content=risposta_iniziale)
+        else:
+            await ticket_channel.send(content="🤖 L'assistente IA è attualmente disattivato. Uno staffer ti risponderà al più presto.")
 
 class TicketSelectView(discord.ui.View):
     def __init__(self): super().__init__(timeout=None); self.add_item(TicketSelect())
@@ -436,6 +444,10 @@ async def on_message(message: discord.Message):
             print(f"✅ [LOG TICKET - RECIPROCITÀ]: Confermata dall'utente nel canale #{message.channel.name}!")
 
     print(f"📊 [LOG TICKET - STATO CORRENTE] (Canale ID: {channel_id}): {stato}")
+
+    # Se l'IA è disattivata, non generiamo risposte automatiche basate su di essa
+    if not ATTIVA_IA:
+        return
 
     risposta_ia = await genera_risposta_staff(stato, message.content)
     
