@@ -215,22 +215,27 @@ async def gestisci_destinazione_partnership(guild: discord.Guild, nome_partner: 
 # 5. DEFINIZIONE DEL BOT & VIEW PERSISTENTI
 # ---------------------------------------------------------
 class CustomBot(commands.Bot):
-    def __init__(self):
-        super().__init__(command_prefix="!", intents=intents)
 
-    async def setup_hook(self):
-        self.add_view(TicketControlView())
-        self.add_view(TicketSelectView())
-        
-        if not invia_buongiorno_automatico.is_running():
-            invia_buongiorno_automatico.start()
-        if not invia_buonasera_automatica.is_running():
-            invia_buonasera_automatica.start()
-        if not aggiorna_messaggio_automatico.is_running():
-            aggiorna_messaggio_automatico.start()
+  def __init__(self):
+    super().__init__(command_prefix="!", intents=intents)
 
-        await self.tree.sync()
-        print("🚀 [BOT READY]: Bot avviato, viste persistenti registrate e comandi sincronizzati.")
+  async def setup_hook(self):
+    self.add_view(TicketControlView())
+    self.add_view(TicketSelectView())
+    self.add_view(TranscriptReopenView())
+
+    if not invia_buongiorno_automatico.is_running():
+      invia_buongiorno_automatico.start()
+    if not invia_buonasera_automatica.is_running():
+      invia_buonasera_automatica.start()
+    if not aggiorna_messaggio_automatico.is_running():
+      aggiorna_messaggio_automatico.start()
+
+    await self.tree.sync()
+    print(
+        "🚀 [BOT READY]: Bot avviato, viste persistenti registrate e comandi"
+        " sincronizzati."
+    )
 
 bot = CustomBot()
 
