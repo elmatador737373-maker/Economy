@@ -237,12 +237,158 @@ bot = CustomBot()
 class TicketControlView(discord.ui.View):
     def __init__(self): super().__init__(timeout=None)
 
-    @discord.ui.button(label="🔒 Chiudi ed Elimina", style=discord.ButtonStyle.red, custom_id="btn_ticket_close")
-    async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
-        print(f"🔒 [TICKET CHIUSO]: Il canale {interaction.channel.name} è stato chiuso da {interaction.user}.")
-        if interaction.channel.id in memoria_ticket:
-            del memoria_ticket[interaction.channel.id]
-        await interaction.channel.delete()
+import io
+import json
+import discord
+
+# Configura l'ID del canale in cui inviare i log dei ticket chiusi
+LOG_CHANNEL_ID = 1487393847830122597  # Sostituisci con l'ID del canale log
+
+
+class TranscriptReopenView(discord.ui.View):
+
+  def __init__(self):
+    super().__init__(timeout=None)
+
+  @discord.ui.button(
+      label="Riapri Ticket da Transcript",
+      style=discord.ButtonStyle.green,
+      custom_id="btn_reopen_transcript",
+  )
+  async def reopen_ticket(
+      self, interaction: discord.Interaction, button: discord.ui.Button
+  ):
+    await interaction.response.defer(ephemeral=True)
+
+    # Cerca il file JSON allegato al messaggio di log
+    message = interaction.message
+    if not message.attachments:
+      return await interaction.followup.send(
+          "❌ File di transcript non trovato.", ephemeral=True
+      )
+
+    attachment = message.attachments[0]
+    if not attachment.filename.endswith(".json"):
+      return await interaction.followup.send(
+          "❌ Il file allegato non è un transcript valido.", ephemeral=True
+      )
+
+    try:
+      file_bytes = await attachment.read()
+      ticket_data = json.loads(file_bytes.decode("utf-8"))
+    except Exception as e:
+      return await interaction.followup.send(
+          f"❌ Errore nella lettura del transcript: {e}", ephemeral=True
+      )
+
+    # Crea un nuovo canale per il ticket riaperto
+    guild = interaction.guild
+    category = message.channel.category  
+    # Fallback se il canale dei log non è nella stessa categoria
+    overwrites = {
+        guild.default_role: discord.PermissionOverwrite(view_channel=False),
+        interaction.user: discord.PermissionOverwrite(
+            view_channel=True, send_messages=True, read_message_history=True
+        ),
+        guild.me: discord.PermissionOverwrite(
+            view_channel=True,
+            send_messages=True,
+            manage_channels=True,
+            manage_webhooks=True,
+        ),
+    }
+
+    new_channel = await guild.create_text_channel(
+        name=f"riaperto-{ticket_data.get('ticket_name', 'ticket')}",
+        category=category,
+        overwrites=overwrites,
+    )
+
+    # Crea o recupera un webhook nel nuovo canale per simulare gli utenti
+    webhooks = await new_channel.webhooks()
+    webhook = webhooks[0] if webhooks else await new_channel.create_webhook(name="Ticket Reopen Simulator")
+
+    # Invia i messaggi salvati simulando gli autori originali tramite webhook
+    messages = ticket_data.get("messages", [])
+    for msg_data in messages:
+      content = msg_data.get("content", "")
+      username = msg_data.get("author", "Utente Sconosciuto")
+      avatar_url = msg_data.get("avatar_url", None)
+
+      if content or msg_data.get("embeds"):
+        await webhook.send(
+            content=content if content else None,
+            username=username,
+            avatar_url=avatar_url,
+            embeds=[discord.Embed.from_dict(e) for e in msg_data.get("embeds", [])]
+        )
+
+    await interaction.followup.send(
+        f"✅ Ticket riaperto con successo in {new_channel.mention}!", ephemeral=True
+    )
+
+
+class TicketCloseView(discord.ui.View):
+
+  def __init__(self):
+    super().__init__(timeout=None)
+
+  @discord.ui.button(
+      label="🔒 Chiudi ed Elimina",
+      style=discord.ButtonStyle.red,
+      custom_id="btn_ticket_close",
+  )
+  async def close_ticket(
+      self, interaction: discord.Interaction, button: discord.ui.Button
+  ):
+    print(
+        f"🔒 [TICKET CHIUSO]: Il canale {interaction.channel.name} è stato"
+        f" chiuso da {interaction.user}."
+    )
+
+    if interaction.channel.id in memoria_ticket:
+      del memoria_ticket[interaction.channel.id]
+
+    # Raccogli la cronologia dei messaggi per il transcript
+    messages_list = []
+    async for message in interaction.channel.history(limit=150, oldest_first=True):
+      if message.author.bot and not message.webhook_id:
+        # Salva anche i messaggi del bot se necessario, o saltali
+        pass
+      
+      embeds_data = [e.to_dict() for e in message.embeds]
+      messages_list.append({
+          "author": message.author.display_name,
+          "avatar_url": str(message.author.display_avatar.url) if message.author.display_avatar else None,
+          "content": message.content,
+          "embeds": embeds_data
+      })
+
+    # Prepara i dati JSON del transcript
+    transcript_data = {
+        "ticket_name": interaction.channel.name,
+        "closed_by": str(interaction.user),
+        "messages": messages_list
+    }
+
+    file_bytes = io.BytesIO(json.dumps(transcript_data, indent=4, ensure_ascii=False).encode("utf-8"))
+    file = discord.File(file_bytes, filename=f"transcript-{interaction.channel.id}.json")
+
+    # Invia il log nel canale apposito
+    log_channel = interaction.guild.get_channel(LOG_CHANNEL_ID)
+    if log_channel:
+      embed = discord.Embed(
+          title="",
+          description=f"📦 **Transcript Archiviato: {interaction.channel.name}**\n\n**Chiuso da:** {interaction.user.mention}\nClicca il bottone sottostante per riaprire automaticamente questo ticket.",
+          color=discord.Color.dark_orange() # O il colore rosso/arancione della tua UI
+      )
+      await log_channel.send(
+          embed=embed,
+          file=file,
+          view=TranscriptReopenView()
+      )
+
+    await interaction.channel.delete()
 
 class TicketSelect(discord.ui.Select):
     def __init__(self):
