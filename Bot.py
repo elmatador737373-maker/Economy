@@ -170,14 +170,39 @@ ai_tools = [
     {
         "type": "function",
         "function": {
+            "name": "smista_partnership",
+            "description": "Esegui questa funzione NON APENA la descrizione del partner, la categoria scelta e la reciprocità sono tutte confermate. Estrae i dati corretti e invia la partnership.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "categoria": {
+                        "type": "string",
+                        "description": "La categoria scelta: Shop, PC, Community, Xbox o PlayStation."
+                    },
+                    "nome_server": {
+                        "type": "string",
+                        "description": "Il nome esatto del server partner."
+                    },
+                    "canale_id": {
+                        "type": "integer",
+                        "description": "L'ID numerico esatto del canale di destinazione in base alle fasce membri o 0 se Shop/PC."
+                    }
+                },
+                "required": ["categoria", "nome_server", "canale_id"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "close_ticket",
-            "description": "Chiude e archivia il ticket. Usalo ESCLUSIVAMENTE se l'utente richiede esplicitamente di chiudere il ticket o se affermi tu stesso che l'assistenza è terminata.",
+            "description": "Chiude e archivia il ticket. Usalo se l'utente richiede esplicitamente di chiudere o se il lavoro è terminato.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "reason": {
                         "type": "string",
-                        "description": "Breve motivo della chiusura (es: 'Richiesto dall'utente')."
+                        "description": "Motivo della chiusura."
                     }
                 },
                 "required": ["reason"]
@@ -189,62 +214,33 @@ ai_tools = [
 
 async def genera_risposta_staff(stato: dict, history: list, messaggio_utente: str) -> dict:
     dossier_riassunto = (
-        f"STATO ATTUALE DEL DOSSIER PARTNERSHIP:\n"
-        f"- Descrizione Partnership Ricevuta: {'SÌ (Presente)' if stato.get('descrizione_partner') else 'MANCANTE (Chiedi all\'utente di incollare il messaggio di partnership del suo server comprensivo di link d\'invito)'}\n"
-        f"- Link Server Estratto: {stato.get('link') or 'Non estratto'}\n"
-        f"- Nome Server: {stato.get('nome_server') or 'Sconosciuto'}\n"
-        f"- Membri Totali: {stato.get('membri') or 'Non calcolati'}\n"
-        f"- Categoria Scelta: {stato.get('categoria') or 'MANCANTE (Chiedi di scegliere tra: Shop, PC, Community, Xbox o PlayStation)'}\n"
-        f"- Reciprocità Confermata: {'SÌ (Confermata)' if stato.get('reciprocita_confermata') else 'NO (Chiedi conferma o prova di avvenuta pubblicazione della nostra descrizione nel loro server)'}"
+        f"STATO DOSSIER:\n"
+        f"- Descrizione: {'OK' if stato.get('descrizione_partner') else 'MANCANTE'}\n"
+        f"- Link: {stato.get('link') or 'Assente'}\n"
+        f"- Server: {stato.get('nome_server') or 'Sconosciuto'}\n"
+        f"- Membri: {stato.get('membri') or 'Non calcolati'}\n"
+        f"- Categoria: {stato.get('categoria') or 'MANCANTE (Shop, PC, Community, Xbox, PlayStation)'}\n"
+        f"- Reciprocità: {'OK' if stato.get('reciprocita_confermata') else 'MANCANTE'}"
     )
 
     system_prompt = (
-        "SEI IL RESPONSABILE DI DIREZIONE E DESK DELLE PARTNERSHIPS DI 'DISCORD ITALIA 🇮🇹'.\n"
-        "Il tuo obiettivo è gestire la richiesta di partnership in modo professionale, impeccabile, sintetico e risolutivo.\n\n"
-
-        "=== REGOLE TASSATIVE PER EVITARE RIPETIZIONI (ZERO STUPIDITÀ) ===\n"
-        "1. ANALISI DELLA MEMORIA: Prima di rispondere, analizza lo 'STATO ATTUALE DEL DOSSIER' e la cronologia messaggi.\n"
-        "   - NON chiedere MAI più un dato se risulta già 'SÌ', 'Presente' o 'Confermata'.\n"
-        "   - Se un dato è già stato fornito dall'utente nei messaggi precedenti, NON richiederlo.\n"
-        "2. EFFICIENZA: Se mancano più dati (es. sia Categoria che Reciprocità), richiedili TUTTI INSIEME in un unico messaggio breve.\n"
-        "3. CHIUSURA SU RICHIESTA: Se l'utente chiede di chiudere la chat, o esprime concetti come 'abbiamo finito', 'puoi chiudere', 'a posto così', invoca IMMEDIATAMENTE il tool 'close_ticket'.\n\n"
-
-        "=== DATABASE CANALI E SMISTAMENTO AUTOMATICO ===\n"
-        "Usa queste regole per determinare l'ID canale corretto (Z) nel comando finale:\n"
-        "- SHOP: Canale dedicato (usa Z = 0)\n"
-        "- PC: Canale dedicato (usa Z = 0)\n"
-        "- COMMUNITY:\n"
-        "  • 0-600 membri -> ID `1455298333366292512`\n"
-        "  • 600-1500 membri -> ID `1505914982443778157`\n"
-        "  • 1500-2300 membri -> ID `1455298340588879954`\n"
-        "  • 2300-5000 membri -> ID `1459223502107181180`\n"
-        "  • 5000+ membri -> ID `1497864519433846845`\n"
-        "- XBOX:\n"
-        "  • 0-600 membri -> ID `1506366880842252299`\n"
-        "  • 600-1500 membri -> ID `1506366972726874182`\n"
-        "  • 1500-2300 membri -> ID `1460365011171151882`\n"
-        "  • 2300-5000 membri -> ID `1487403274658381864`\n"
-        "  • 5000+ membri -> ID `1455298295680204932`\n"
-        "- PLAYSTATION:\n"
-        "  • 0-600 membri -> ID `1457119066043977973`\n"
-        "  • 600-1500 membri -> ID `1455298305041895604`\n"
-        "  • 1500-2300 membri -> ID `1455298300315046042`\n"
-        "  • 2300-5000 membri -> ID `1485211001719619624`\n"
-        "  • 5000+ membri -> ID `1489956038362009630`\n\n"
-
-        "=== COMANDO FINALE DI RATIFICA ===\n"
-        "Quando Descrizione (col link), Categoria e Reciprocità sono TUTTE confermate (SÌ), concludi la risposta inserendo esattamente questa stringa nell'ultimo rigo:\n"
-        "`[GESTISCI_PARTNERSHIP: Categoria=X, Nome=Y, CanaleID=Z]`\n"
-        "(Sostituisci X con la categoria, Y con il nome del server partner e Z con l'ID canale identificato dalla tabella di smistamento sopra o 0 se Shop/PC).\n\n"
+        "Sei l'addetto alle partnership di Discord Italia 🇮🇹.\n\n"
+        "REGOLE CRUCIALI:\n"
+        "1. RISPOSTE BREVI: Scrivi frasi corte, dirette e amichevoli. Niente poemi o elenchi puntati lunghi.\n"
+        "2. ZERO RIPETIZIONI: Non chiedere mai dati che risultano già 'OK' nel dossier.\n"
+        "3. CHIAMA IL TOOL: Appena Descrizione, Categoria e Reciprocità sono TUTTE 'OK', usa subito il tool 'smista_partnership'.\n"
+        "4. Se l'utente vuole chiudere, usa il tool 'close_ticket'.\n\n"
+        "=== DATABASE CANALI (PER IL TOOL) ===\n"
+        "- Shop/PC: canale_id = 0\n"
+        "- Community: 0-600 (`1455298333366292512`), 600-1500 (`1505914982443778157`), 1500-2300 (`1455298340588879954`), 2300-5000 (`1459223502107181180`), 5000+ (`1497864519433846845`)\n"
+        "- Xbox: 0-600 (`1506366880842252299`), 600-1500 (`1506366972726874182`), 1500-2300 (`1460365011171151882`), 2300-5000 (`1487403274658381864`), 5000+ (`1455298295680204932`)\n"
+        "- PlayStation: 0-600 (`1457119066043977973`), 600-1500 (`1455298305041895604`), 1500-2300 (`1455298300315046042`), 2300-5000 (`1485211001719619624`), 5000+ (`1489956038362009630`)\n\n"
         f"{dossier_riassunto}"
     )
 
     messages = [{"role": "system", "content": system_prompt}]
-    
-    # Mantiene fino a 12 messaggi recenti per la massima coerenza
-    for msg in history[-12:]:
+    for msg in history[-10:]:
         messages.append(msg)
-        
     messages.append({"role": "user", "content": messaggio_utente})
 
     try:
@@ -253,29 +249,30 @@ async def genera_risposta_staff(stato: dict, history: list, messaggio_utente: st
             messages=messages,
             tools=ai_tools,
             tool_choice="auto",
-            temperature=0.15,  # Bassa temperatura per la massima aderenza alle istruzioni
-            max_tokens=500
+            temperature=0.1,
+            max_tokens=300  # Token ridotti per costringere l'IA a risposte brevi e repentine
         )
         
         message_out = response.choices[0].message
         
-        # Gestione chiusura autonoma
         if message_out.tool_calls:
             for tool_call in message_out.tool_calls:
-                if tool_call.function.name == "close_ticket":
-                    return {
-                        "testo": "Riconosco la tua richiesta di chiusura. Procedo con l'archiviazione del ticket. Grazie per aver contattato Discord Italia! 👋",
-                        "chiudi_ticket": True
-                    }
+                func_name = tool_call.function.name
+                func_args = json.loads(tool_call.function.arguments)
+                
+                if func_name == "close_ticket":
+                    return {"testo": "Chiudo il ticket. A presto! 👋", "azione": "chiudi", "args": {}}
+                
+                if func_name == "smista_partnership":
+                    return {"testo": "Perfetto! Tutti i dati sono verificati. Pubblico subito la partnership! 🚀", "azione": "smista", "args": func_args}
 
-        return {"testo": message_out.content, "chiudi_ticket": False}
+        return {"testo": message_out.content if message_out.content else "Dimmi pure!", "azione": "nessuna", "args": {}}
         
     except Exception as e:
         print(f"❌ [ERRORE GROQ API]: {e}")
-        return {
-            "testo": "Si è verificato un temporaneo problema tecnico di elaborazione. Per favore, riprova ad inviare il messaggio.",
-            "chiudi_ticket": False
-        }
+        return {"testo": "Ops, c'è stato un piccolo errore. Riprova tra un attimo!", "azione": "nessuna", "args": {}}
+
+
 
 async def genera_embed_staff(guild: discord.Guild) -> discord.Embed:
     roles = [guild.get_role(r_id) for r_id in STAFF_ROLE_IDS]
@@ -497,85 +494,41 @@ async def staff_command(interaction: discord.Interaction):
 # ---------------------------------------------------------
 # 7. GESTIONE MESSAGGI (CORE AI) E AGGIORNAMENTO DB
 # ---------------------------------------------------------
-@bot.event
-async def on_message(message: discord.Message):
-    if message.author.bot or not message.channel.name.startswith("ticket-"): return
-    
-    channel_id = message.channel.id
-    
-    # Recupera i dati da Supabase o li crea se non esistono
-    db_data = await db_get_ticket(channel_id)
-    if not db_data:
-        stato = {"descrizione_partner": None, "link": None, "nome_server": None, "membri": None, "categoria": None, "reciprocita_confermata": False}
-        history = []
-    else:
-        stato = db_data.get("stato", {})
-        history = db_data.get("history", [])
-
-    # Analisi del messaggio per aggiornare lo STATO
-    link_match = re.search(r"discord\.gg\/([a-zA-Z0-9]+)|discord\.com\/invite\/([a-zA-Z0-9]+)", message.content)
-    if link_match and not stato.get("link"):
-        url_completo = f"https://{link_match.group(0)}" if not link_match.group(0).startswith("http") else link_match.group(0)
-        try:
-            invite = await message.bot.fetch_invite(url_completo, with_counts=True)
-            stato["link"] = url_completo
-            stato["nome_server"] = invite.guild.name
-            stato["membri"] = invite.approximate_member_count
-            stato["descrizione_partner"] = message.content
-        except Exception: pass
-
-    testo_utente = message.content.lower()
-    if any(w in testo_utente for w in ["shop", "negozio", "store"]): stato["categoria"] = "Shop"
-    elif any(w in testo_utente for w in ["pc", "computer", "hardware"]): stato["categoria"] = "PC"
-    elif any(w in testo_utente for w in ["community", "generale", "chill"]): stato["categoria"] = "Community"
-    elif any(w in testo_utente for w in ["xbox", "microsoft"]): stato["categoria"] = "Xbox"
-    elif any(w in testo_utente for w in ["playstation", "ps4", "ps5", "sony"]): stato["categoria"] = "PlayStation"
-        
-    if any(p in testo_utente for p in ["fatto", "pubblicato", "postato", "screen", "inviato", "fatta", "confermato"]):
-        if stato.get("link") and stato.get("categoria"):
-            stato["reciprocita_confermata"] = True
-
-    # Aggiorna History locale con il nuovo messaggio dell'utente
-    history.append({"role": "user", "content": message.content})
-
     # Elaborazione IA (se attiva)
     if ATTIVA_IA:
-        risposta_ia = await genera_risposta_staff(stato, history, message.content)
+        risultato_ia = await genera_risposta_staff(stato, history, message.content)
         
-        # Se l'IA ha deciso di invocare il tool close_ticket
-        if risposta_ia.get("chiudi_ticket"):
-            await message.channel.send(content=risposta_ia["testo"])
+        # 1. Se l'IA vuole chiudere il ticket
+        if risultato_ia["azione"] == "chiudi":
+            await message.channel.send(content=risultato_ia["testo"])
             await asyncio.sleep(2)
             await chiudi_ticket_definitivo(message.channel, "AI_Assistant", "L'Assistente IA🤖", message.guild)
             return
 
-        testo_pulito = risposta_ia["testo"]
-        
-        # Parsing completamento manuale
-        match_gestione = re.search(r"\[GESTISCI_PARTNERSHIP: Categoria=(.+), Nome=(.+), CanaleID=(.+)\]", testo_pulito)
-        if match_gestione and stato.get("reciprocita_confermata") and stato.get("descrizione_partner"):
-            cat = match_gestione.group(1).strip()
-            nome = match_gestione.group(2).strip()
-            canale_id_destinazione = int(match_gestione.group(3).strip())
+        # 2. Se l'IA ha attivato il tool di smistamento partnership
+        if risultato_ia["azione"] == "smista" and stato.get("reciprocita_confermata") and stato.get("descrizione_partner"):
+            args = risultato_ia["args"]
+            cat = args.get("categoria")
+            nome = args.get("nome_server")
+            canale_id_destinazione = int(args.get("canale_id", 0))
             
+            # Esegue lo smistamento reale nei canali
             await gestisci_destinazione_partnership(message.guild, nome, cat, stato.get("membri", 0), stato["descrizione_partner"], canale_id_destinazione)
-                
-            testo_pulito = re.sub(r"\[GESTISCI_PARTNERSHIP: .+\]", "", testo_pulito).strip()
-            await message.channel.send(content=testo_pulito)
             
-            embed_log = discord.Embed(title="📋 Log Finale Partnership - Ticket Chiuso", description="Partnership completata con successo.", color=discord.Color.green())
-            await message.channel.send(content="✅ **Partnership pubblicata!**", embed=embed_log)
+            await message.channel.send(content=risultato_ia["testo"])
+            
+            embed_log = discord.Embed(title="📋 Log Finale Partnership - Ticket Chiuso", description="Partnership completata e pubblicata con successo.", color=discord.Color.green())
+            await message.channel.send(content="✅ **Partnership pubblicata nel canale di destinazione!**", embed=embed_log)
+            
             await asyncio.sleep(5)
             await chiudi_ticket_definitivo(message.channel, "AI_Sistema_Partnership", "L'Assistente IA🤖", message.guild)
             return
         
-        testo_pulito = re.sub(r"\[GESTISCI_PARTNERSHIP: .+\]", "", testo_pulito).strip()
-        msg_ia = await message.channel.send(content=testo_pulito)
-        
-        # Aggiungi la risposta dell'IA all'History
+        # 3. Risposta normale interlocutoria dell'IA
+        msg_ia = await message.channel.send(content=risultato_ia["testo"])
         history.append({"role": "assistant", "content": msg_ia.content})
 
-    # Salva sempre Stato e History finali su Supabase
+    # Salva stato e history su Supabase
     await db_upsert_ticket(channel_id, stato, history)
 
 
