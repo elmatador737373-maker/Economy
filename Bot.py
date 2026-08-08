@@ -43,12 +43,12 @@ class CustomBot(commands.Bot):
         super().__init__(command_prefix="!", intents=intents)
 
     async def setup_hook(self):
-        # --- AGGIUNGI QUESTO BLOCCO PER LA PERSISTENZA ---
         # Registra le view per permettere al bot di intercettare i click anche dopo il riavvio
         self.add_view(StaffApplicationView())
         self.add_view(TicketControlView())
         self.add_view(TicketSelectView())
         self.add_view(ClosedTranscriptView())
+        self.add_view(BlacklistApprovalView())
         
         # Sincronizzazione dei comandi slash
         await self.tree.sync()
@@ -61,6 +61,12 @@ STAFF_MGMT_ROLE_ID = 1455297916708192373
 STAFF_GENERAL_ROLE_ID = 1455297926468468777  
 LOG_CHANNEL_ID = 1487393847830122597        
 TICKET_CATEGORY_ID = 1455298169415012547    
+
+# Costanti Blacklist
+CHAN_BL_UTENTI = 1455298385933504686
+CHAN_BL_SERVER = 1455298390173941943
+TAG_STAFF_BL = "<@&1455297933196001411> , <@&1455297952133284022>"
+EMOJI_V4 = "<:V4:1530942846599827502>"
 
 # Lista ufficiale dei ruoli staff con i tuoi ID originali
 STAFF_ROLE_IDS = [
@@ -289,6 +295,113 @@ class StaffApplicationView(discord.ui.View):
     async def open_modal(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(StaffApplicationModal())
 
+# ---------------------------------------------------------
+# GESTIONE RICHIESTA BLACKLIST
+# ---------------------------------------------------------
+class BlacklistRequestModal(discord.ui.Modal, title="📋 RICHIESTA BLACKLIST"):
+    tipo = discord.ui.TextInput(label="📲 TIPO (UTENTE/SERVER)", style=discord.TextStyle.short, required=True)
+    nome_id = discord.ui.TextInput(label="🆔️ NOME UTENTE / SERVER", style=discord.TextStyle.short, required=True)
+    motivo = discord.ui.TextInput(label="❓️ MOTIVO", style=discord.TextStyle.paragraph, required=True)
+    prove = discord.ui.TextInput(label="🖇️ PROVE", style=discord.TextStyle.paragraph, required=True)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        embed = discord.Embed(
+            title=f"{EMOJI_V4} RICHIESTA BLACKLIST {EMOJI_V4}",
+            color=discord.Color.red(),
+            timestamp=discord.utils.utcnow()
+        )
+        embed.add_field(name="📲 | TIPO", value=self.tipo.value, inline=False)
+        embed.add_field(name="🆔️ | NOME UTENTE / SERVER", value=self.nome_id.value, inline=False)
+        embed.add_field(name="❓️ | MOTIVO", value=self.motivo.value, inline=False)
+        embed.add_field(name="🖇️ | PROVE", value=self.prove.value, inline=False)
+        embed.set_footer(text=f"Richiesto da {interaction.user.display_name}", icon_url=interaction.user.display_avatar.url)
+
+        await interaction.response.send_message("✅ Richiesta inviata con successo allo staff!", ephemeral=True)
+        await interaction.channel.send(embed=embed, view=BlacklistApprovalView())
+
+class BlacklistApprovalView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="Accetta come Utente", style=discord.ButtonStyle.green, custom_id="btn_bl_accept_user")
+    async def accept_user(self, interaction: discord.Interaction, button: discord.ui.Button):
+        staff_role = interaction.guild.get_role(STAFF_GENERAL_ROLE_ID)
+        if staff_role not in interaction.user.roles and not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("❌ Solo lo Staff può gestire questa richiesta.", ephemeral=True)
+            return
+
+        message = interaction.message
+        embed_original = message.embeds[0] if message.embeds else None
+        
+        nome_val = "N/A"
+        motivo_val = "N/A"
+        prove_val = "N/A"
+
+        if embed_original:
+            for field in embed_original.fields:
+                if "NOME" in field.name: nome_val = field.value
+                elif "MOTIVO" in field.name: motivo_val = field.value
+                elif "PROVE" in field.name: prove_val = field.value
+
+        chan = interaction.guild.get_channel(CHAN_BL_UTENTI)
+        if not chan:
+            await interaction.response.send_message("❌ Canale Blacklist Utenti non trovato!", ephemeral=True)
+            return
+
+        final_embed = discord.Embed(
+            title=f"{EMOJI_V4} MODULO BLACKLIST UTENTE {EMOJI_V4}",
+            color=discord.Color.red()
+        )
+        final_embed.add_field(name="👤| USERNAME UTENTE:", value=f"> {nome_val}", inline=False)
+        final_embed.add_field(name="🆔️| ID UTENTE:", value=">\n> (Inserire ID)", inline=False)
+        final_embed.add_field(name="❓️| MOTIVO BLACKLIST:", value=f"> {motivo_val}", inline=False)
+        final_embed.add_field(name="🔗| PROVE:", value=f"> {prove_val}", inline=False)
+
+        await chan.send(content=TAG_STAFF_BL, embed=final_embed)
+        await interaction.response.send_message("✅ Approvato e inviato nel canale Blacklist Utenti!", ephemeral=True)
+        await message.edit(view=None) # Disattiva i bottoni dopo l'uso
+
+    @discord.ui.button(label="Accetta come Server", style=discord.ButtonStyle.blurple, custom_id="btn_bl_accept_server")
+    async def accept_server(self, interaction: discord.Interaction, button: discord.ui.Button):
+        staff_role = interaction.guild.get_role(STAFF_GENERAL_ROLE_ID)
+        if staff_role not in interaction.user.roles and not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("❌ Solo lo Staff può gestire questa richiesta.", ephemeral=True)
+            return
+
+        message = interaction.message
+        embed_original = message.embeds[0] if message.embeds else None
+        
+        nome_val = "N/A"
+        motivo_val = "N/A"
+        prove_val = "N/A"
+
+        if embed_original:
+            for field in embed_original.fields:
+                if "NOME" in field.name: nome_val = field.value
+                elif "MOTIVO" in field.name: motivo_val = field.value
+                elif "PROVE" in field.name: prove_val = field.value
+
+        chan = interaction.guild.get_channel(CHAN_BL_SERVER)
+        if not chan:
+            await interaction.response.send_message("❌ Canale Blacklist Server non trovato!", ephemeral=True)
+            return
+
+        final_embed = discord.Embed(
+            title=f"{EMOJI_V4} MODULO BLACKLIST SERVER {EMOJI_V4}",
+            color=discord.Color.red()
+        )
+        final_embed.add_field(name="👥| NOME SERVER:", value=f"> {nome_val}", inline=False)
+        final_embed.add_field(name="🆔️| ID SERVER:", value=">\n> (Inserire ID)", inline=False)
+        final_embed.add_field(name="❓️| MOTIVO BLACKLIST:", value=f"> {motivo_val}", inline=False)
+        final_embed.add_field(name="🔗| PROVE:", value=f"> {prove_val}", inline=False)
+
+        await chan.send(content=TAG_STAFF_BL, embed=final_embed)
+        await interaction.response.send_message("✅ Approvato e inviato nel canale Blacklist Server!", ephemeral=True)
+        await message.edit(view=None) # Disattiva i bottoni dopo l'uso
+
+# ---------------------------------------------------------
+# GESTIONE TRANSCRIPT & CONTROLLO TICKET
+# ---------------------------------------------------------
 class ClosedTranscriptView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -412,6 +525,7 @@ class TicketSelect(discord.ui.Select):
             discord.SelectOption(label="Ticket Generale", description="Assistenza generica", emoji="📩", value="generale"),
             discord.SelectOption(label="Partnership", description="Richieste partnership", emoji="🤝", value="partnership"),
             discord.SelectOption(label="Bando Staff", description="Candidati per lo staff", emoji="📋", value="staff"),
+            discord.SelectOption(label="Richiesta Blacklist", description="Segnala utente o server", emoji="🚫", value="blacklist"),
             discord.SelectOption(label="Amministrazione", description="Supporto direttivo", emoji="👑", value="admin"),
             discord.SelectOption(label="Grafiche & Bot", description="Richieste grafiche o bot", emoji="🎨", value="grafiche_bot"),
         ]
@@ -421,6 +535,10 @@ class TicketSelect(discord.ui.Select):
         category_type = self.values[0]
         guild = interaction.guild
         user = interaction.user
+
+        if category_type == "blacklist":
+            await interaction.response.send_modal(BlacklistRequestModal())
+            return
 
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(read_messages=False),
@@ -454,7 +572,7 @@ class TicketSelectView(discord.ui.View):
 async def setup_ticket(interaction: discord.Interaction):
     embed = discord.Embed(
         title="🇮🇹 Assistenza & Supporto - Discord Italia",
-        description="Seleziona dal menu a tendina la categoria desiderata:\n\n📩 **Generale**\n🤝 **Partnership**\n📋 **Bando Staff**\n👑 **Amministrazione**\n🎨 **Grafiche & Bot**",
+        description="Seleziona dal menu a tendina la categoria desiderata:\n\n📩 **Generale**\n🤝 **Partnership**\n📋 **Bando Staff**\n🚫 **Richiesta Blacklist**\n👑 **Amministrazione**\n🎨 **Grafiche & Bot**",
         color=discord.Color.from_rgb(0, 146, 70)
     )
     embed.set_footer(text="Discord Italia 🇮🇹 • Sistema di Supporto")
