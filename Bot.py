@@ -43,19 +43,16 @@ class CustomBot(commands.Bot):
         super().__init__(command_prefix="!", intents=intents)
 
     async def setup_hook(self):
-        # Sincronizzazione dei comandi slash con Discord
+        # --- AGGIUNGI QUESTO BLOCCO PER LA PERSISTENZA ---
+        # Registra le view per permettere al bot di intercettare i click anche dopo il riavvio
+        self.add_view(StaffApplicationView())
+        self.add_view(TicketControlView())
+        self.add_view(TicketSelectView())
+        self.add_view(ClosedTranscriptView())
+        
+        # Sincronizzazione dei comandi slash
         await self.tree.sync()
-        print("Albero dei comandi sincronizzato con successo.")
-
-    async def on_ready(self):
-        print(f"Logged in as {self.user} (ID: {self.user.id})")
-        if not invia_buongiorno_automatico.is_running():
-            invia_buongiorno_automatico.start()
-        if not invia_buonasera_automatica.is_running():
-            invia_buonasera_automatica.start()
-        if not aggiorna_staff_automatico.is_running():
-            aggiorna_staff_automatico.start()
-        print("✅ Tutti i task automatici sono attivi.")
+        print("✅ Albero dei comandi e Views persistenti registrati con successo.")
 
 # Inizializzazione dell'istanza del bot
 bot = CustomBot()
