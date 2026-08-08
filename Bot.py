@@ -5,6 +5,7 @@ import threading
 import io
 import datetime
 import pytz
+import re
 from flask import Flask
 import discord
 from discord import app_commands
@@ -34,6 +35,12 @@ def keep_alive():
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
+
+# Dizionario globale per la memoria persistente dei ticket
+memoria_ticket = {}
+
+# Sostituisci con l'ID del ruolo staff reale abilitato a reclamare/intervenire
+RUOLO_STAFF_ID = 1455297926468468777
 
 # ---------------------------------------------------------
 # 3. DEFINIZIONE DEL BOT (CustomBot)
@@ -81,7 +88,6 @@ STAFF_ROLE_IDS = [
     1455297933196001411
 ]
 
-# Variabili globali per l'aggiornamento automatico della gerarchia staff
 TARGET_CHANNEL_ID = 0
 TARGET_MESSAGE_ID = 0
 
@@ -135,6 +141,73 @@ MESSAGGI_GIORNI = {
         "colore": "#e74c3c"
     }
 }
+
+# --- FUNZIONE MOTORE IA CON DESCRIZIONE IN PLAIN TEXT ---
+async def genera_risposta_staff(channel: discord.TextChannel, input_prompt: str, stato_corrente: dict) -> str:
+    descrizione_ufficiale_discord_italia = (
+        "🌟 **Benvenuto su Discord Italia!** 🇮🇹\n\n"
+        "Hai finalmente trovato il posto perfetto dove:\n"
+        "→ 💬 Rilassarti e chiacchierare\n"
+        "→ 🤝 Fare partnership con altri server\n"
+        "→ 👥 Conoscere nuove persone\n"
+        "→ 🌐 Entrare in una community italiana attiva e accogliente\n\n"
+        "---\n\n"
+        "🎯 **Questo server è per tutti!**\n"
+        "→ 🎮 Gamer | 📚 Studenti | 🎨 Artisti | 🎥 Content Creator | 🧑‍🤝‍🧑 E chiunque voglia stare in compagnia\n\n"
+        "🔹 **Cosa troverai da noi?**\n"
+        "→ ✨ Canali organizzati per ogni interesse\n"
+        "→ 🤝 Sezioni dedicate a partnership e community\n"
+        "→ 🎮 Stanze gaming sempre attive\n"
+        "→ 🎵 Musica 24/7 con bot\n"
+        "→ 🛠️ Staff disponibile e pronto ad aiutarti\n"
+        "→ 🎨 Spazio creativo (arte, scrittura, video)\n"
+        "→ 🎁 Eventi, giveaway e tante attività\n"
+        "→ 🚀 Accesso semplice e veloce\n\n"
+        "🔗 **Link:** https://discord.gg/discord-talia-1-3k-1348947150641303583"
+    )
+
+    if not stato_corrente["link"] and not stato_corrente["categoria"]:
+        return (
+            f"Grazie per averci presentato il tuo progetto! Dal canto nostro, ecco chi siamo e cosa offriamo:\n\n"
+            f"{descrizione_ufficiale_discord_italia}\n\n"
+            f"Per procedere con la partnership, ti chiedo di inviarci il link d'invito valido del tuo server "
+            f"e di confermarci la categoria di appartenenza (es. Community, Shop, PC)."
+        )
+    
+    elif stato_corrente["link"] and not stato_corrente["reciprocita_confermata"]:
+        return (
+            f"Ho registrato il server **{stato_corrente['nome_server']}** "
+            f"({stato_corrente['membri']} membri). Ottimo progetto!\n\n"
+            f"Ti ricordo che la nostra partnership si basa sulla **regola della reciprocità**: "
+            f"ti chiediamo di pubblicare il nostro invito nel vostro server e di mandarci una conferma o uno screen. "
+            f"Appena fatto, procederemo subito alla creazione del canale dedicato nel nostro network!"
+        )
+    
+    return "Perfetto, sto verificando gli ultimi dettagli per procedere con la ratifica della partnership."
+
+async def crea_canale_partner(guild: discord.Guild, nome_partner: str, categoria_scelta: str):
+    categoria_pulita = categoria_scelta.upper()
+    nome_formattato = nome_partner.strip().replace(" ", "-")
+    
+    if "SHOP" in categoria_pulita:
+        nome_canale = f"🛍️⎱{nome_formattato}"
+    elif "PC" in categoria_pulita:
+        nome_canale = f"💻⎱{nome_formattato}"
+    else:
+        nome_canale = f"🤝⎱{nome_formattato}"
+
+    categoria_server = discord.utils.get(guild.categories, name="PARTNERSHIPS")
+
+    try:
+        nuovo_canale = await guild.create_text_channel(
+            name=nome_canale,
+            category=categoria_server or discord.utils.get(guild.categories, id=TICKET_CATEGORY_ID),
+            reason=f"Partnership ratificata per la categoria: {categoria_scelta}"
+        )
+        return nuovo_canale
+    except Exception as e:
+        print(f"Errore nella creazione del canale stilizzato: {e}")
+        return None
 
 # --- TASK AUTOMATICO BUONGIORNO ---
 @tasks.loop(time=ORARIO_BUONGIORNO)
@@ -207,7 +280,123 @@ async def on_member_join(member: discord.Member):
         await channel.send(content=f"🎉 Benvenuto {member.mention}!", embed=embed)
 
 # ---------------------------------------------------------
-# GESTIONE GERARCHIA STAFF (Il nostro comando personalizzato)
+# GESTIONE APERTURA TICKET & PRIMO MESSAGGIO IA
+# ---------------------------------------------------------
+@bot.event
+async def on_guild_channel_create(channel: discord.abc.GuildChannel):
+    if isinstance(channel, discord.TextChannel) and channel.name.startswith("ticket-"):
+        channel_id = channel.id
+        
+        memoria_ticket[channel_id] = {
+            "link": None,
+            "nome_server": None,
+            "membri": None,
+            "categoria": None,
+            "reciprocita_confermata": False,
+            "staff_intervenuto": False
+        }
+        
+        tipo_ticket = "Generale / Partnership"
+        if "partnership" in channel.name or "partner" in channel.name:
+            tipo_ticket = "Partnership"
+        elif "shop" in channel.name:
+            tipo_ticket = "Shop"
+        elif "pc" in channel.name:
+            tipo_ticket = "PC"
+
+        input_iniziale = (
+            f"[SISTEMA: Il canale è stato appena aperto. Riconosciuto come '{tipo_ticket}'. "
+            f"Presentati ufficialmente come il Responsabile delle Partnership di Discord Italia 🇮🇹, "
+            f"saluta l'utente e chiedi cordialmente la presentazione del suo progetto e il link di invito.]"
+        )
+        
+        saluto_iniziale = await genera_risposta_staff(channel, input_iniziale, memoria_ticket[channel_id])
+        await channel.send(saluto_iniziale)
+
+# ---------------------------------------------------------
+# INTERCETTAZIONE MESSAGGI (Memoria, Anteprima, Claim Staff)
+# ---------------------------------------------------------
+@bot.event
+async def on_message(message: discord.Message):
+    if message.author.bot: return
+    
+    if message.channel.name.startswith("ticket-"):
+        channel_id = message.channel.id
+        
+        if channel_id not in memoria_ticket:
+            memoria_ticket[channel_id] = {
+                "link": None, "nome_server": None, "membri": None, 
+                "categoria": None, "reciprocita_confermata": False, "staff_intervenuto": False
+            }
+        
+        stato = memoria_ticket[channel_id]
+        
+        is_staff = any(role.id == RUOLO_STAFF_ID for role in message.author.roles) if hasattr(message.author, "roles") else False
+        if is_staff or "claim" in message.content.lower() or "staff" in message.content.lower():
+            stato["staff_intervenuto"] = True
+            return
+
+        if stato["staff_intervenuto"]:
+            return
+
+        link_match = re.search(r"discord\.gg\/([a-zA-Z0-9]+)|discord\.com\/invite\/([a-zA-Z0-9]+)", message.content)
+        if link_match and not stato["link"]:
+            url_trovato = link_match.group(0)
+            url_completo = f"https://{url_trovato}" if not url_trovato.startswith("http") else url_trovato
+            try:
+                invite = await message.bot.fetch_invite(url_completo, with_counts=True)
+                stato["link"] = url_completo
+                stato["nome_server"] = invite.guild.name
+                stato["membri"] = invite.approximate_member_count
+            except Exception as e:
+                print(f"Errore nel recupero dell'invito: {e}")
+
+        testo_utente = message.content.lower()
+        if "shop" in testo_utente: stato["categoria"] = "Shop"
+        elif "pc" in testo_utente: stato["categoria"] = "PC"
+        elif "community" in testo_utente: stato["categoria"] = "Community"
+        elif "xbox" in testo_utente: stato["categoria"] = "Xbox"
+        elif "playstation" in testo_utente or "ps4" in testo_utente or "ps5" in testo_utente: stato["categoria"] = "PlayStation"
+            
+        if any(parola in testo_utente for parola in ["fatto", "pubblicato", "postato", "screen", "inviato", "controlla"]):
+            if stato["link"] and stato["categoria"]:
+                stato["reciprocita_confermata"] = True
+
+        dossier_memoria = (
+            f"\n\n[DOSSIER MEMORIA PERSISTENTE - AGGIORNATO IN TEMPO REALE]:\n"
+            f"- Link Server: {stato['link'] or 'Non ancora fornito'}\n"
+            f"- Nome Server (Anteprima): {stato['nome_server'] or 'Sconosciuto'}\n"
+            f"- Membri Totali: {stato['membri'] or 'Non ancora calcolati'}\n"
+            f"- Categoria Rilevata: {stato['categoria'] or 'Non ancora dichiarata'}\n"
+            f"- Reciprocità Confermata: {'SÌ (Pronto per la chiusura)' if stato['reciprocita_confermata'] else 'NO'}\n"
+            f"--------------------------------------------------\n"
+        )
+        
+        input_per_ia = f"Messaggio utente: {message.content} {dossier_memoria}"
+        risposta_ia = await genera_risposta_staff(message.channel, input_per_ia, stato)
+        
+        match_creazione = re.search(r"\[CREA_CANALE: Categoria=(.+), Nome=(.+), CanaleID=(.+)\]", risposta_ia)
+        if match_creazione and stato["reciprocita_confermata"]:
+            cat = match_creazione.group(1).strip()
+            nome = match_creazione.group(2).strip()
+            canale_id_destinazione = int(match_creazione.group(3).strip())
+            
+            await crea_canale_partner(message.guild, nome, cat)
+            
+            canale_target = message.guild.get_channel(canale_id_destinazione)
+            if canale_target:
+                await canale_target.send(f"Nuova partnership ratificata per il network: **{nome}**! 🤝")
+                
+            risposta_pulita = re.sub(r"\[CREA_CANALE: .+\]", "", risposta_ia).strip()
+            await message.reply(risposta_pulita)
+            
+            del memoria_ticket[channel_id]
+        else:
+            risposta_pulita = re.sub(r"\[CREA_CANALE: .+\]", "", risposta_ia).strip()
+            await message.reply(risposta_pulita)
+
+# ---------------------------------------------------------
+# GESTIONE GERARCHIA STAFF
 # ---------------------------------------------------------
 async def genera_embed_staff(guild: discord.Guild) -> discord.Embed:
     roles = [guild.get_role(r_id) for r_id in STAFF_ROLE_IDS]
@@ -359,7 +548,7 @@ class BlacklistApprovalView(discord.ui.View):
 
         await chan.send(content=TAG_STAFF_BL, embed=final_embed)
         await interaction.response.send_message("✅ Approvato e inviato nel canale Blacklist Utenti!", ephemeral=True)
-        await message.edit(view=None) # Disattiva i bottoni dopo l'uso
+        await message.edit(view=None)
 
     @discord.ui.button(label="Accetta come Server", style=discord.ButtonStyle.blurple, custom_id="btn_bl_accept_server")
     async def accept_server(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -397,7 +586,7 @@ class BlacklistApprovalView(discord.ui.View):
 
         await chan.send(content=TAG_STAFF_BL, embed=final_embed)
         await interaction.response.send_message("✅ Approvato e inviato nel canale Blacklist Server!", ephemeral=True)
-        await message.edit(view=None) # Disattiva i bottoni dopo l'uso
+        await message.edit(view=None)
 
 # ---------------------------------------------------------
 # GESTIONE TRANSCRIPT & CONTROLLO TICKET
@@ -506,10 +695,14 @@ class TicketControlView(discord.ui.View):
         if staff_role not in interaction.user.roles and not interaction.user.guild_permissions.administrator:
             await interaction.response.send_message("❌ Solo lo Staff può reclamare i ticket.", ephemeral=True)
             return
+            
+        if interaction.channel.id in memoria_ticket:
+            memoria_ticket[interaction.channel.id]["staff_intervenuto"] = True
+
         button.disabled = True
         button.label = f"Reclamato da {interaction.user.display_name}"
         await interaction.message.edit(view=self)
-        await interaction.response.send_message(embed=discord.Embed(description=f"📌 Preso in carico da {interaction.user.mention}.", color=discord.Color.gold()))
+        await interaction.response.send_message(embed=discord.Embed(description=f"📌 Preso in carico da {interaction.user.mention}. L'assistenza IA è stata disattivata per questo canale.", color=discord.Color.gold()))
 
     @discord.ui.button(label="⏸️ Metti in Attesa", style=discord.ButtonStyle.secondary, custom_id="btn_ticket_hold")
     async def hold_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
