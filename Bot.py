@@ -1,8 +1,14 @@
+import os
 import threading
+from dotenv import load_dotenv
 from flask import Flask
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
+
+# Carica le variabili d'ambiente dal file .env
+load_dotenv()
+TOKEN = os.getenv("DISCORD_TOKEN")
 
 # --- CONFIGURAZIONE SERVER FLASK (Per mantenere il bot attivo) ---
 app = Flask("")
@@ -168,5 +174,5 @@ async def staff_command(interaction: discord.Interaction):
 if __name__ == "__main__":
   # Avvia Flask in background
   keep_alive()
-  # Avvia il bot Discord (inserisci qui il tuo token)
-  bot.run("IL_TUO_TOKEN_DEL_BOT")
+  # Avvia il bot Discord leggendo il token dal file .env
+  bot.run(TOKEN)
