@@ -4,16 +4,19 @@ import datetime
 import pytz
 import threading
 import asyncio
-import openai
+import json
+import io
 from flask import Flask
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
+import openai
+from supabase import create_client, Client
 
 # ---------------------------------------------------------
 # VARIABILE GLOBALE PER ATTIVARE/DISATTIVARE L'IA
 # ---------------------------------------------------------
-ATTIVA_IA = False  # Imposta su False per disattivare completamente l'IA
+ATTIVA_IA = True  # Impostato su True per testare le nuove funzioni
 
 # ---------------------------------------------------------
 # 1. SERVER FLASK INTEGRATO (Keep-Alive)
@@ -40,25 +43,19 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 
-memoria_ticket = {}
-
 STAFF_GENERAL_ROLE_ID = 1455297926468468777  
 TICKET_CATEGORY_ID = 1455298169415012547    
 ID_CANALE_SALUTI = 1455298208413520014
+LOG_CHANNEL_ID = 1487393847830122597
+
 TZ_ITALIA = pytz.timezone("Europe/Rome")
 ORARIO_BUONGIORNO = datetime.time(hour=8, minute=0, second=0, tzinfo=TZ_ITALIA)
 ORARIO_BUONASERA  = datetime.time(hour=21, minute=0, second=0, tzinfo=TZ_ITALIA)
 
 STAFF_ROLE_IDS = [
-    1455297914455986408,
-    1455297915726598370,
-    1500051309808582778,
-    1531229874046631947,
-    1500051544551456861,
-    1500051724877168680,
-    1455297916708192373,
-    1531247431814217828,
-    1455297933196001411,
+    1455297914455986408, 1455297915726598370, 1500051309808582778,
+    1531229874046631947, 1500051544551456861, 1500051724877168680,
+    1455297916708192373, 1531247431814217828, 1455297933196001411,
 ]
 
 TARGET_CHANNEL_ID = 0
@@ -69,8 +66,92 @@ groq_client = openai.OpenAI(
     base_url="https://api.groq.com/openai/v1"
 )
 
+# --- INIZIALIZZAZIONE SUPABASE ---
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+
+if SUPABASE_URL and SUPABASE_KEY:
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+else:
+    supabase = None
+    print("⚠️ [ATTENZIONE]: Credenziali Supabase mancanti. L'IA non potrà salvare lo storico in modo persistente.")
+
+# Funzioni Helper Database
+async def db_get_ticket(channel_id: int):
+    if not supabase: return None
+    try:
+        response = await asyncio.to_thread(lambda: supabase.table("ticket_ai_context").select("*").eq("channel_id", channel_id).execute())
+        return response.data[0] if response.data else None
+    except Exception as e:
+        print(f"❌ [ERRORE DB LETTURA]: {e}")
+        return None
+
+async def db_upsert_ticket(channel_id: int, stato: dict, history: list):
+    if not supabase: return
+    try:
+        await asyncio.to_thread(lambda: supabase.table("ticket_ai_context").upsert({
+            "channel_id": channel_id,
+            "stato": stato,
+            "history": history
+        }).execute())
+    except Exception as e:
+        print(f"❌ [ERRORE DB SCRITTURA]: {e}")
+
+async def db_delete_ticket(channel_id: int):
+    if not supabase: return
+    try:
+        await asyncio.to_thread(lambda: supabase.table("ticket_ai_context").delete().eq("channel_id", channel_id).execute())
+        print(f"🗑️ [SUPABASE]: Dati del ticket {channel_id} eliminati con successo.")
+    except Exception as e:
+        print(f"❌ [ERRORE DB ELIMINAZIONE]: {e}")
+
 # ---------------------------------------------------------
-# 3. DESCRIZIONE UFFICIALE & MOTORE IA CON GROQ
+# 3. SISTEMA UNIFICATO DI CHIUSURA TICKET
+# ---------------------------------------------------------
+async def chiudi_ticket_definitivo(channel: discord.TextChannel, closed_by_name: str, closed_by_mention: str, guild: discord.Guild):
+    print(f"🔒 [TICKET CHIUSO]: Il canale {channel.name} è in fase di chiusura da {closed_by_name}.")
+
+    messages_list = []
+    async for msg in channel.history(limit=150, oldest_first=True):
+        if msg.author.bot and not msg.webhook_id:
+            pass
+        embeds_data = [e.to_dict() for e in msg.embeds]
+        messages_list.append({
+            "author": msg.author.display_name,
+            "avatar_url": str(msg.author.display_avatar.url) if msg.author.display_avatar else None,
+            "content": msg.content,
+            "embeds": embeds_data
+        })
+
+    transcript_data = {
+        "ticket_name": channel.name,
+        "closed_by": closed_by_name,
+        "messages": messages_list
+    }
+
+    file_bytes = io.BytesIO(json.dumps(transcript_data, indent=4, ensure_ascii=False).encode("utf-8"))
+    file = discord.File(file_bytes, filename=f"transcript-{channel.id}.json")
+
+    log_channel = guild.get_channel(LOG_CHANNEL_ID)
+    if log_channel:
+        embed = discord.Embed(
+            title="",
+            description=f"📦 **Transcript Archiviato: {channel.name}**\n\n**Chiuso da:** {closed_by_mention}\nClicca il bottone sottostante per riaprire automaticamente questo ticket.",
+            color=discord.Color.dark_orange()
+        )
+        await log_channel.send(embed=embed, file=file, view=TranscriptReopenView())
+
+    # Pulizia del database Supabase
+    await db_delete_ticket(channel.id)
+
+    try:
+        await channel.delete()
+    except Exception as e:
+        print(f"⚠️ [ERRORE ELIMINAZIONE TICKET]: {e}")
+
+
+# ---------------------------------------------------------
+# 4. DESCRIZIONE UFFICIALE & MOTORE IA CON GROQ (TOOL CALLING)
 # ---------------------------------------------------------
 DESCRIZIONE_UFFICIALE_DISCORD_ITALIA = (
     "🌟 **Benvenuto su Discord Italia!** 🇮🇹\n\n"
@@ -81,68 +162,120 @@ DESCRIZIONE_UFFICIALE_DISCORD_ITALIA = (
     "→ 🌐 Entrare in una community italiana attiva e accogliente\n\n"
     "---\n\n"
     "🎯 **Questo server è per tutti!**\n"
-    "→ 🎮 Gamer | 📚 Studenti | 🎨 Artisti | 🎥 Content Creator | 🧑‍🤝‍🧑 E chiunque voglia stare in compagnia\n\n"
-    "🔹 **Cosa troverai da noi?**\n"
-    "→ ✨ Canali organizzati per ogni interesse\n"
-    "→ 🤝 Sezioni dedicate a partnership e community\n"
-    "→ 🎮 Stanze gaming sempre attive\n"
-    "→ 🎵 Musica 24/7 con bot\n"
-    "→ 🛠️ Staff disponibile e pronto ad aiutarti\n"
-    "→ 🎨 Spazio creativo (arte, scrittura, video)\n"
-    "→ 🎁 Eventi, giveaway e tante attività\n"
-    "→ 🚀 Accesso semplice e veloce\n\n"
     "🔗 **Link:** https://discord.gg/discord-talia-1-3k-1348947150641303583"
 )
 
-async def genera_risposta_staff(stato: dict, messaggio_utente: str) -> str:
+# Definizione del Tool per l'IA
+ai_tools = [
+    {
+        "type": "function",
+        "function": {
+            "name": "close_ticket",
+            "description": "Chiude e archivia il ticket. Usalo ESCLUSIVAMENTE se l'utente richiede esplicitamente di chiudere il ticket o se affermi tu stesso che l'assistenza è terminata.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "reason": {
+                        "type": "string",
+                        "description": "Breve motivo della chiusura (es: 'Richiesto dall'utente')."
+                    }
+                },
+                "required": ["reason"]
+            }
+        }
+    }
+]
+
+
+async def genera_risposta_staff(stato: dict, history: list, messaggio_utente: str) -> dict:
     dossier_riassunto = (
-        f"STATO ATTUALE DEL DOSSIER:\n"
-        f"- Descrizione Partnership Ricevuta: {'SÌ' if stato['descrizione_partner'] else 'MANCANTE (Chiedi all\'utente di incollare qui la descrizione/messaggio di partnership del suo server che contiene il link d\'invito)'}\n"
-        f"- Link Server Estratto: {stato['link'] or 'Non ancora estratto dalla descrizione'}\n"
-        f"- Nome Server: {stato['nome_server'] or 'Sconosciuto'}\n"
-        f"- Membri Totali: {stato['membri'] or 'Non calcolati'}\n"
-        f"- Categoria Scelta: {stato['categoria'] or 'MANCANTE (Chiedi se Shop, PC, Community, Xbox o PlayStation)'}\n"
-        f"- Reciprocità Confermata: {'SÌ' if stato['reciprocita_confermata'] else 'NO (Chiedi la prova o la conferma della pubblicazione)'}"
+        f"STATO ATTUALE DEL DOSSIER PARTNERSHIP:\n"
+        f"- Descrizione Partnership Ricevuta: {'SÌ (Presente)' if stato.get('descrizione_partner') else 'MANCANTE (Chiedi all\'utente di incollare il messaggio di partnership del suo server comprensivo di link d\'invito)'}\n"
+        f"- Link Server Estratto: {stato.get('link') or 'Non estratto'}\n"
+        f"- Nome Server: {stato.get('nome_server') or 'Sconosciuto'}\n"
+        f"- Membri Totali: {stato.get('membri') or 'Non calcolati'}\n"
+        f"- Categoria Scelta: {stato.get('categoria') or 'MANCANTE (Chiedi di scegliere tra: Shop, PC, Community, Xbox o PlayStation)'}\n"
+        f"- Reciprocità Confermata: {'SÌ (Confermata)' if stato.get('reciprocita_confermata') else 'NO (Chiedi conferma o prova di avvenuta pubblicazione della nostra descrizione nel loro server)'}"
     )
 
     system_prompt = (
         "SEI IL RESPONSABILE DI DIREZIONE E DESK DELLE PARTNERSHIPS DI 'DISCORD ITALIA 🇮🇹'.\n"
-        "Il tuo tono è formale, autorevole, impeccabile, estremamente professionale ma umano ed elastico.\n"
-        "REGOLE RIGIDE PER NON RIPETERE LE COSE:\n"
-        "1. Guarda attentamente il DOSSIER ATTUALE. Se un dato è già presente, NON chiederlo mai più.\n"
-        "2. Chiedi esclusivamente ciò che risulta MANCANTE (es. se manca la descrizione di partnership col link, chiedi di inviarla; se manca la categoria, chiedila; se manca la conferma di reciprocità, chiedila).\n"
-        "3. Non reinviare mai la descrizione ufficiale del nostro server (è già stata inviata all'inizio).\n\n"
+        "Il tuo obiettivo è gestire la richiesta di partnership in modo professionale, impeccabile, sintetico e risolutivo.\n\n"
 
-        "=== DATABASE CANALI E FASCE (SMISTAMENTO AUTOMATICO) ===\n"
-        "- **SHOP:** Canale ID `1455298162813046854` (Crea un canale dedicato)\n"
-        "- **PC:** Canale ID `1455298158748897413` (Crea un canale dedicato)\n"
-        "- **COMMUNITY:** \n"
-        "  • 0-600 (`1455298333366292512`) | 600-1500 (`1505914982443778157`) | 1500-2300 (`1455298340588879954`) | 2300-5000 (`1459223502107181180`) | 5k+ (`1497864519433846845`)\n"
-        "- **XBOX:** \n"
-        "  • 0-600 (`1506366880842252299`) | 600-1500 (`1506366972726874182`) | 1500-2300 (`1460365011171151882`) | 2300-5000 (`1487403274658381864`) | 5000+ (`1455298295680204932`)\n"
-        "- **PLAYSTATION:** \n"
-        "  • 0-600 (`1457119066043977973`) | 600-1500 (`1455298305041895604`) | 1500-2300 (`1455298300315046042`) | 2300-5000 (`1485211001719619624`) | 5000+ (`1489956038362009630`)\n\n"
+        "=== REGOLE TASSATIVE PER EVITARE RIPETIZIONI (ZERO STUPIDITÀ) ===\n"
+        "1. ANALISI DELLA MEMORIA: Prima di rispondere, analizza lo 'STATO ATTUALE DEL DOSSIER' e la cronologia messaggi.\n"
+        "   - NON chiedere MAI più un dato se risulta già 'SÌ', 'Presente' o 'Confermata'.\n"
+        "   - Se un dato è già stato fornito dall'utente nei messaggi precedenti, NON richiederlo.\n"
+        "2. EFFICIENZA: Se mancano più dati (es. sia Categoria che Reciprocità), richiedili TUTTI INSIEME in un unico messaggio breve.\n"
+        "3. CHIUSURA SU RICHIESTA: Se l'utente chiede di chiudere la chat, o esprime concetti come 'abbiamo finito', 'puoi chiudere', 'a posto così', invoca IMMEDIATAMENTE il tool 'close_ticket'.\n\n"
 
-        "=== COMANDO FINALE ===\n"
-        "Quando la Descrizione (con link), la Categoria e la Reciprocità sono tutte confermate, concludi la risposta inserendo obbligatoriamente:\n"
+        "=== DATABASE CANALI E SMISTAMENTO AUTOMATICO ===\n"
+        "Usa queste regole per determinare l'ID canale corretto (Z) nel comando finale:\n"
+        "- SHOP: Canale dedicato (usa Z = 0)\n"
+        "- PC: Canale dedicato (usa Z = 0)\n"
+        "- COMMUNITY:\n"
+        "  • 0-600 membri -> ID `1455298333366292512`\n"
+        "  • 600-1500 membri -> ID `1505914982443778157`\n"
+        "  • 1500-2300 membri -> ID `1455298340588879954`\n"
+        "  • 2300-5000 membri -> ID `1459223502107181180`\n"
+        "  • 5000+ membri -> ID `1497864519433846845`\n"
+        "- XBOX:\n"
+        "  • 0-600 membri -> ID `1506366880842252299`\n"
+        "  • 600-1500 membri -> ID `1506366972726874182`\n"
+        "  • 1500-2300 membri -> ID `1460365011171151882`\n"
+        "  • 2300-5000 membri -> ID `1487403274658381864`\n"
+        "  • 5000+ membri -> ID `1455298295680204932`\n"
+        "- PLAYSTATION:\n"
+        "  • 0-600 membri -> ID `1457119066043977973`\n"
+        "  • 600-1500 membri -> ID `1455298305041895604`\n"
+        "  • 1500-2300 membri -> ID `1455298300315046042`\n"
+        "  • 2300-5000 membri -> ID `1485211001719619624`\n"
+        "  • 5000+ membri -> ID `1489956038362009630`\n\n"
+
+        "=== COMANDO FINALE DI RATIFICA ===\n"
+        "Quando Descrizione (col link), Categoria e Reciprocità sono TUTTE confermate (SÌ), concludi la risposta inserendo esattamente questa stringa nell'ultimo rigo:\n"
         "`[GESTISCI_PARTNERSHIP: Categoria=X, Nome=Y, CanaleID=Z]`\n"
-        "(Nota per Z: se la categoria è Shop o PC inserisci l'ID base del canale o lascia 0 perché verrà creato un canale apposito; se è Community, Xbox o PlayStation, calcola l'ID corretto della fascia in base al numero di membri totale)."
+        "(Sostituisci X con la categoria, Y con il nome del server partner e Z con l'ID canale identificato dalla tabella di smistamento sopra o 0 se Shop/PC).\n\n"
+        f"{dossier_riassunto}"
     )
+
+    messages = [{"role": "system", "content": system_prompt}]
+    
+    # Mantiene fino a 12 messaggi recenti per la massima coerenza
+    for msg in history[-12:]:
+        messages.append(msg)
+        
+    messages.append({"role": "user", "content": messaggio_utente})
 
     try:
         response = groq_client.chat.completions.create(
             model="llama-3.3-70b-versatile",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"{dossier_riassunto}\n\nMessaggio utente: {messaggio_utente}"}
-            ],
-            temperature=0.5,
-            max_tokens=600
+            messages=messages,
+            tools=ai_tools,
+            tool_choice="auto",
+            temperature=0.15,  # Bassa temperatura per la massima aderenza alle istruzioni
+            max_tokens=500
         )
-        return response.choices[0].message.content
+        
+        message_out = response.choices[0].message
+        
+        # Gestione chiusura autonoma
+        if message_out.tool_calls:
+            for tool_call in message_out.tool_calls:
+                if tool_call.function.name == "close_ticket":
+                    return {
+                        "testo": "Riconosco la tua richiesta di chiusura. Procedo con l'archiviazione del ticket. Grazie per aver contattato Discord Italia! 👋",
+                        "chiudi_ticket": True
+                    }
+
+        return {"testo": message_out.content, "chiudi_ticket": False}
+        
     except Exception as e:
         print(f"❌ [ERRORE GROQ API]: {e}")
-        return "Vi è stato un piccolo problema tecnico. Ti chiedo di ripetere."
+        return {
+            "testo": "Si è verificato un temporaneo problema tecnico di elaborazione. Per favore, riprova ad inviare il messaggio.",
+            "chiudi_ticket": False
+        }
 
 async def genera_embed_staff(guild: discord.Guild) -> discord.Embed:
     roles = [guild.get_role(r_id) for r_id in STAFF_ROLE_IDS]
@@ -176,17 +309,14 @@ async def genera_embed_staff(guild: discord.Guild) -> discord.Embed:
     return embed
 
 # ---------------------------------------------------------
-# 4. FUNZIONE GESTIONE DESTINAZIONE PARTNERSHIP
+# 5. FUNZIONE GESTIONE DESTINAZIONE PARTNERSHIP
 # ---------------------------------------------------------
 async def gestisci_destinazione_partnership(guild: discord.Guild, nome_partner: str, categoria_scelta: str, membri_totali: int, descrizione_partner: str, canale_id_indicato: int):
     categoria_pulita = categoria_scelta.upper()
-    
-    # Se Shop o PC, creiamo un canale dedicato
     if "SHOP" in categoria_pulita or "PC" in categoria_pulita:
         nome_formattato = nome_partner.strip().replace(" ", "-")
         prefix = "🛍️⎱" if "SHOP" in categoria_pulita else "💻⎱"
         nome_canale = f"{prefix}{nome_formattato}"
-        
         categoria_server = discord.utils.get(guild.categories, name="PARTNERSHIPS")
         try:
             nuovo_canale = await guild.create_text_channel(
@@ -195,27 +325,21 @@ async def gestisci_destinazione_partnership(guild: discord.Guild, nome_partner: 
                 reason=f"Partnership ratificata: {categoria_scelta} ({membri_totali} membri)"
             )
             await nuovo_canale.send(content=descrizione_partner)
-            print(f"✅ [CANALE CREATO & MESSAGGIO INVIATO]: Canale '{nome_canale}' generato e descrizione pubblicata.")
             return nuovo_canale
         except Exception as e:
             print(f"❌ [ERRORE CREAZIONE CANALE]: {e}")
             return None
     else:
-        # Per Community, Xbox o PlayStation, inviamo direttamente nel canale della fascia membri stabilito
         target_channel = guild.get_channel(canale_id_indicato)
         if target_channel:
             await target_channel.send(content=descrizione_partner)
-            print(f"✅ [MESSAGGIO INVIATO IN FASCIA]: Descrizione pubblicata con successo nel canale ID {canale_id_indicato}.")
             return target_channel
-        else:
-            print(f"⚠️ [ERRORE CANALE FASCIA]: Impossibile trovare il canale con ID {canale_id_indicato}.")
-            return None
+        return None
 
 # ---------------------------------------------------------
-# 5. DEFINIZIONE DEL BOT & VIEW PERSISTENTI
+# 6. DEFINIZIONE DEL BOT & VIEW PERSISTENTI
 # ---------------------------------------------------------
 class CustomBot(commands.Bot):
-
   def __init__(self):
     super().__init__(command_prefix="!", intents=intents)
 
@@ -223,103 +347,57 @@ class CustomBot(commands.Bot):
     self.add_view(TicketControlView())
     self.add_view(TicketSelectView())
     self.add_view(TranscriptReopenView())
+    self.add_view(TicketCloseView())
 
-    if not invia_buongiorno_automatico.is_running():
-      invia_buongiorno_automatico.start()
-    if not invia_buonasera_automatica.is_running():
-      invia_buonasera_automatica.start()
-    if not aggiorna_messaggio_automatico.is_running():
-      aggiorna_messaggio_automatico.start()
+    if not invia_buongiorno_automatico.is_running(): invia_buongiorno_automatico.start()
+    if not invia_buonasera_automatica.is_running(): invia_buonasera_automatica.start()
+    if not aggiorna_messaggio_automatico.is_running(): aggiorna_messaggio_automatico.start()
 
     await self.tree.sync()
-    print(
-        "🚀 [BOT READY]: Bot avviato, viste persistenti registrate e comandi"
-        " sincronizzati."
-    )
+    print("🚀 [BOT READY]: Bot avviato, viste persistenti registrate e comandi sincronizzati.")
 
 bot = CustomBot()
 
 class TicketControlView(discord.ui.View):
-    def __init__(self): super().__init__(timeout=None)
-
-import io
-import json
-import discord
-
-# Configura l'ID del canale in cui inviare i log dei ticket chiusi
-LOG_CHANNEL_ID = 1487393847830122597  # Sostituisci con l'ID del canale log
-
+    def __init__(self): 
+        super().__init__(timeout=None)
+        self.add_item(TicketCloseView().children[0])
 
 class TranscriptReopenView(discord.ui.View):
+  def __init__(self): super().__init__(timeout=None)
 
-  def __init__(self):
-    super().__init__(timeout=None)
-
-  @discord.ui.button(
-      label="Riapri Ticket da Transcript",
-      style=discord.ButtonStyle.green,
-      custom_id="btn_reopen_transcript",
-  )
-  async def reopen_ticket(
-      self, interaction: discord.Interaction, button: discord.ui.Button
-  ):
+  @discord.ui.button(label="Riapri Ticket da Transcript", style=discord.ButtonStyle.green, custom_id="btn_reopen_transcript")
+  async def reopen_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
     await interaction.response.defer(ephemeral=True)
-
-    # Cerca il file JSON allegato al messaggio di log
     message = interaction.message
-    if not message.attachments:
-      return await interaction.followup.send(
-          "❌ File di transcript non trovato.", ephemeral=True
-      )
-
+    if not message.attachments: return await interaction.followup.send("❌ File di transcript non trovato.", ephemeral=True)
+    
     attachment = message.attachments[0]
-    if not attachment.filename.endswith(".json"):
-      return await interaction.followup.send(
-          "❌ Il file allegato non è un transcript valido.", ephemeral=True
-      )
-
+    if not attachment.filename.endswith(".json"): return await interaction.followup.send("❌ Il file allegato non è un transcript valido.", ephemeral=True)
+    
     try:
       file_bytes = await attachment.read()
       ticket_data = json.loads(file_bytes.decode("utf-8"))
     except Exception as e:
-      return await interaction.followup.send(
-          f"❌ Errore nella lettura del transcript: {e}", ephemeral=True
-      )
+      return await interaction.followup.send(f"❌ Errore nella lettura del transcript: {e}", ephemeral=True)
 
-    # Crea un nuovo canale per il ticket riaperto
     guild = interaction.guild
     category = message.channel.category  
-    # Fallback se il canale dei log non è nella stessa categoria
     overwrites = {
         guild.default_role: discord.PermissionOverwrite(view_channel=False),
-        interaction.user: discord.PermissionOverwrite(
-            view_channel=True, send_messages=True, read_message_history=True
-        ),
-        guild.me: discord.PermissionOverwrite(
-            view_channel=True,
-            send_messages=True,
-            manage_channels=True,
-            manage_webhooks=True,
-        ),
+        interaction.user: discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True),
+        guild.me: discord.PermissionOverwrite(view_channel=True, send_messages=True, manage_channels=True, manage_webhooks=True),
     }
 
-    new_channel = await guild.create_text_channel(
-        name=f"riaperto-{ticket_data.get('ticket_name', 'ticket')}",
-        category=category,
-        overwrites=overwrites,
-    )
-
-    # Crea o recupera un webhook nel nuovo canale per simulare gli utenti
+    new_channel = await guild.create_text_channel(name=f"riaperto-{ticket_data.get('ticket_name', 'ticket')}", category=category, overwrites=overwrites)
     webhooks = await new_channel.webhooks()
     webhook = webhooks[0] if webhooks else await new_channel.create_webhook(name="Ticket Reopen Simulator")
 
-    # Invia i messaggi salvati simulando gli autori originali tramite webhook
     messages = ticket_data.get("messages", [])
     for msg_data in messages:
       content = msg_data.get("content", "")
       username = msg_data.get("author", "Utente Sconosciuto")
       avatar_url = msg_data.get("avatar_url", None)
-
       if content or msg_data.get("embeds"):
         await webhook.send(
             content=content if content else None,
@@ -328,72 +406,15 @@ class TranscriptReopenView(discord.ui.View):
             embeds=[discord.Embed.from_dict(e) for e in msg_data.get("embeds", [])]
         )
 
-    await interaction.followup.send(
-        f"✅ Ticket riaperto con successo in {new_channel.mention}!", ephemeral=True
-    )
-
+    await interaction.followup.send(f"✅ Ticket riaperto con successo in {new_channel.mention}!", ephemeral=True)
 
 class TicketCloseView(discord.ui.View):
+  def __init__(self): super().__init__(timeout=None)
 
-  def __init__(self):
-    super().__init__(timeout=None)
-
-  @discord.ui.button(
-      label="🔒 Chiudi ed Elimina",
-      style=discord.ButtonStyle.red,
-      custom_id="btn_ticket_close",
-  )
-  async def close_ticket(
-      self, interaction: discord.Interaction, button: discord.ui.Button
-  ):
-    print(
-        f"🔒 [TICKET CHIUSO]: Il canale {interaction.channel.name} è stato"
-        f" chiuso da {interaction.user}."
-    )
-
-    if interaction.channel.id in memoria_ticket:
-      del memoria_ticket[interaction.channel.id]
-
-    # Raccogli la cronologia dei messaggi per il transcript
-    messages_list = []
-    async for message in interaction.channel.history(limit=150, oldest_first=True):
-      if message.author.bot and not message.webhook_id:
-        # Salva anche i messaggi del bot se necessario, o saltali
-        pass
-      
-      embeds_data = [e.to_dict() for e in message.embeds]
-      messages_list.append({
-          "author": message.author.display_name,
-          "avatar_url": str(message.author.display_avatar.url) if message.author.display_avatar else None,
-          "content": message.content,
-          "embeds": embeds_data
-      })
-
-    # Prepara i dati JSON del transcript
-    transcript_data = {
-        "ticket_name": interaction.channel.name,
-        "closed_by": str(interaction.user),
-        "messages": messages_list
-    }
-
-    file_bytes = io.BytesIO(json.dumps(transcript_data, indent=4, ensure_ascii=False).encode("utf-8"))
-    file = discord.File(file_bytes, filename=f"transcript-{interaction.channel.id}.json")
-
-    # Invia il log nel canale apposito
-    log_channel = interaction.guild.get_channel(LOG_CHANNEL_ID)
-    if log_channel:
-      embed = discord.Embed(
-          title="",
-          description=f"📦 **Transcript Archiviato: {interaction.channel.name}**\n\n**Chiuso da:** {interaction.user.mention}\nClicca il bottone sottostante per riaprire automaticamente questo ticket.",
-          color=discord.Color.dark_orange() # O il colore rosso/arancione della tua UI
-      )
-      await log_channel.send(
-          embed=embed,
-          file=file,
-          view=TranscriptReopenView()
-      )
-
-    await interaction.channel.delete()
+  @discord.ui.button(label="🔒 Chiudi ed Elimina", style=discord.ButtonStyle.red, custom_id="btn_ticket_close")
+  async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+    await interaction.response.send_message("🔒 Chiusura del ticket in corso...", ephemeral=True)
+    await chiudi_ticket_definitivo(interaction.channel, str(interaction.user), interaction.user.mention, interaction.guild)
 
 class TicketSelect(discord.ui.Select):
     def __init__(self):
@@ -410,7 +431,6 @@ class TicketSelect(discord.ui.Select):
         category_type = self.values[0]
         guild = interaction.guild
         user = interaction.user
-
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(read_messages=False),
             user: discord.PermissionOverwrite(read_messages=True, send_messages=True, attach_files=True),
@@ -418,247 +438,170 @@ class TicketSelect(discord.ui.Select):
         }
         staff_role = guild.get_role(STAFF_GENERAL_ROLE_ID)
         if staff_role: overwrites[staff_role] = discord.PermissionOverwrite(read_messages=True, send_messages=True, attach_files=True)
-
+        
         category = guild.get_channel(TICKET_CATEGORY_ID)
-        ticket_channel = await guild.create_text_channel(
-            name=f"ticket-{category_type.lower()}-{user.name}", 
-            overwrites=overwrites, 
-            category=category if isinstance(category, discord.CategoryChannel) else None
-        )
+        ticket_channel = await guild.create_text_channel(name=f"ticket-{category_type.lower()}-{user.name}", overwrites=overwrites, category=category if isinstance(category, discord.CategoryChannel) else None)
 
-        print(f"🎫 [APERTURA TICKET]: Creato canale #{ticket_channel.name} (ID: {ticket_channel.id}) per l'utente {user}")
         await interaction.response.send_message(f"✅ Ticket creato: {ticket_channel.mention}", ephemeral=True)
         
-        memoria_ticket[ticket_channel.id] = {
-            "descrizione_partner": None,
-            "link": None,
-            "nome_server": None,
-            "membri": None,
-            "categoria": None,
-            "reciprocita_confermata": False
+        stato_iniziale = {
+            "descrizione_partner": None, "link": None, "nome_server": None, "membri": None, "categoria": None, "reciprocita_confermata": False
         }
+        
+        await db_upsert_ticket(ticket_channel.id, stato_iniziale, [])
 
-        # 1. EMBED DI BENVENUTO NEL TICKET
         embed = discord.Embed(
             title="🇮🇹 Benvenuto - Desk Partnership",
             description="Il nostro staff è stato notificato. Segui le indicazioni dell'assistente.",
             color=discord.Color.from_rgb(0, 146, 70)
         )
         await ticket_channel.send(content=f"<@&{STAFF_GENERAL_ROLE_ID}> | {user.mention}", embed=embed, view=TicketControlView())
-
-        # 2. INVIO DELLA DESCRIZIONE UFFICIALE DI DISCORD ITALIA ALL'APERTURA DEL TICKET
         await ticket_channel.send(content=DESCRIZIONE_UFFICIALE_DISCORD_ITALIA)
 
-        # 3. PRIMO MESSAGGIO DELL'IA (Se attiva)
         if ATTIVA_IA:
-            risposta_iniziale = await genera_risposta_staff(memoria_ticket[ticket_channel.id], "Apertura ticket.")
-            await ticket_channel.send(content=risposta_iniziale)
+            risposta_iniziale = await genera_risposta_staff(stato_iniziale, [], "Apertura ticket.")
+            msg_sent = await ticket_channel.send(content=risposta_iniziale["testo"])
+            
+            # Inizializza History
+            history_iniziale = [
+                {"role": "user", "content": "Apertura ticket."},
+                {"role": "assistant", "content": msg_sent.content}
+            ]
+            await db_upsert_ticket(ticket_channel.id, stato_iniziale, history_iniziale)
         else:
-            await ticket_channel.send(content="🤖 L'assistente IA è attualmente disattivato. Uno staffer ti risponderà al più presto.")
+            await ticket_channel.send(content="🤖 L'assistente IA è disattivato. Uno staffer ti risponderà a breve.")
 
 class TicketSelectView(discord.ui.View):
     def __init__(self): super().__init__(timeout=None); self.add_item(TicketSelect())
 
-@bot.tree.command(name="setup_ticket", description="Invia il pannello principale avanzato dei Ticket (Solo Admin)")
+@bot.tree.command(name="setup_ticket", description="Invia il pannello principale avanzato dei Ticket")
 @app_commands.checks.has_permissions(administrator=True)
 async def setup_ticket(interaction: discord.Interaction):
-    await interaction.response.send_message("✅ Pannello avanzato in invio...", ephemeral=True)
-    
+    await interaction.response.send_message("✅ Pannello inviato", ephemeral=True)
     embed = discord.Embed(
         title="🇮🇹 Assistenza & Supporto Ufficiale - Discord Italia",
-        description=(
-            "Benvenuto nel centro assistenza di **Discord Italia**. "
-            "Se hai bisogno di supporto, vuoi proporre una partnership o candidarti nello staff, "
-            "puoi aprire un ticket dedicato selezionando l'opzione corretta dal menu sottostante.\n\n"
-            "### 📌 Categorie Disponibili:\n"
-            "📩 **Ticket Generale**\n"
-            "└ *Per qualsiasi dubbio, domanda generale o assistenza sul server.*\n\n"
-            "🤝 **Partnership**\n"
-            "└ *Per richiedere una partnership ufficiale con il tuo server Discord.*\n\n"
-            "📋 **Bando Staff**\n"
-            "└ *Per inviare la tua candidatura ed entrare a far parte del nostro team.*\n\n"
-            "👑 **Amministrazione**\n"
-            "└ *Per questioni urgenti, importanti o comunicazioni dirette con i vertici.*\n\n"
-            "🎨 **Grafiche & Bot**\n"
-            "└ *Per richieste inerenti a grafiche personalizzate, banner o supporto bot.*\n\n"
-            "⚠️ **Nota Importante:**\n"
-            "• Apri un ticket solo se strettamente necessario.\n"
-            "• Mantieni sempre un comportamento educato e rispettoso con lo staff."
-        ),
-        color=discord.Color.from_rgb(0, 146, 70)
+        description="Seleziona la categoria di assistenza.", color=discord.Color.from_rgb(0, 146, 70)
     )
-    embed.set_footer(text="Discord Italia • Sistema di Supporto Automatico", icon_url=interaction.guild.icon.url if interaction.guild.icon else None)
-    
     await interaction.channel.send(embed=embed, view=TicketSelectView())
-    print(f"📢 [PANNELLO INVIATO]: Pannello avanzato dei ticket pubblicato da {interaction.user} in #{interaction.channel.name}")
 
-
-@bot.tree.command(name="staff", description="Invia la gerarchia dello staff e avvia l'aggiornamento in tempo reale.")
+@bot.tree.command(name="staff", description="Invia la gerarchia dello staff")
 @app_commands.default_permissions(administrator=True)
 async def staff_command(interaction: discord.Interaction):
     await interaction.response.defer(thinking=True)
-    guild = interaction.guild
-    embed = await genera_embed_staff(guild)
+    embed = await genera_embed_staff(interaction.guild)
     msg = await interaction.followup.send(embed=embed)
-
     global TARGET_CHANNEL_ID, TARGET_MESSAGE_ID
-    TARGET_CHANNEL_ID = interaction.channel.id
-    TARGET_MESSAGE_ID = msg.id
-
-    await interaction.followup.send(
-        "✅ Gerarchia generata con successo! Questo messaggio si aggiornerà automaticamente in tempo reale.",
-        ephemeral=True,
-    )
+    TARGET_CHANNEL_ID, TARGET_MESSAGE_ID = interaction.channel.id, msg.id
+    await interaction.followup.send("✅ Gerarchia generata!", ephemeral=True)
 
 # ---------------------------------------------------------
-# 6. GESTIONE MESSAGGI & LOG DETTAGLIATI DEL DOSSIER TICKET
+# 7. GESTIONE MESSAGGI (CORE AI) E AGGIORNAMENTO DB
 # ---------------------------------------------------------
 @bot.event
 async def on_message(message: discord.Message):
     if message.author.bot or not message.channel.name.startswith("ticket-"): return
     
     channel_id = message.channel.id
-    if channel_id not in memoria_ticket:
-        memoria_ticket[channel_id] = {
-            "descrizione_partner": None, "link": None, "nome_server": None, "membri": None, "categoria": None, "reciprocita_confermata": False
-        }
     
-    stato = memoria_ticket[channel_id]
-    
+    # Recupera i dati da Supabase o li crea se non esistono
+    db_data = await db_get_ticket(channel_id)
+    if not db_data:
+        stato = {"descrizione_partner": None, "link": None, "nome_server": None, "membri": None, "categoria": None, "reciprocita_confermata": False}
+        history = []
+    else:
+        stato = db_data.get("stato", {})
+        history = db_data.get("history", [])
+
+    # Analisi del messaggio per aggiornare lo STATO
     link_match = re.search(r"discord\.gg\/([a-zA-Z0-9]+)|discord\.com\/invite\/([a-zA-Z0-9]+)", message.content)
-    if link_match and not stato["link"]:
-        url_trovato = link_match.group(0)
-        url_completo = f"https://{url_trovato}" if not url_trovato.startswith("http") else url_trovato
+    if link_match and not stato.get("link"):
+        url_completo = f"https://{link_match.group(0)}" if not link_match.group(0).startswith("http") else link_match.group(0)
         try:
             invite = await message.bot.fetch_invite(url_completo, with_counts=True)
             stato["link"] = url_completo
             stato["nome_server"] = invite.guild.name
             stato["membri"] = invite.approximate_member_count
             stato["descrizione_partner"] = message.content
-            print(f"🔗 [LOG TICKET - DESCRIZIONE & LINK TROVATI]: Server '{invite.guild.name}' ({invite.approximate_member_count} membri) | URL: {url_completo}")
-        except Exception as e:
-            print(f"⚠️ [LOG TICKET - ERRORE FETCH INVITE]: Impossibile analizzare il link {url_completo}: {e}")
+        except Exception: pass
 
     testo_utente = message.content.lower()
-    
-    if any(w in testo_utente for w in ["shop", "negozio", "store"]):
-        stato["categoria"] = "Shop"
-        print(f"📂 [LOG TICKET - CATEGORIA]: Rilevata e impostata su 'Shop'")
-    elif any(w in testo_utente for w in ["pc", "computer", "hardware"]):
-        stato["categoria"] = "PC"
-        print(f"📂 [LOG TICKET - CATEGORIA]: Rilevata e impostata su 'PC'")
-    elif any(w in testo_utente for w in ["community", "generale", "chill"]):
-        stato["categoria"] = "Community"
-        print(f"📂 [LOG TICKET - CATEGORIA]: Rilevata e impostata su 'Community'")
-    elif any(w in testo_utente for w in ["xbox", "microsoft"]):
-        stato["categoria"] = "Xbox"
-        print(f"📂 [LOG TICKET - CATEGORIA]: Rilevata e impostata su 'Xbox'")
-    elif any(w in testo_utente for w in ["playstation", "ps4", "ps5", "sony"]):
-        stato["categoria"] = "PlayStation"
-        print(f"📂 [LOG TICKET - CATEGORIA]: Rilevata e impostata su 'PlayStation'")
+    if any(w in testo_utente for w in ["shop", "negozio", "store"]): stato["categoria"] = "Shop"
+    elif any(w in testo_utente for w in ["pc", "computer", "hardware"]): stato["categoria"] = "PC"
+    elif any(w in testo_utente for w in ["community", "generale", "chill"]): stato["categoria"] = "Community"
+    elif any(w in testo_utente for w in ["xbox", "microsoft"]): stato["categoria"] = "Xbox"
+    elif any(w in testo_utente for w in ["playstation", "ps4", "ps5", "sony"]): stato["categoria"] = "PlayStation"
         
     if any(p in testo_utente for p in ["fatto", "pubblicato", "postato", "screen", "inviato", "fatta", "confermato"]):
-        if stato["link"] and stato["categoria"]:
+        if stato.get("link") and stato.get("categoria"):
             stato["reciprocita_confermata"] = True
-            print(f"✅ [LOG TICKET - RECIPROCITÀ]: Confermata dall'utente nel canale #{message.channel.name}!")
 
-    print(f"📊 [LOG TICKET - STATO CORRENTE] (Canale ID: {channel_id}): {stato}")
+    # Aggiorna History locale con il nuovo messaggio dell'utente
+    history.append({"role": "user", "content": message.content})
 
-    # Se l'IA è disattivata, non generiamo risposte automatiche basate su di essa
-    if not ATTIVA_IA:
-        return
-
-    risposta_ia = await genera_risposta_staff(stato, message.content)
-    
-    match_gestione = re.search(r"\[GESTISCI_PARTNERSHIP: Categoria=(.+), Nome=(.+), CanaleID=(.+)\]", risposta_ia)
-    if match_gestione and stato["reciprocita_confermata"] and stato["descrizione_partner"]:
-        cat = match_gestione.group(1).strip()
-        nome = match_gestione.group(2).strip()
-        canale_id_destinazione = int(match_gestione.group(3).strip())
+    # Elaborazione IA (se attiva)
+    if ATTIVA_IA:
+        risposta_ia = await genera_risposta_staff(stato, history, message.content)
         
-        print(f"🎯 [LOG TICKET - COMPLETAMENTO]: Tutti i dati verificati. Invio descrizione partner nella destinazione corretta...")
-        await gestisci_destinazione_partnership(message.guild, nome, cat, stato["membri"] or 0, stato["descrizione_partner"], canale_id_destinazione)
+        # Se l'IA ha deciso di invocare il tool close_ticket
+        if risposta_ia.get("chiudi_ticket"):
+            await message.channel.send(content=risposta_ia["testo"])
+            await asyncio.sleep(2)
+            await chiudi_ticket_definitivo(message.channel, "AI_Assistant", "L'Assistente IA🤖", message.guild)
+            return
+
+        testo_pulito = risposta_ia["testo"]
+        
+        # Parsing completamento manuale
+        match_gestione = re.search(r"\[GESTISCI_PARTNERSHIP: Categoria=(.+), Nome=(.+), CanaleID=(.+)\]", testo_pulito)
+        if match_gestione and stato.get("reciprocita_confermata") and stato.get("descrizione_partner"):
+            cat = match_gestione.group(1).strip()
+            nome = match_gestione.group(2).strip()
+            canale_id_destinazione = int(match_gestione.group(3).strip())
             
-        risposta_pulita = re.sub(r"\[GESTISCI_PARTNERSHIP: .+\]", "", risposta_ia).strip()
-        await message.channel.send(content=risposta_pulita)
-        
-        embed_log = discord.Embed(
-            title="📋 Log Finale Partnership - Ticket Chiuso",
-            description="Tutte le fasi della partnership sono state completate con successo.",
-            color=discord.Color.green(),
-            timestamp=discord.utils.utcnow()
-        )
-        embed_log.add_field(name="Nome Server", value=str(stato['nome_server']), inline=True)
-        embed_log.add_field(name="Membri", value=str(stato['membri']), inline=True)
-        embed_log.add_field(name="Categoria", value=str(stato['categoria']), inline=True)
-        embed_log.add_field(name="Link Server", value=str(stato['link']), inline=False)
-        
-        await message.channel.send(content="✅ **Partnership completata e pubblicata!** Ecco il log definitivo del dossier:", embed=embed_log)
-        
-        if channel_id in memoria_ticket:
-            del memoria_ticket[channel_id]
+            await gestisci_destinazione_partnership(message.guild, nome, cat, stato.get("membri", 0), stato["descrizione_partner"], canale_id_destinazione)
+                
+            testo_pulito = re.sub(r"\[GESTISCI_PARTNERSHIP: .+\]", "", testo_pulito).strip()
+            await message.channel.send(content=testo_pulito)
             
-        print(f"🗑️ [LOG TICKET - ARCHIVIAZIONE]: Ticket {channel_id} completato, log inviato. Chiusura canale in corso...")
+            embed_log = discord.Embed(title="📋 Log Finale Partnership - Ticket Chiuso", description="Partnership completata con successo.", color=discord.Color.green())
+            await message.channel.send(content="✅ **Partnership pubblicata!**", embed=embed_log)
+            await asyncio.sleep(5)
+            await chiudi_ticket_definitivo(message.channel, "AI_Sistema_Partnership", "L'Assistente IA🤖", message.guild)
+            return
         
-        await asyncio.sleep(5)
-        try:
-            await message.channel.delete()
-        except Exception as e:
-            print(f"⚠️ [ERRORE ELIMINAZIONE TICKET]: {e}")
-    else:
-        risposta_pulita = re.sub(r"\[GESTISCI_PARTNERSHIP: .+\]", "", risposta_ia).strip()
-        await message.channel.send(content=risposta_pulita)
+        testo_pulito = re.sub(r"\[GESTISCI_PARTNERSHIP: .+\]", "", testo_pulito).strip()
+        msg_ia = await message.channel.send(content=testo_pulito)
+        
+        # Aggiungi la risposta dell'IA all'History
+        history.append({"role": "assistant", "content": msg_ia.content})
+
+    # Salva sempre Stato e History finali su Supabase
+    await db_upsert_ticket(channel_id, stato, history)
+
 
 # ---------------------------------------------------------
-# 7. TASK AUTOMATICI (Saluti e Gerarchia)
+# 8. TASK AUTOMATICI
 # ---------------------------------------------------------
 @tasks.loop(minutes=10)
 async def aggiorna_messaggio_automatico():
-    if not bot.is_ready():
-        return
-    if TARGET_CHANNEL_ID == 0 or TARGET_MESSAGE_ID == 0:
-        return
-
+    if not bot.is_ready() or TARGET_CHANNEL_ID == 0: return
     for guild in bot.guilds:
         try:
             channel = guild.get_channel(TARGET_CHANNEL_ID)
             if channel:
                 message = await channel.fetch_message(TARGET_MESSAGE_ID)
-                new_embed = await genera_embed_staff(guild)
-                await message.edit(embed=new_embed)
-                print(f"[{discord.utils.utcnow()}] Embed staff aggiornato con successo!")
-        except discord.NotFound:
-            print("Impossibile trovare il messaggio o il canale da aggiornare.")
-        except Exception as e:
-            print(f"Errore durante l'aggiornamento automatico: {e}")
+                await message.edit(embed=await genera_embed_staff(guild))
+        except: pass
 
 @tasks.loop(time=ORARIO_BUONGIORNO)
 async def invia_buongiorno_automatico():
     canale = bot.get_channel(ID_CANALE_SALUTI)
-    if not canale: return
-    ora_attuale = datetime.datetime.now(TZ_ITALIA)
-    embed = discord.Embed(
-        title="🇮🇹 ☕ Buon Inizio Giornata!",
-        description="Un caffè e si parte su Discord Italia 🇮🇹!",
-        color=discord.Color.from_str("#5865F2"),
-        timestamp=ora_attuale
-    )
-    await canale.send(content="@everyone", embed=embed, allowed_mentions=discord.AllowedMentions(everyone=True))
-    print("🌅 [TASK]: Messaggio del buongiorno inviato con successo.")
+    if canale: await canale.send(content="@everyone", embed=discord.Embed(title="🇮🇹 ☕ Buon Inizio Giornata!", description="Un caffè e si parte su Discord Italia 🇮🇹!", color=discord.Color.from_str("#5865F2"), timestamp=datetime.datetime.now(TZ_ITALIA)), allowed_mentions=discord.AllowedMentions(everyone=True))
 
 @tasks.loop(time=ORARIO_BUONASERA)
 async def invia_buonasera_automatica():
     canale = bot.get_channel(ID_CANALE_SALUTI)
-    if not canale: return
-    ora_attuale = datetime.datetime.now(TZ_ITALIA)
-    embed = discord.Embed(
-        title="🇮🇹 🌙 Buonasera Community!",
-        description="La serata su Discord Italia è nel vivo!",
-        color=discord.Color.from_str("#2b2d31"),
-        timestamp=ora_attuale
-    )
-    await canale.send(content="@everyone", embed=embed, allowed_mentions=discord.AllowedMentions(everyone=True))
-    print("🌃 [TASK]: Messaggio della buonasera inviato con successo.")
+    if canale: await canale.send(content="@everyone", embed=discord.Embed(title="🇮🇹 🌙 Buonasera Community!", description="La serata su Discord Italia è nel vivo!", color=discord.Color.from_str("#2b2d31"), timestamp=datetime.datetime.now(TZ_ITALIA)), allowed_mentions=discord.AllowedMentions(everyone=True))
 
 # ---------------------------------------------------------
 # AVVIO FINALE
@@ -666,7 +609,5 @@ async def invia_buonasera_automatica():
 if __name__ == "__main__":
     keep_alive()
     TOKEN = os.environ.get("DISCORD_TOKEN")
-    if TOKEN:
-        bot.run(TOKEN)
-    else:
-        print("❌ [ERRORE CRITICO]: Inserisci il DISCORD_TOKEN nelle variabili d'ambiente!")
+    if TOKEN: bot.run(TOKEN)
+    else: print("❌ [ERRORE CRITICO]: Inserisci il DISCORD_TOKEN!")
