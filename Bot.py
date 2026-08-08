@@ -393,7 +393,11 @@ class TranscriptReopenView(discord.ui.View):
     messages = ticket_data.get("messages", [])
     for msg_data in messages:
       content = msg_data.get("content", "")
-      username = msg_data.get("author", "Utente Sconosciuto")
+      raw_username = msg_data.get("author", "Utente Sconosciuto")
+      
+      # 🛡️ PULIZIA ANTI-ERRORE DISCORD: Impedisce il blocco se l'username contiene "discord"
+      username = raw_username.replace("discord", "Utente").replace("Discord", "Utente")
+      
       avatar_url = msg_data.get("avatar_url", None)
       if content or msg_data.get("embeds"):
         await webhook.send(
