@@ -13,7 +13,7 @@ from discord.ext import commands, tasks
 # ---------------------------------------------------------
 # VARIABILE GLOBALE PER ATTIVARE/DISATTIVARE L'IA
 # ---------------------------------------------------------
-ATTIVA_IA = False  # Imposta su False per disattivare completamente l'IA
+ATTIVA_IA = True  # Imposta su False per disattivare completamente l'IA
 
 # ---------------------------------------------------------
 # 1. SERVER FLASK INTEGRATO (Keep-Alive)
@@ -174,60 +174,6 @@ async def genera_embed_staff(guild: discord.Guild) -> discord.Embed:
         embed.add_field(name=f"➤ {role.mention}", value=value_text, inline=False)
 
     return embed
-
-@bot.tree.command(name="manutenzione_totale", description="Rimuove ruoli 1/2 e assegna il ruolo di manutenzione specifico a tutti gli utenti (Solo Admin)")
-@app_commands.default_permissions(administrator=True)
-async def manutenzione_totale(interaction: discord.Interaction, ruolo1: discord.Role, ruolo2: discord.Role):
-    await interaction.response.defer(thinking=True)
-    guild = interaction.guild
-    
-    # ID del ruolo esistente fornito
-    ruolo_manutenzione_id = 1535662068349411398
-    ruolo_manutenzione = guild.get_role(ruolo_manutenzione_id)
-
-    if not ruolo_manutenzione:
-        await interaction.followup.send(f"❌ Errore: Non riesco a trovare il ruolo con ID {ruolo_manutenzione_id}. Controlla che il bot sia nel server.", ephemeral=True)
-        return
-
-    contatore_utenti = 0
-
-    # 1. Ciclo su tutti i membri del server
-    for membro in guild.members:
-        # Salta i bot
-        if membro.bot:
-            continue
-            
-        try:
-            # Rimuove i ruoli specificati se l'utente li ha
-            if ruolo1 in membro.roles:
-                await membro.remove_roles(ruolo1, reason="Manutenzione totale")
-            if ruolo2 in membro.roles:
-                await membro.remove_roles(ruolo2, reason="Manutenzione totale")
-            
-            # Aggiunge il ruolo di manutenzione esistente
-            if ruolo_manutenzione not in membro.roles:
-                await membro.add_roles(ruolo_manutenzione, reason="Manutenzione totale")
-                contatore_utenti += 1
-        except Exception as e:
-            print(f"Errore su {membro.name}: {e}")
-
-    # 2. Configurazione permessi canali per il ruolo esistente
-    canali_configurati = 0
-    for canale in guild.channels:
-        # Cerca i canali che contengono i nomi indicati
-        if any(x in canale.name.lower() for x in ["changelog manutenzione", "annunci manutenzione"]):
-            try:
-                await canale.set_permissions(ruolo_manutenzione, read_messages=True, send_messages=True)
-                canali_configurati += 1
-            except Exception as e:
-                print(f"⚠️ Errore permessi canale {canale.name}: {e}")
-
-    await interaction.followup.send(
-        f"✅ Operazione completata!\n"
-        f"- {contatore_utenti} utenti aggiornati.\n"
-        f"- Ruolo usato: {ruolo_manutenzione.mention}\n"
-        f"- Canali configurati: {canali_configurati}"
-    )
 
 # ---------------------------------------------------------
 # 4. FUNZIONE GESTIONE DESTINAZIONE PARTNERSHIP
