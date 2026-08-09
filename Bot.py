@@ -55,9 +55,9 @@ LOG_CHANNEL_ID = 1487393847830122597
 # Lista dei ruoli da assegnare a verifica completata (sostituisci con i veri ID)
 VERIFIED_ROLE_IDS = [0]  
 
-# Banner personalizzati da ImgBB
-BANNER_URL = "https://i.ibb.co/Y77ntTkH/giphy.gif"
-BANNER_VERIFICA_URL = "https://i.ibb.co/M5c1ty2W/298087-E6-C4-DB-42-C8-82-E9-3-A637-AD0-E4-DA.png"
+# Nomi dei file locali presenti nella stessa cartella del bot
+NOME_FILE_BANNER = "giphy.gif"
+NOME_FILE_BANNER_VERIFICA = "verifica.png"  # Sostituisci con il nome esatto del file immagine nella cartella
 
 TZ_ZONA = pytz.timezone("Europe/Rome")
 ORARIO_BUONGIORNO = datetime.time(hour=8, minute=0, second=0, tzinfo=TZ_ZONA)
@@ -567,8 +567,12 @@ async def on_member_join(member: discord.Member):
             color=discord.Color.from_str("#10b981"),
             timestamp=datetime.datetime.now(TZ_ZONA)
         )
-        embed.set_image(url=BANNER_URL)
-        await canale.send(content=f"{member.mention}", embed=embed)
+        file_banner = None
+        if os.path.exists(NOME_FILE_BANNER):
+            file_banner = discord.File(NOME_FILE_BANNER, filename="banner.gif")
+            embed.set_image(url="attachment://banner.gif")
+            
+        await canale.send(content=f"{member.mention}", embed=embed, file=file_banner)
 
 @bot.tree.command(name="setup_ticket", description="Invia il pannello principale avanzato dei Ticket")
 @app_commands.checks.has_permissions(administrator=True)
@@ -583,15 +587,24 @@ async def setup_ticket(interaction: discord.Interaction):
 @bot.tree.command(name="setup_verifica", description="Invia il pannello di verifica con Captcha nel canale corrente")
 @app_commands.checks.has_permissions(administrator=True)
 async def setup_verifica(interaction: discord.Interaction):
-    await interaction.response.send_message("✅ Pannello di verifica inviato con successo!", ephemeral=True)
     embed = discord.Embed(
         title="🛡️ Verifica della Community — Global Roleplay Lounge",
         description="Per accedere a tutti i canali del server e sbloccare l'accesso alla community, devi completare la verifica anti-bot cliccando sul pulsante sottostante.",
         color=discord.Color.from_str("#10b981")
     )
-    embed.set_image(url=BANNER_VERIFICA_URL)
     embed.set_footer(text="Sistema di sicurezza automatico")
-    await interaction.channel.send(embed=embed, view=VerificationView())
+    
+    file_verifica = None
+    if os.path.exists(NOME_FILE_BANNER_VERIFICA):
+        file_verifica = discord.File(NOME_FILE_BANNER_VERIFICA, filename="verifica.png")
+        embed.set_image(url="attachment://verifica.png")
+
+    if file_verifica:
+        await interaction.channel.send(embed=embed, file=file_verifica, view=VerificationView())
+    else:
+        await interaction.channel.send(embed=embed, view=VerificationView())
+        
+    await interaction.response.send_message("✅ Pannello di verifica inviato con successo!", ephemeral=True)
 
 @bot.tree.command(name="staff", description="Invia la gerarchia dello staff")
 @app_commands.default_permissions(administrator=True)
