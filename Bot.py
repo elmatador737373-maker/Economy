@@ -118,6 +118,23 @@ async def db_delete_ticket(channel_id: int):
     except Exception as e:
         print(f"❌ [ERRORE DB ELIMINAZIONE]: {e}")
 
+# ---------------------------------------------------------
+# FUNZIONI DI LOG E ARCHIVIAZIONE TRAMITE WEBHOOK
+# ---------------------------------------------------------
+async def log_ticket_apertura(guild: discord.Guild, channel: discord.TextChannel, user: discord.Member, categoria: str):
+    log_channel = guild.get_channel(LOG_CHANNEL_ID)
+    if log_channel:
+        embed = discord.Embed(
+            title="📂 Nuovo Ticket Aperto",
+            description=f"Un utente ha aperto un nuovo ticket di supporto.",
+            color=discord.Color.green(),
+            timestamp=discord.utils.utcnow()
+        )
+        embed.add_field(name="Canale", value=channel.mention, inline=True)
+        embed.add_field(name="Utente", value=f"{user.mention} (`{user.id}`)", inline=True)
+        embed.add_field(name="Categoria", value=f"`{categoria}`", inline=True)
+        await log_channel.send(embed=embed)
+
 async def chiudi_ticket_definitivo(channel: discord.TextChannel, closed_by_name: str, closed_by_mention: str, guild: discord.Guild):
     messages_list = []
     async for msg in channel.history(limit=150, oldest_first=True):
@@ -141,10 +158,39 @@ async def chiudi_ticket_definitivo(channel: discord.TextChannel, closed_by_name:
     log_channel = guild.get_channel(LOG_CHANNEL_ID)
     if log_channel:
         embed = discord.Embed(
-            description=f"📦 **Transcript Archiviato: {channel.name}**\n\n**Chiuso da:** {closed_by_mention}\nClicca il bottone sottostante per riaprire automaticamente questo ticket.",
-            color=discord.Color.dark_orange()
+            title="🔒 Ticket Chiuso ed Archiviato",
+            description=f"Il ticket **`{channel.name}`** è stato chiuso da {closed_by_mention}.\n\n📜 **Cronologia Messaggi Ricostruita (Webhook):**",
+            color=discord.Color.dark_orange(),
+            timestamp=discord.utils.utcnow()
         )
-        await log_channel.send(embed=embed, file=file, view=TranscriptReopenView())
+        await log_channel.send(embed=embed)
+
+        webhooks = await log_channel.webhooks()
+        webhook = webhooks[0] if webhooks else await log_channel.create_webhook(name="Global RP Transcript Bot")
+
+        for msg_data in messages_list:
+            content = msg_data.get("content", "")
+            raw_username = msg_data.get("author", "Utente Sconosciuto")
+            username = raw_username.replace("discord", "Utente").replace("Discord", "Utente")
+            avatar_url = msg_data.get("avatar_url", None)
+            embeds_list = [discord.Embed.from_dict(e) for e in msg_data.get("embeds", [])]
+
+            if content or embeds_list:
+                try:
+                    await webhook.send(
+                        content=content if content else None,
+                        username=username,
+                        avatar_url=avatar_url,
+                        embeds=embeds_list
+                    )
+                except Exception as e:
+                    print(f"⚠️ [ERRORE INVIO WEBHOOK TRANSCRIPT]: {e}")
+
+        final_embed = discord.Embed(
+            description="📦 **File JSON di Backup e Ripristino Rapido**",
+            color=discord.Color.dark_teal()
+        )
+        await log_channel.send(embed=final_embed, file=file, view=TranscriptReopenView())
 
     await db_delete_ticket(channel.id)
     try:
@@ -267,7 +313,7 @@ async def genera_embed_staff(guild: discord.Guild) -> discord.Embed:
     return embed
 
 # ---------------------------------------------------------
-# 5. MODALE PER L'INSERIMENTO DEL CODICE CAPTCHA (Ruoli Multipli)
+# 5. MODALI E VIEW PERSISTENTI (timeout=None)
 # ---------------------------------------------------------
 class CaptchaModal(discord.ui.Modal, title="Verifica Anti-Bot (Captcha)"):
     codice_inserito = discord.ui.TextInput(
@@ -308,9 +354,14 @@ class CaptchaModal(discord.ui.Modal, title="Verifica Anti-Bot (Captcha)"):
         else:
             await interaction.response.send_message("❌ **Codice errato!** Riprova cliccando nuovamente sul pulsante di verifica.", ephemeral=True)
 
-# ---------------------------------------------------------
-# 6. TUTTE LE VIEW PERSISTENTI (timeout=None)
-# ---------------------------------------------------------
+class VerificationModalButtonView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=180)
+
+    @discord.ui.button(label="✍️ Inserisci Codice", style=discord.ButtonStyle.primary, custom_id="btn_open_captcha_modal")
+    async def open_modal(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(CaptchaModal())
+
 class VerificationView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -334,13 +385,14 @@ class VerificationView(discord.ui.View):
             ephemeral=True
         )
 
-class VerificationModalButtonView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=180)
+class TicketCloseView(discord.ui.View):
+    def __init__(self): 
+        super().__init__(timeout=None)
 
-    @discord.ui.button(label="✍️ Inserisci Codice", style=discord.ButtonStyle.primary, custom_id="btn_open_captcha_modal")
-    async def open_modal(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(CaptchaModal())
+    @discord.ui.button(label="🔒 Chiudi ed Elimina", style=discord.ButtonStyle.red, custom_id="btn_ticket_close")
+    async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message("🔒 Chiusura del ticket in corso...", ephemeral=True)
+        await chiudi_ticket_definitivo(interaction.channel, str(interaction.user), interaction.user.mention, interaction.guild)
 
 class TicketControlView(discord.ui.View):
     def __init__(self): 
@@ -348,69 +400,60 @@ class TicketControlView(discord.ui.View):
         self.add_item(TicketCloseView().children[0])
 
 class TranscriptReopenView(discord.ui.View):
-  def __init__(self): 
-      super().__init__(timeout=None)
+    def __init__(self): 
+        super().__init__(timeout=None)
 
-  @discord.ui.button(label="Riapri Ticket da Transcript", style=discord.ButtonStyle.green, custom_id="btn_reopen_transcript")
-  async def reopen_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
-    await interaction.response.defer(ephemeral=True)
-    message = interaction.message
-    if not message.attachments: return await interaction.followup.send("❌ File di transcript non trovato.", ephemeral=True)
-    
-    attachment = message.attachments[0]
-    if not attachment.filename.endswith(".json"): return await interaction.followup.send("❌ Il file allegato non è un transcript valido.", ephemeral=True)
-    
-    try:
-      file_bytes = await attachment.read()
-      ticket_data = json.loads(file_bytes.decode("utf-8"))
-    except Exception as e:
-      return await interaction.followup.send(f"❌ Errore nella lettura del transcript: {e}", ephemeral=True)
+    @discord.ui.button(label="Riapri Ticket da Transcript", style=discord.ButtonStyle.green, custom_id="btn_reopen_transcript")
+    async def reopen_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
+        message = interaction.message
+        if not message.attachments: return await interaction.followup.send("❌ File di transcript non trovato.", ephemeral=True)
+        
+        attachment = message.attachments[0]
+        if not attachment.filename.endswith(".json"): return await interaction.followup.send("❌ Il file allegato non è un transcript valido.", ephemeral=True)
+        
+        try:
+            file_bytes = await attachment.read()
+            ticket_data = json.loads(file_bytes.decode("utf-8"))
+        except Exception as e:
+            return await interaction.followup.send(f"❌ Errore nella lettura del transcript: {e}", ephemeral=True)
 
-    guild = interaction.guild
-    category = guild.get_channel(TICKET_CATEGORY_ID)
-    
-    overwrites = {
-        guild.default_role: discord.PermissionOverwrite(view_channel=False),
-        interaction.user: discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True),
-        guild.me: discord.PermissionOverwrite(view_channel=True, send_messages=True, manage_channels=True, manage_webhooks=True),
-    }
-    staff_role = guild.get_role(STAFF_GENERAL_ROLE_ID)
-    if staff_role:
-        overwrites[staff_role] = discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True)
+        guild = interaction.guild
+        category = guild.get_channel(TICKET_CATEGORY_ID)
+        
+        overwrites = {
+            guild.default_role: discord.PermissionOverwrite(view_channel=False),
+            interaction.user: discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True),
+            guild.me: discord.PermissionOverwrite(view_channel=True, send_messages=True, manage_channels=True, manage_webhooks=True),
+        }
+        staff_role = guild.get_role(STAFF_GENERAL_ROLE_ID)
+        if staff_role:
+            overwrites[staff_role] = discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True)
 
-    new_channel = await guild.create_text_channel(
-        name=f"riaperto-{ticket_data.get('ticket_name', 'ticket')}", 
-        category=category if isinstance(category, discord.CategoryChannel) else None, 
-        overwrites=overwrites
-    )
-    
-    webhooks = await new_channel.webhooks()
-    webhook = webhooks[0] if webhooks else await new_channel.create_webhook(name="Ticket Reopen Simulator")
-
-    messages = ticket_data.get("messages", [])
-    for msg_data in messages:
-      content = msg_data.get("content", "")
-      raw_username = msg_data.get("author", "Utente Sconosciuto")
-      username = raw_username.replace("discord", "Utente").replace("Discord", "Utente")
-      avatar_url = msg_data.get("avatar_url", None)
-      if content or msg_data.get("embeds"):
-        await webhook.send(
-            content=content if content else None,
-            username=username,
-            avatar_url=avatar_url,
-            embeds=[discord.Embed.from_dict(e) for e in msg_data.get("embeds", [])]
+        new_channel = await guild.create_text_channel(
+            name=f"riaperto-{ticket_data.get('ticket_name', 'ticket')}", 
+            category=category if isinstance(category, discord.CategoryChannel) else None, 
+            overwrites=overwrites
         )
+        
+        webhooks = await new_channel.webhooks()
+        webhook = webhooks[0] if webhooks else await new_channel.create_webhook(name="Ticket Reopen Simulator")
 
-    await interaction.followup.send(f"✅ Ticket riaperto con successo in {new_channel.mention}!", ephemeral=True)
+        messages = ticket_data.get("messages", [])
+        for msg_data in messages:
+            content = msg_data.get("content", "")
+            raw_username = msg_data.get("author", "Utente Sconosciuto")
+            username = raw_username.replace("discord", "Utente").replace("Discord", "Utente")
+            avatar_url = msg_data.get("avatar_url", None)
+            if content or msg_data.get("embeds"):
+                await webhook.send(
+                    content=content if content else None,
+                    username=username,
+                    avatar_url=avatar_url,
+                    embeds=[discord.Embed.from_dict(e) for e in msg_data.get("embeds", [])]
+                )
 
-class TicketCloseView(discord.ui.View):
-  def __init__(self): 
-      super().__init__(timeout=None)
-
-  @discord.ui.button(label="🔒 Chiudi ed Elimina", style=discord.ButtonStyle.red, custom_id="btn_ticket_close")
-  async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
-    await interaction.response.send_message("🔒 Chiusura del ticket in corso...", ephemeral=True)
-    await chiudi_ticket_definitivo(interaction.channel, str(interaction.user), interaction.user.mention, interaction.guild)
+        await interaction.followup.send(f"✅ Ticket riaperto con successo in {new_channel.mention}!", ephemeral=True)
 
 class TicketSelect(discord.ui.Select):
     def __init__(self):
@@ -445,6 +488,8 @@ class TicketSelect(discord.ui.Select):
 
         await interaction.response.send_message(f"✅ Ticket creato: {ticket_channel.mention}", ephemeral=True)
         
+        await log_ticket_apertura(guild, ticket_channel, user, category_type)
+        
         stato_iniziale = {
             "descrizione_partner": None, "link": None, "nome_server": None, "membri": None, "categoria": category_type, "reciprocita_confermata": False
         }
@@ -456,7 +501,7 @@ class TicketSelect(discord.ui.Select):
             "Partnership": "Hai avviato una richiesta di **Partnership** 🤝.\nSegui le indicazioni per procedere con l'accordo tra community.",
             "Staff": "Hai scelto di candidarti per il **Bando Staff** 📋.\nRaccontaci le tue esperienze e perché vorresti entrare a far parte del nostro team.",
             "Amministrazione": "Hai aperto un ticket per l'**Amministrazione** 👑.\nQuesto canale è riservato a comunicazioni direttive o questioni importanti.",
-            "Grafiche & Bot": "Hai richiesto supporto per **Grafiche & Bot** 🎨.\nSpecifica il dettagli del progetto o del bot di cui hai bisogno."
+            "Grafiche & Bot": "Hai richiesto supporto per **Grafiche & Bot** 🎨.\nSpecifica i dettagli del progetto o del bot di cui hai bisogno."
         }
 
         embed = discord.Embed(
@@ -488,25 +533,26 @@ class TicketSelectView(discord.ui.View):
         self.add_item(TicketSelect())
 
 # ---------------------------------------------------------
-# 7. DEFINIZIONE DEL BOT & REGISTRAZIONE VIEW
+# 6. DEFINIZIONE DEL BOT & REGISTRAZIONE VIEW PERSISTENTI
 # ---------------------------------------------------------
 class CustomBot(commands.Bot):
-  def __init__(self):
-    super().__init__(command_prefix="!", intents=intents)
+    def __init__(self):
+        super().__init__(command_prefix="!", intents=intents)
 
-  async def setup_hook(self):
-    self.add_view(TicketControlView())
-    self.add_view(TicketSelectView())
-    self.add_view(TranscriptReopenView())
-    self.add_view(TicketCloseView())
-    self.add_view(VerificationView())
+    async def setup_hook(self):
+        # Registrazione di tutte le view persistenti
+        self.add_view(VerificationView())
+        self.add_view(TicketSelectView())
+        self.add_view(TicketControlView())
+        self.add_view(TicketCloseView())
+        self.add_view(TranscriptReopenView())
 
-    if not invia_buongiorno_automatico.is_running(): invia_buongiorno_automatico.start()
-    if not invia_buonasera_automatica.is_running(): invia_buonasera_automatica.start()
-    if not aggiorna_messaggio_automatico.is_running(): aggiorna_messaggio_automatico.start()
+        if not invia_buongiorno_automatico.is_running(): invia_buongiorno_automatico.start()
+        if not invia_buonasera_automatica.is_running(): invia_buonasera_automatica.start()
+        if not aggiorna_messaggio_automatico.is_running(): aggiorna_messaggio_automatico.start()
 
-    await self.tree.sync()
-    print("🚀 [BOT READY]: Bot avviato per Global Roleplay Lounge con tutte le view persistenti registrate.")
+        await self.tree.sync()
+        print("🚀 [BOT READY]: Bot avviato con tutte le view persistenti registrate correttamente.")
 
 bot = CustomBot()
 
@@ -558,7 +604,7 @@ async def staff_command(interaction: discord.Interaction):
     await interaction.followup.send("✅ Gerarchia generata!", ephemeral=True)
 
 # ---------------------------------------------------------
-# 8. TASK AUTOMATICI
+# 7. TASK AUTOMATICI
 # ---------------------------------------------------------
 @tasks.loop(minutes=10)
 async def aggiorna_messaggio_automatico():
