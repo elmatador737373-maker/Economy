@@ -47,16 +47,16 @@ intents.message_content = True
 intents.members = True
 
 STAFF_GENERAL_ROLE_ID = 1455297926468468777  
-ID_CANALE_SALUTI = 1455298208413520014
-ID_CANALE_WELCOME = 0  # Inserisci qui l'ID del canale welcome separato
-LOG_CHANNEL_ID = 1487393847830122597
+ID_CANALE_SALUTI = 1536159205289885796
+ID_CANALE_WELCOME = 1536159444621205637  # Inserisci qui l'ID del canale welcome separato
+LOG_CHANNEL_ID = 1536159424983339109
 
 # ID specifici delle categorie di canali fornite per i ticket
 TICKET_IDS = {
-    "Generale": 1535674581837291601,
-    "Partnership": 1535674582739062874,
-    "Blacklist": 1535674583611605045,
-    "Bando Staff": 1535674584781553665
+    "Generale": 1536159392100253866,
+    "Partnership": 1536159394079969354,
+    "Blacklist": 1536159388946145331,
+    "Bando Staff": 1536159395438657598
 }
 
 # Lista dei ruoli da assegnare a verifica completata (sostituisci con i veri ID)
