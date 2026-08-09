@@ -56,7 +56,7 @@ LOG_CHANNEL_ID = 1487393847830122597
 VERIFIED_ROLE_ID = 0  
 
 # Banner personalizzato da ImgBB (utilizzato solo nel canale welcome)
-BANNER_URL = "https://i.ibb.co/Y77ntTkH/giphy.gif"
+BANNER_URL = "https://i.ibb.co/nqxLpvpt/399-B3005-E3-EB-4438-A080-7079-F9-F8-E462"
 
 TZ_ZONA = pytz.timezone("Europe/Rome")
 ORARIO_BUONGIORNO = datetime.time(hour=8, minute=0, second=0, tzinfo=TZ_ZONA)
@@ -310,6 +310,9 @@ async def gestisci_destinazione_partnership(guild: discord.Guild, nome_partner: 
             return target_channel
         return None
 
+# Sostituisci VERIFIED_ROLE_ID = 0 in cima al codice con una lista, ad esempio:
+VERIFIED_ROLE_IDS = [123456789012345678, 876543210987654321]  # Inserisci qui gli ID dei ruoli da assegnare
+
 # ---------------------------------------------------------
 # 5. MODALE PER L'INSERIMENTO DEL CODICE CAPTCHA
 # ---------------------------------------------------------
@@ -332,15 +335,28 @@ class CaptchaModal(discord.ui.Modal, title="Verifica Anti-Bot (Captcha)"):
         if self.codice_inserito.value.strip().upper() == codice_esatto.upper():
             active_captchas.pop(user_id, None)
 
-            role = interaction.guild.get_role(VERIFIED_ROLE_ID)
-            if role:
+            guild = interaction.guild
+            member = interaction.user
+
+            # Trova tutti i ruoli validi basati sugli ID configurati
+            roles_to_add = [guild.get_role(r_id) for r_id in VERIFIED_ROLE_IDS if guild.get_role(r_id) is not None]
+            
+            # Trova quali di questi ruoli l'utente possiede già (per rimuoverli prima di rimetterli o gestire la pulizia)
+            roles_to_remove = [r for r in member.roles if r.id in VERIFIED_ROLE_IDS]
+
+            if roles_to_add:
                 try:
-                    await interaction.user.add_roles(role, reason="Verifica Captcha completata con successo.")
-                    await interaction.response.send_message("✅ **Verifica completata con successo!** Benvenuto su Global Roleplay Lounge.", ephemeral=True)
+                    # Rimuove i ruoli che possiede già tra quelli specificati e aggiunge i nuovi in un sol colpo
+                    if roles_to_remove:
+                        await member.remove_roles(*roles_to_remove, reason="Pulizia ruoli verifica precedente.")
+                    
+                    await member.add_roles(*roles_to_add, reason="Verifica Captcha completata con successo.")
+                    
+                    await interaction.response.send_message("✅ **Verifica completata con successo!** Ruoli aggiornati e benvenuto su Global Roleplay Lounge.", ephemeral=True)
                 except Exception as e:
-                    await interaction.response.send_message(f"⚠️ Verifica riuscita, ma c'è stato un errore nell'assegnazione del ruolo: {e}", ephemeral=True)
+                    await interaction.response.send_message(f"⚠️ Verifica riuscita, ma c'è stato un errore nella gestione dei ruoli: {e}", ephemeral=True)
             else:
-                await interaction.response.send_message("✅ **Verifica completata!** (Errore configurazione: Ruolo verificato non trovato nel server).", ephemeral=True)
+                await interaction.response.send_message("✅ **Verifica completata!** (Errore di configurazione: Nessun ruolo valido trovato nel server).", ephemeral=True)
         else:
             await interaction.response.send_message("❌ **Codice errato!** Riprova cliccando nuovamente sul pulsante di verifica.", ephemeral=True)
 
@@ -574,6 +590,8 @@ async def setup_ticket(interaction: discord.Interaction):
     )
     await interaction.channel.send(embed=embed, view=TicketSelectView())
 
+BANNER_VERIFICA_URL=https://i.ibb.co/M5c1ty2W/298087-E6-C4-DB-42-C8-82-E9-3-A637-AD0-E4-DA.png
+
 @bot.tree.command(name="setup_verifica", description="Invia il pannello di verifica con Captcha nel canale corrente")
 @app_commands.checks.has_permissions(administrator=True)
 async def setup_verifica(interaction: discord.Interaction):
@@ -583,6 +601,7 @@ async def setup_verifica(interaction: discord.Interaction):
         description="Per accedere a tutti i canali del server e sbloccare l'accesso alla community, devi completare la verifica anti-bot cliccando sul pulsante sottostante.",
         color=discord.Color.from_str("#10b981")
     )
+    embed.set_image(url=BANNER_VERIFICA_URL)
     embed.set_footer(text="Sistema di sicurezza automatico")
     await interaction.channel.send(embed=embed, view=VerificationView())
 
