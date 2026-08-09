@@ -57,7 +57,7 @@ VERIFIED_ROLE_IDS = [0]
 
 # Nomi dei file locali presenti nella stessa cartella del bot
 NOME_FILE_BANNER = "giphy.gif"
-NOME_FILE_BANNER_VERIFICA = "verifica.png"  # Sostituisci con il nome esatto del file immagine nella cartella
+NOME_FILE_BANNER_VERIFICA = "298087E6-C4DB-42C8-82E9-3A637AD0E4DA.png"  # Sostituisci con il nome esatto del file immagine nella cartella
 
 TZ_ZONA = pytz.timezone("Europe/Rome")
 ORARIO_BUONGIORNO = datetime.time(hour=8, minute=0, second=0, tzinfo=TZ_ZONA)
