@@ -60,7 +60,7 @@ TICKET_IDS = {
 }
 
 # Lista dei ruoli da assegnare a verifica completata (sostituisci con i veri ID)
-VERIFIED_ROLE_IDS = [0]  
+VERIFIED_ROLE_IDS = [1536159207315742750]  
 
 
 # Nomi dei file locali presenti nella stessa cartella del bot
