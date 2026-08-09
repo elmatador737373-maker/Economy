@@ -25,7 +25,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Bot per Discord Italia Online! 🇮🇹"
+    return "Global Roleplay Lounge Online! 🌍"
 
 def run_flask():
     port = int(os.environ.get("PORT", 8080))
@@ -46,11 +46,15 @@ intents.members = True
 STAFF_GENERAL_ROLE_ID = 1455297926468468777  
 TICKET_CATEGORY_ID = 1455298169415012547    
 ID_CANALE_SALUTI = 1455298208413520014
+ID_CANALE_WELCOME = 0  # <--- Inserisci qui l'ID del tuo canale welcome separato
 LOG_CHANNEL_ID = 1487393847830122597
 
-TZ_ITALIA = pytz.timezone("Europe/Rome")
-ORARIO_BUONGIORNO = datetime.time(hour=8, minute=0, second=0, tzinfo=TZ_ITALIA)
-ORARIO_BUONASERA  = datetime.time(hour=21, minute=0, second=0, tzinfo=TZ_ITALIA)
+# Banner personalizzato da ImgBB (utilizzato solo nel canale welcome)
+BANNER_URL = "https://i.ibb.co/Y77ntTkH/giphy.gif"
+
+TZ_ZONA = pytz.timezone("Europe/Rome")
+ORARIO_BUONGIORNO = datetime.time(hour=8, minute=0, second=0, tzinfo=TZ_ZONA)
+ORARIO_BUONASERA  = datetime.time(hour=21, minute=0, second=0, tzinfo=TZ_ZONA)
 
 STAFF_ROLE_IDS = [
     1455297914455986408, 1455297915726598370, 1500051309808582778,
@@ -153,16 +157,16 @@ async def chiudi_ticket_definitivo(channel: discord.TextChannel, closed_by_name:
 # ---------------------------------------------------------
 # 4. DESCRIZIONE UFFICIALE & MOTORE IA CON GROQ (TOOL CALLING)
 # ---------------------------------------------------------
-DESCRIZIONE_UFFICIALE_DISCORD_ITALIA = (
-    "🌟 **Benvenuto su Discord Italia!** 🇮🇹\n\n"
-    "Hai finalmente trovato il posto perfetto dove:\n"
-    "→ 💬 Rilassarti e chiacchierare\n"
-    "→ 🤝 Fare partnership con altri server\n"
-    "→ 👥 Conoscere nuove persone\n"
-    "→ 🌐 Entrare in una community italiana attiva e accogliente\n\n"
+DESCRIZIONE_UFFICIALE_GLOBAL_RP = (
+    "🌍 **Benvenuto su Global Roleplay Lounge!** ✨\n\n"
+    "Hai trovato il punto di riferimento definitivo per:\n"
+    "→ 🎭 Vivere esperienze di Roleplay immersive e uniche\n"
+    "→ 🤝 Creare partnership strategiche tra community\n"
+    "→ 👥 Conoscere nuovi giocatori e collaboratori\n"
+    "→ 🌐 Entrare in un network globale dinamico e professionale\n\n"
     "---\n\n"
-    "🎯 **Questo server è per tutti!**\n"
-    "🔗 **Link:** https://discord.gg/discord-talia-1-3k-1348947150641303583"
+    "🎯 **Unisciti al nostro universo di gioco!**\n"
+    "🔗 **Link:** https://discord.gg/globalroleplay"
 )
 
 # Definizione del Tool per l'IA
@@ -224,7 +228,7 @@ async def genera_risposta_staff(stato: dict, history: list, messaggio_utente: st
     )
 
     system_prompt = (
-        "Sei l'addetto alle partnership di Discord Italia 🇮🇹.\n\n"
+        "Sei l'addetto alle partnership di Global Roleplay Lounge 🌍.\n\n"
         "REGOLE CRUCIALI:\n"
         "1. RISPOSTE BREVI: Scrivi frasi corte, dirette e amichevoli. Niente poemi o elenchi puntati lunghi.\n"
         "2. ZERO RIPETIZIONI: Non chiedere mai dati che risultano già 'OK' nel dossier.\n"
@@ -250,7 +254,7 @@ async def genera_risposta_staff(stato: dict, history: list, messaggio_utente: st
             tools=ai_tools,
             tool_choice="auto",
             temperature=0.1,
-            max_tokens=300  # Token ridotti per costringere l'IA a risposte brevi e repentine
+            max_tokens=300
         )
         
         message_out = response.choices[0].message
@@ -292,9 +296,9 @@ async def genera_embed_staff(guild: discord.Guild) -> discord.Embed:
                 role_members[highest_role.id].append(member.mention)
 
     embed = discord.Embed(
-        title="👑 Gerarchia dello Staff",
+        title="👑 Gerarchia dello Staff - Global Roleplay Lounge",
         description="Elenco aggiornato in tempo reale dello staff suddiviso per ruolo principale.",
-        color=discord.Color.blue(),
+        color=discord.Color.from_str("#10b981"),
         timestamp=discord.utils.utcnow(),
     )
 
@@ -351,9 +355,25 @@ class CustomBot(commands.Bot):
     if not aggiorna_messaggio_automatico.is_running(): aggiorna_messaggio_automatico.start()
 
     await self.tree.sync()
-    print("🚀 [BOT READY]: Bot avviato, viste persistenti registrate e comandi sincronizzati.")
+    print("🚀 [BOT READY]: Bot avviato per Global Roleplay Lounge, viste registrate e comandi sincronizzati.")
 
 bot = CustomBot()
+
+# Evento di benvenuto inviato ESCLUSIVAMENTE nel canale welcome dedicato con banner
+@bot.event
+async def on_member_join(member: discord.Member):
+    canale = member.guild.get_channel(ID_CANALE_WELCOME)
+    if canale:
+        embed = discord.Embed(
+            title="🌍 Benvenuto su Global Roleplay Lounge!",
+            description=f"Ciao {member.mention}, un caloroso benvenuto nella nostra community! 🎉\n\n"
+                        f"Ricordati di dare un'occhiata ai canali informativi e preparati a vivere fantastiche avventure di Roleplay insieme a noi!",
+            color=discord.Color.from_str("#10b981"),
+            timestamp=datetime.datetime.now(TZ_ZONA)
+        )
+        # Banner personalizzato applicato solo qui
+        embed.set_image(url=BANNER_URL)
+        await canale.send(content=f"{member.mention}", embed=embed)
 
 class TicketControlView(discord.ui.View):
     def __init__(self): 
@@ -395,7 +415,6 @@ class TranscriptReopenView(discord.ui.View):
       content = msg_data.get("content", "")
       raw_username = msg_data.get("author", "Utente Sconosciuto")
       
-      # 🛡️ PULIZIA ANTI-ERRORE DISCORD: Impedisce il blocco se l'username contiene "discord"
       username = raw_username.replace("discord", "Utente").replace("Discord", "Utente")
       
       avatar_url = msg_data.get("avatar_url", None)
@@ -452,18 +471,17 @@ class TicketSelect(discord.ui.Select):
         await db_upsert_ticket(ticket_channel.id, stato_iniziale, [])
 
         embed = discord.Embed(
-            title="🇮🇹 Benvenuto - Desk Partnership",
+            title="🌍 Benvenuto - Desk Assistenza Global RP",
             description="Il nostro staff è stato notificato. Segui le indicazioni dell'assistente.",
-            color=discord.Color.from_rgb(0, 146, 70)
+            color=discord.Color.from_str("#10b981")
         )
         await ticket_channel.send(content=f"<@&{STAFF_GENERAL_ROLE_ID}> | {user.mention}", embed=embed, view=TicketControlView())
-        await ticket_channel.send(content=DESCRIZIONE_UFFICIALE_DISCORD_ITALIA)
+        await ticket_channel.send(content=DESCRIZIONE_UFFICIALE_GLOBAL_RP)
 
         if ATTIVA_IA:
             risposta_iniziale = await genera_risposta_staff(stato_iniziale, [], "Apertura ticket.")
             msg_sent = await ticket_channel.send(content=risposta_iniziale["testo"])
             
-            # Inizializza History
             history_iniziale = [
                 {"role": "user", "content": "Apertura ticket."},
                 {"role": "assistant", "content": msg_sent.content}
@@ -480,8 +498,8 @@ class TicketSelectView(discord.ui.View):
 async def setup_ticket(interaction: discord.Interaction):
     await interaction.response.send_message("✅ Pannello inviato", ephemeral=True)
     embed = discord.Embed(
-        title="🇮🇹 Assistenza & Supporto Ufficiale - Discord Italia",
-        description="Seleziona la categoria di assistenza.", color=discord.Color.from_rgb(0, 146, 70)
+        title="🌍 Global Roleplay Lounge — Assistenza & Supporto Ufficiale",
+        description="Seleziona la categoria di assistenza.", color=discord.Color.from_str("#10b981")
     )
     await interaction.channel.send(embed=embed, view=TicketSelectView())
 
@@ -496,48 +514,7 @@ async def staff_command(interaction: discord.Interaction):
     await interaction.followup.send("✅ Gerarchia generata!", ephemeral=True)
 
 # ---------------------------------------------------------
-# 7. GESTIONE MESSAGGI (CORE AI) E AGGIORNAMENTO DB
-# ---------------------------------------------------------
-    # Elaborazione IA (se attiva)
-    if ATTIVA_IA:
-        risultato_ia = await genera_risposta_staff(stato, history, message.content)
-        
-        # 1. Se l'IA vuole chiudere il ticket
-        if risultato_ia["azione"] == "chiudi":
-            await message.channel.send(content=risultato_ia["testo"])
-            await asyncio.sleep(2)
-            await chiudi_ticket_definitivo(message.channel, "AI_Assistant", "L'Assistente IA🤖", message.guild)
-            return
-
-        # 2. Se l'IA ha attivato il tool di smistamento partnership
-        if risultato_ia["azione"] == "smista" and stato.get("reciprocita_confermata") and stato.get("descrizione_partner"):
-            args = risultato_ia["args"]
-            cat = args.get("categoria")
-            nome = args.get("nome_server")
-            canale_id_destinazione = int(args.get("canale_id", 0))
-            
-            # Esegue lo smistamento reale nei canali
-            await gestisci_destinazione_partnership(message.guild, nome, cat, stato.get("membri", 0), stato["descrizione_partner"], canale_id_destinazione)
-            
-            await message.channel.send(content=risultato_ia["testo"])
-            
-            embed_log = discord.Embed(title="📋 Log Finale Partnership - Ticket Chiuso", description="Partnership completata e pubblicata con successo.", color=discord.Color.green())
-            await message.channel.send(content="✅ **Partnership pubblicata nel canale di destinazione!**", embed=embed_log)
-            
-            await asyncio.sleep(5)
-            await chiudi_ticket_definitivo(message.channel, "AI_Sistema_Partnership", "L'Assistente IA🤖", message.guild)
-            return
-        
-        # 3. Risposta normale interlocutoria dell'IA
-        msg_ia = await message.channel.send(content=risultato_ia["testo"])
-        history.append({"role": "assistant", "content": msg_ia.content})
-
-    # Salva stato e history su Supabase
-    await db_upsert_ticket(channel_id, stato, history)
-
-
-# ---------------------------------------------------------
-# 8. TASK AUTOMATICI
+# 7. TASK AUTOMATICI
 # ---------------------------------------------------------
 @tasks.loop(minutes=10)
 async def aggiorna_messaggio_automatico():
@@ -553,12 +530,26 @@ async def aggiorna_messaggio_automatico():
 @tasks.loop(time=ORARIO_BUONGIORNO)
 async def invia_buongiorno_automatico():
     canale = bot.get_channel(ID_CANALE_SALUTI)
-    if canale: await canale.send(content="@everyone", embed=discord.Embed(title="🇮🇹 ☕ Buon Inizio Giornata!", description="Un caffè e si parte su Discord Italia 🇮🇹!", color=discord.Color.from_str("#5865F2"), timestamp=datetime.datetime.now(TZ_ITALIA)), allowed_mentions=discord.AllowedMentions(everyone=True))
+    if canale:
+        embed = discord.Embed(
+            title="🌍 ☕ Buon Inizio Giornata, Roleplayers!",
+            description="Preparate i vostri personaggi: una nuova giornata ricca di storie ha inizio su Global Roleplay Lounge!",
+            color=discord.Color.from_str("#10b981"),
+            timestamp=datetime.datetime.now(TZ_ZONA)
+        )
+        await canale.send(content="@everyone", embed=embed, allowed_mentions=discord.AllowedMentions(everyone=True))
 
 @tasks.loop(time=ORARIO_BUONASERA)
 async def invia_buonasera_automatica():
     canale = bot.get_channel(ID_CANALE_SALUTI)
-    if canale: await canale.send(content="@everyone", embed=discord.Embed(title="🇮🇹 🌙 Buonasera Community!", description="La serata su Discord Italia è nel vivo!", color=discord.Color.from_str("#2b2d31"), timestamp=datetime.datetime.now(TZ_ITALIA)), allowed_mentions=discord.AllowedMentions(everyone=True))
+    if canale:
+        embed = discord.Embed(
+            title="🌍 🌙 Buonasera Community!",
+            description="Le luci della città si accendono... Il Roleplay serale su Global Roleplay Lounge entra nel vivo!",
+            color=discord.Color.from_str("#0f172a"),
+            timestamp=datetime.datetime.now(TZ_ZONA)
+        )
+        await canale.send(content="@everyone", embed=embed, allowed_mentions=discord.AllowedMentions(everyone=True))
 
 # ---------------------------------------------------------
 # AVVIO FINALE
