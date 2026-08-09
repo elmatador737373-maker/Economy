@@ -463,6 +463,7 @@ class TicketSelect(discord.ui.Select):
         category_type = self.values[0]
         guild = interaction.guild
         user = interaction.user
+        
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(read_messages=False),
             user: discord.PermissionOverwrite(read_messages=True, send_messages=True, attach_files=True),
@@ -472,35 +473,52 @@ class TicketSelect(discord.ui.Select):
         if staff_role: overwrites[staff_role] = discord.PermissionOverwrite(read_messages=True, send_messages=True, attach_files=True)
         
         category = guild.get_channel(TICKET_CATEGORY_ID)
-        ticket_channel = await guild.create_text_channel(name=f"ticket-{category_type.lower()}-{user.name}", overwrites=overwrites, category=category if isinstance(category, discord.CategoryChannel) else None)
+        ticket_channel = await guild.create_text_channel(
+            name=f"ticket-{category_type.lower()}-{user.name}", 
+            overwrites=overwrites, 
+            category=category if isinstance(category, discord.CategoryChannel) else None
+        )
 
         await interaction.response.send_message(f"✅ Ticket creato: {ticket_channel.mention}", ephemeral=True)
         
         stato_iniziale = {
-            "descrizione_partner": None, "link": None, "nome_server": None, "membri": None, "categoria": None, "reciprocita_confermata": False
+            "descrizione_partner": None, "link": None, "nome_server": None, "membri": None, "categoria": category_type, "reciprocita_confermata": False
         }
         
         await db_upsert_ticket(ticket_channel.id, stato_iniziale, [])
 
+        # Embed dinamico in base alla categoria scelta
+        descrizioni_embed = {
+            "Generale": "Hai aperto un ticket di **Assistenza Generale**. Esponi il tuo problema o la tua domanda, lo staff ti risponderà il prima possibile.",
+            "Partnership": "Hai avviato una richiesta di **Partnership** 🤝.\nSegui le indicazioni per procedere con l'accordo tra community.",
+            "Staff": "Hai scelto di candidarti per il **Bando Staff** 📋.\nRaccontaci le tue esperienze e perché vorresti entrare a far parte del nostro team.",
+            "Amministrazione": "Hai aperto un ticket per l'**Amministrazione** 👑.\nQuesto canale è riservato a comunicazioni direttive o questioni importanti.",
+            "Grafiche & Bot": "Hai richiesto supporto per **Grafiche & Bot** 🎨.\nSpecifica i dettagli del progetto o del bot di cui hai bisogno."
+        }
+
         embed = discord.Embed(
-            title="🌍 Benvenuto - Desk Assistenza Global RP",
-            description="Il nostro staff è stato notificato. Segui le indicazioni dell'assistente.",
+            title=f"🌍 Ticket: {category_type} — Global RP",
+            description=descrizioni_embed.get(category_type, "Benvenuto nel supporto."),
             color=discord.Color.from_str("#10b981")
         )
+        
         await ticket_channel.send(content=f"<@&{STAFF_GENERAL_ROLE_ID}> | {user.mention}", embed=embed, view=TicketControlView())
-        await ticket_channel.send(content=DESCRIZIONE_UFFICIALE_GLOBAL_RP)
-
-        if ATTIVA_IA:
-            risposta_iniziale = await genera_risposta_staff(stato_iniziale, [], "Apertura ticket.")
-            msg_sent = await ticket_channel.send(content=risposta_iniziale["testo"])
-            
-            history_iniziale = [
-                {"role": "user", "content": "Apertura ticket."},
-                {"role": "assistant", "content": msg_sent.content}
-            ]
-            await db_upsert_ticket(ticket_channel.id, stato_iniziale, history_iniziale)
+        
+        # Invia la descrizione ufficiale solo se è un ticket di partnership, altrimenti manda un messaggio mirato
+        if category_type == "Partnership":
+            await ticket_channel.send(content=DESCRIZIONE_UFFICIALE_GLOBAL_RP)
+            if ATTIVA_IA:
+                risposta_iniziale = await genera_risposta_staff(stato_iniziale, [], "Apertura ticket partnership.")
+                msg_sent = await ticket_channel.send(content=risposta_iniziale["testo"])
+                history_iniziale = [
+                    {"role": "user", "content": "Apertura ticket partnership."},
+                    {"role": "assistant", "content": msg_sent.content}
+                ]
+                await db_upsert_ticket(ticket_channel.id, stato_iniziale, history_iniziale)
+            else:
+                await ticket_channel.send(content="🤖 L'assistente IA per le partnership è disattivato. Uno staffer ti risponderà a breve.")
         else:
-            await ticket_channel.send(content="🤖 L'assistente IA è disattivato. Uno staffer ti risponderà a breve.")
+            await ticket_channel.send(content=f"💬 Ciao {user.mention}, descrivi in modo dettagliato la tua richiesta per il reparto **{category_type}**. Un membro dello staff ti assisterà a breve.")
 
 class TicketSelectView(discord.ui.View):
     def __init__(self): 
