@@ -52,11 +52,12 @@ ID_CANALE_SALUTI = 1455298208413520014
 ID_CANALE_WELCOME = 0  # Inserisci qui l'ID del canale welcome separato
 LOG_CHANNEL_ID = 1487393847830122597
 
-# ID del ruolo da assegnare a verifica completata (Sostituisci 0 con l'ID reale del ruolo)
-VERIFIED_ROLE_ID = 0  
+# Lista dei ruoli da assegnare a verifica completata (sostituisci con i veri ID)
+VERIFIED_ROLE_IDS = [0]  
 
-# Banner personalizzato da ImgBB (utilizzato solo nel canale welcome)
-BANNER_URL = "https://i.ibb.co/nqxLpvpt/399-B3005-E3-EB-4438-A080-7079-F9-F8-E462"
+# Banner personalizzati da ImgBB
+BANNER_URL = "https://i.ibb.co/Y77ntTkH/giphy.gif"
+BANNER_VERIFICA_URL = "https://i.ibb.co/M5c1ty2W/298087-E6-C4-DB-42-C8-82-E9-3-A637-AD0-E4-DA.png"
 
 TZ_ZONA = pytz.timezone("Europe/Rome")
 ORARIO_BUONGIORNO = datetime.time(hour=8, minute=0, second=0, tzinfo=TZ_ZONA)
@@ -71,7 +72,6 @@ STAFF_ROLE_IDS = [
 TARGET_CHANNEL_ID = 0
 TARGET_MESSAGE_ID = 0
 
-# Generatore di immagini captcha
 image_captcha = ImageCaptcha(width=280, height=90)
 
 groq_client = openai.OpenAI(
@@ -87,12 +87,10 @@ if SUPABASE_URL and SUPABASE_KEY:
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 else:
     supabase = None
-    print("⚠️ [ATTENZIONE]: Credenziali Supabase mancanti. L'IA non potrà salvare lo storico in modo persistente.")
+    print("⚠️ [ATTENZIONE]: Credenziali Supabase mancanti.")
 
-# Dizionario temporaneo in memoria per i captcha attivi: {user_id: "codice"}
 active_captchas = {}
 
-# Funzioni Helper Database
 async def db_get_ticket(channel_id: int):
     if not supabase: return None
     try:
@@ -117,20 +115,12 @@ async def db_delete_ticket(channel_id: int):
     if not supabase: return
     try:
         await asyncio.to_thread(lambda: supabase.table("ticket_ai_context").delete().eq("channel_id", channel_id).execute())
-        print(f"🗑️ [SUPABASE]: Dati del ticket {channel_id} eliminati con successo.")
     except Exception as e:
         print(f"❌ [ERRORE DB ELIMINAZIONE]: {e}")
 
-# ---------------------------------------------------------
-# 3. SISTEMA UNIFICATO DI CHIUSURA TICKET
-# ---------------------------------------------------------
 async def chiudi_ticket_definitivo(channel: discord.TextChannel, closed_by_name: str, closed_by_mention: str, guild: discord.Guild):
-    print(f"🔒 [TICKET CHIUSO]: Il canale {channel.name} è in fase di chiusura da {closed_by_name}.")
-
     messages_list = []
     async for msg in channel.history(limit=150, oldest_first=True):
-        if msg.author.bot and not msg.webhook_id:
-            pass
         embeds_data = [e.to_dict() for e in msg.embeds]
         messages_list.append({
             "author": msg.author.display_name,
@@ -151,23 +141,17 @@ async def chiudi_ticket_definitivo(channel: discord.TextChannel, closed_by_name:
     log_channel = guild.get_channel(LOG_CHANNEL_ID)
     if log_channel:
         embed = discord.Embed(
-            title="",
             description=f"📦 **Transcript Archiviato: {channel.name}**\n\n**Chiuso da:** {closed_by_mention}\nClicca il bottone sottostante per riaprire automaticamente questo ticket.",
             color=discord.Color.dark_orange()
         )
         await log_channel.send(embed=embed, file=file, view=TranscriptReopenView())
 
     await db_delete_ticket(channel.id)
-
     try:
         await channel.delete()
     except Exception as e:
         print(f"⚠️ [ERRORE ELIMINAZIONE TICKET]: {e}")
 
-
-# ---------------------------------------------------------
-# 4. DESCRIZIONE UFFICIALE & MOTORE IA CON GROQ
-# ---------------------------------------------------------
 DESCRIZIONE_UFFICIALE_GLOBAL_RP = (
     "🌍 **Benvenuto su Global Roleplay Lounge!** ✨\n\n"
     "Hai trovato il punto di riferimento definitivo per:\n"
@@ -222,10 +206,7 @@ async def genera_risposta_staff(stato: dict, history: list, messaggio_utente: st
         f"- Reciprocità: {'OK' if stato.get('reciprocita_confermata') else 'MANCANTE'}"
     )
 
-    system_prompt = (
-        "Sei l'addetto alle partnership di Global Roleplay Lounge 🌍.\n"
-        f"{dossier_riassunto}"
-    )
+    system_prompt = f"Sei l'addetto alle partnership di Global Roleplay Lounge 🌍.\n{dossier_riassunto}"
 
     messages = [{"role": "system", "content": system_prompt}]
     for msg in history[-10:]:
@@ -285,36 +266,8 @@ async def genera_embed_staff(guild: discord.Guild) -> discord.Embed:
 
     return embed
 
-async def gestisci_destinazione_partnership(guild: discord.Guild, nome_partner: str, categoria_scelta: str, membri_totali: int, descrizione_partner: str, canale_id_indicato: int):
-    categoria_pulita = categoria_scelta.upper()
-    if "SHOP" in categoria_pulita or "PC" in categoria_pulita:
-        nome_formattato = nome_partner.strip().replace(" ", "-")
-        prefix = "🛍️⎱" if "SHOP" in categoria_pulita else "💻⎱"
-        nome_canale = f"{prefix}{nome_formattato}"
-        categoria_server = discord.utils.get(guild.categories, name="PARTNERSHIPS")
-        try:
-            nuovo_canale = await guild.create_text_channel(
-                name=nome_canale,
-                category=categoria_server or discord.utils.get(guild.categories, id=TICKET_CATEGORY_ID),
-                reason=f"Partnership ratificata: {categoria_scelta}"
-            )
-            await nuovo_canale.send(content=descrizione_partner)
-            return nuovo_canale
-        except Exception as e:
-            print(f"❌ [ERRORE CREAZIONE CANALE]: {e}")
-            return None
-    else:
-        target_channel = guild.get_channel(canale_id_indicato)
-        if target_channel:
-            await target_channel.send(content=descrizione_partner)
-            return target_channel
-        return None
-
-# Sostituisci VERIFIED_ROLE_ID = 0 in cima al codice con una lista, ad esempio:
-VERIFIED_ROLE_IDS = [123456789012345678, 876543210987654321]  # Inserisci qui gli ID dei ruoli da assegnare
-
 # ---------------------------------------------------------
-# 5. MODALE PER L'INSERIMENTO DEL CODICE CAPTCHA
+# 5. MODALE PER L'INSERIMENTO DEL CODICE CAPTCHA (Ruoli Multipli)
 # ---------------------------------------------------------
 class CaptchaModal(discord.ui.Modal, title="Verifica Anti-Bot (Captcha)"):
     codice_inserito = discord.ui.TextInput(
@@ -338,20 +291,15 @@ class CaptchaModal(discord.ui.Modal, title="Verifica Anti-Bot (Captcha)"):
             guild = interaction.guild
             member = interaction.user
 
-            # Trova tutti i ruoli validi basati sugli ID configurati
             roles_to_add = [guild.get_role(r_id) for r_id in VERIFIED_ROLE_IDS if guild.get_role(r_id) is not None]
-            
-            # Trova quali di questi ruoli l'utente possiede già (per rimuoverli prima di rimetterli o gestire la pulizia)
             roles_to_remove = [r for r in member.roles if r.id in VERIFIED_ROLE_IDS]
 
             if roles_to_add:
                 try:
-                    # Rimuove i ruoli che possiede già tra quelli specificati e aggiunge i nuovi in un sol colpo
                     if roles_to_remove:
                         await member.remove_roles(*roles_to_remove, reason="Pulizia ruoli verifica precedente.")
                     
                     await member.add_roles(*roles_to_add, reason="Verifica Captcha completata con successo.")
-                    
                     await interaction.response.send_message("✅ **Verifica completata con successo!** Ruoli aggiornati e benvenuto su Global Roleplay Lounge.", ephemeral=True)
                 except Exception as e:
                     await interaction.response.send_message(f"⚠️ Verifica riuscita, ma c'è stato un errore nella gestione dei ruoli: {e}", ephemeral=True)
@@ -369,8 +317,8 @@ class VerificationView(discord.ui.View):
 
     @discord.ui.button(label="Verificati ora 🛡️", style=discord.ButtonStyle.green, custom_id="btn_start_verification")
     async def verify_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        role = interaction.guild.get_role(VERIFIED_ROLE_ID)
-        if role and role in interaction.user.roles:
+        user_roles_ids = [r.id for r in interaction.user.roles]
+        if any(r_id in user_roles_ids for r_id in VERIFIED_ROLE_IDS):
             return await interaction.response.send_message("⚠️ Sei già verificato in questo server!", ephemeral=True)
 
         codice = "".join(random.choices(string.ascii_uppercase + string.digits, k=5))
@@ -503,13 +451,12 @@ class TicketSelect(discord.ui.Select):
         
         await db_upsert_ticket(ticket_channel.id, stato_iniziale, [])
 
-        # Embed dinamico in base alla categoria scelta
         descrizioni_embed = {
             "Generale": "Hai aperto un ticket di **Assistenza Generale**. Esponi il tuo problema o la tua domanda, lo staff ti risponderà il prima possibile.",
             "Partnership": "Hai avviato una richiesta di **Partnership** 🤝.\nSegui le indicazioni per procedere con l'accordo tra community.",
             "Staff": "Hai scelto di candidarti per il **Bando Staff** 📋.\nRaccontaci le tue esperienze e perché vorresti entrare a far parte del nostro team.",
             "Amministrazione": "Hai aperto un ticket per l'**Amministrazione** 👑.\nQuesto canale è riservato a comunicazioni direttive o questioni importanti.",
-            "Grafiche & Bot": "Hai richiesto supporto per **Grafiche & Bot** 🎨.\nSpecifica i dettagli del progetto o del bot di cui hai bisogno."
+            "Grafiche & Bot": "Hai richiesto supporto per **Grafiche & Bot** 🎨.\nSpecifica il dettagli del progetto o del bot di cui hai bisogno."
         }
 
         embed = discord.Embed(
@@ -520,7 +467,6 @@ class TicketSelect(discord.ui.Select):
         
         await ticket_channel.send(content=f"<@&{STAFF_GENERAL_ROLE_ID}> | {user.mention}", embed=embed, view=TicketControlView())
         
-        # Invia la descrizione ufficiale solo se è un ticket di partnership, altrimenti manda un messaggio mirato
         if category_type == "Partnership":
             await ticket_channel.send(content=DESCRIZIONE_UFFICIALE_GLOBAL_RP)
             if ATTIVA_IA:
@@ -541,7 +487,6 @@ class TicketSelectView(discord.ui.View):
         super().__init__(timeout=None)
         self.add_item(TicketSelect())
 
-
 # ---------------------------------------------------------
 # 7. DEFINIZIONE DEL BOT & REGISTRAZIONE VIEW
 # ---------------------------------------------------------
@@ -550,7 +495,6 @@ class CustomBot(commands.Bot):
     super().__init__(command_prefix="!", intents=intents)
 
   async def setup_hook(self):
-    # Registrazione di tutte le view persistenti
     self.add_view(TicketControlView())
     self.add_view(TicketSelectView())
     self.add_view(TranscriptReopenView())
@@ -589,8 +533,6 @@ async def setup_ticket(interaction: discord.Interaction):
         description="Seleziona la categoria di assistenza.", color=discord.Color.from_str("#10b981")
     )
     await interaction.channel.send(embed=embed, view=TicketSelectView())
-
-BANNER_VERIFICA_URL=https://i.ibb.co/M5c1ty2W/298087-E6-C4-DB-42-C8-82-E9-3-A637-AD0-E4-DA.png
 
 @bot.tree.command(name="setup_verifica", description="Invia il pannello di verifica con Captcha nel canale corrente")
 @app_commands.checks.has_permissions(administrator=True)
