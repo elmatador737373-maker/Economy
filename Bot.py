@@ -12,6 +12,9 @@ from discord import app_commands
 from discord.ext import commands, tasks
 import openai
 from supabase import create_client, Client
+import random
+import string
+from captcha.image import ImageCaptcha
 
 # ---------------------------------------------------------
 # VARIABILE GLOBALE PER ATTIVARE/DISATTIVARE L'IA
@@ -49,6 +52,9 @@ ID_CANALE_SALUTI = 1455298208413520014
 ID_CANALE_WELCOME = 0  # Inserisci qui l'ID del canale welcome separato
 LOG_CHANNEL_ID = 1487393847830122597
 
+# ID del ruolo da assegnare a verifica completata (Sostituisci 0 con l'ID reale del ruolo)
+VERIFIED_ROLE_ID = 0  
+
 # Banner personalizzato da ImgBB (utilizzato solo nel canale welcome)
 BANNER_URL = "https://i.ibb.co/Y77ntTkH/giphy.gif"
 
@@ -65,6 +71,9 @@ STAFF_ROLE_IDS = [
 TARGET_CHANNEL_ID = 0
 TARGET_MESSAGE_ID = 0
 
+# Generatore di immagini captcha
+image_captcha = ImageCaptcha(width=280, height=90)
+
 groq_client = openai.OpenAI(
     api_key=os.environ.get("GROQ_API_KEY"),
     base_url="https://api.groq.com/openai/v1"
@@ -79,6 +88,9 @@ if SUPABASE_URL and SUPABASE_KEY:
 else:
     supabase = None
     print("⚠️ [ATTENZIONE]: Credenziali Supabase mancanti. L'IA non potrà salvare lo storico in modo persistente.")
+
+# Dizionario temporaneo in memoria per i captcha attivi: {user_id: "codice"}
+active_captchas = {}
 
 # Funzioni Helper Database
 async def db_get_ticket(channel_id: int):
@@ -145,7 +157,6 @@ async def chiudi_ticket_definitivo(channel: discord.TextChannel, closed_by_name:
         )
         await log_channel.send(embed=embed, file=file, view=TranscriptReopenView())
 
-    # Pulizia del database Supabase
     await db_delete_ticket(channel.id)
 
     try:
@@ -155,7 +166,7 @@ async def chiudi_ticket_definitivo(channel: discord.TextChannel, closed_by_name:
 
 
 # ---------------------------------------------------------
-# 4. DESCRIZIONE UFFICIALE & MOTORE IA CON GROQ (TOOL CALLING)
+# 4. DESCRIZIONE UFFICIALE & MOTORE IA CON GROQ
 # ---------------------------------------------------------
 DESCRIZIONE_UFFICIALE_GLOBAL_RP = (
     "🌍 **Benvenuto su Global Roleplay Lounge!** ✨\n\n"
@@ -274,9 +285,6 @@ async def genera_embed_staff(guild: discord.Guild) -> discord.Embed:
 
     return embed
 
-# ---------------------------------------------------------
-# 5. FUNZIONE GESTIONE DESTINAZIONE PARTNERSHIP
-# ---------------------------------------------------------
 async def gestisci_destinazione_partnership(guild: discord.Guild, nome_partner: str, categoria_scelta: str, membri_totali: int, descrizione_partner: str, canale_id_indicato: int):
     categoria_pulita = categoria_scelta.upper()
     if "SHOP" in categoria_pulita or "PC" in categoria_pulita:
@@ -303,40 +311,72 @@ async def gestisci_destinazione_partnership(guild: discord.Guild, nome_partner: 
         return None
 
 # ---------------------------------------------------------
-# 6. DEFINIZIONE DEL BOT & VIEW PERSISTENTI
+# 5. MODALE PER L'INSERIMENTO DEL CODICE CAPTCHA
 # ---------------------------------------------------------
-class CustomBot(commands.Bot):
-  def __init__(self):
-    super().__init__(command_prefix="!", intents=intents)
+class CaptchaModal(discord.ui.Modal, title="Verifica Anti-Bot (Captcha)"):
+    codice_inserito = discord.ui.TextInput(
+        label="Inserisci il codice che vedi nell'immagine",
+        placeholder="Es: A3f9K",
+        min_length=4,
+        max_length=6,
+        required=True
+    )
 
-  async def setup_hook(self):
-    self.add_view(TicketControlView())
-    self.add_view(TicketSelectView())
-    self.add_view(TranscriptReopenView())
-    self.add_view(TicketCloseView())
+    async def on_submit(self, interaction: discord.Interaction):
+        user_id = interaction.user.id
+        codice_esatto = active_captchas.get(user_id)
 
-    if not invia_buongiorno_automatico.is_running(): invia_buongiorno_automatico.start()
-    if not invia_buonasera_automatica.is_running(): invia_buonasera_automatica.start()
-    if not aggiorna_messaggio_automatico.is_running(): aggiorna_messaggio_automatico.start()
+        if not codice_esatto:
+            return await interaction.response.send_message("❌ Il tuo codice captcha è scaduto o non valido. Clicca nuovamente sul pulsante di verifica.", ephemeral=True)
 
-    await self.tree.sync()
-    print("🚀 [BOT READY]: Bot avviato per Global Roleplay Lounge.")
+        if self.codice_inserito.value.strip().upper() == codice_esatto.upper():
+            active_captchas.pop(user_id, None)
 
-bot = CustomBot()
+            role = interaction.guild.get_role(VERIFIED_ROLE_ID)
+            if role:
+                try:
+                    await interaction.user.add_roles(role, reason="Verifica Captcha completata con successo.")
+                    await interaction.response.send_message("✅ **Verifica completata con successo!** Benvenuto su Global Roleplay Lounge.", ephemeral=True)
+                except Exception as e:
+                    await interaction.response.send_message(f"⚠️ Verifica riuscita, ma c'è stato un errore nell'assegnazione del ruolo: {e}", ephemeral=True)
+            else:
+                await interaction.response.send_message("✅ **Verifica completata!** (Errore configurazione: Ruolo verificato non trovato nel server).", ephemeral=True)
+        else:
+            await interaction.response.send_message("❌ **Codice errato!** Riprova cliccando nuovamente sul pulsante di verifica.", ephemeral=True)
 
-@bot.event
-async def on_member_join(member: discord.Member):
-    canale = member.guild.get_channel(ID_CANALE_WELCOME)
-    if canale:
-        embed = discord.Embed(
-            title="🌍 Benvenuto su Global Roleplay Lounge!",
-            description=f"Ciao {member.mention}, un caloroso benvenuto nella nostra community! 🎉\n\n"
-                        f"Ricordati di dare un'occhiata ai canali informativi e preparati a vivere fantastiche avventure di Roleplay insieme a noi!",
-            color=discord.Color.from_str("#10b981"),
-            timestamp=datetime.datetime.now(TZ_ZONA)
+# ---------------------------------------------------------
+# 6. TUTTE LE VIEW PERSISTENTI (timeout=None)
+# ---------------------------------------------------------
+class VerificationView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="Verificati ora 🛡️", style=discord.ButtonStyle.green, custom_id="btn_start_verification")
+    async def verify_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        role = interaction.guild.get_role(VERIFIED_ROLE_ID)
+        if role and role in interaction.user.roles:
+            return await interaction.response.send_message("⚠️ Sei già verificato in questo server!", ephemeral=True)
+
+        codice = "".join(random.choices(string.ascii_uppercase + string.digits, k=5))
+        active_captchas[interaction.user.id] = codice
+
+        data = image_captcha.generate(codice)
+        file = discord.File(fp=data, filename="captcha.png")
+
+        await interaction.response.send_message(
+            content="🔒 **Sistema di Sicurezza Anti-Bot**\nOsserva l'immagine sottostante e clicca il pulsante **'Inserisci Codice'** per digitare i caratteri.",
+            file=file,
+            view=VerificationModalButtonView(),
+            ephemeral=True
         )
-        embed.set_image(url=BANNER_URL)
-        await canale.send(content=f"{member.mention}", embed=embed)
+
+class VerificationModalButtonView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=180)
+
+    @discord.ui.button(label="✍️ Inserisci Codice", style=discord.ButtonStyle.primary, custom_id="btn_open_captcha_modal")
+    async def open_modal(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(CaptchaModal())
 
 class TicketControlView(discord.ui.View):
     def __init__(self): 
@@ -344,7 +384,8 @@ class TicketControlView(discord.ui.View):
         self.add_item(TicketCloseView().children[0])
 
 class TranscriptReopenView(discord.ui.View):
-  def __init__(self): super().__init__(timeout=None)
+  def __init__(self): 
+      super().__init__(timeout=None)
 
   @discord.ui.button(label="Riapri Ticket da Transcript", style=discord.ButtonStyle.green, custom_id="btn_reopen_transcript")
   async def reopen_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -362,7 +403,6 @@ class TranscriptReopenView(discord.ui.View):
       return await interaction.followup.send(f"❌ Errore nella lettura del transcript: {e}", ephemeral=True)
 
     guild = interaction.guild
-    # Forza l'apertura del ticket riaperto nella categoria principale dei ticket (TICKET_CATEGORY_ID)
     category = guild.get_channel(TICKET_CATEGORY_ID)
     
     overwrites = {
@@ -400,7 +440,8 @@ class TranscriptReopenView(discord.ui.View):
     await interaction.followup.send(f"✅ Ticket riaperto con successo in {new_channel.mention}!", ephemeral=True)
 
 class TicketCloseView(discord.ui.View):
-  def __init__(self): super().__init__(timeout=None)
+  def __init__(self): 
+      super().__init__(timeout=None)
 
   @discord.ui.button(label="🔒 Chiudi ed Elimina", style=discord.ButtonStyle.red, custom_id="btn_ticket_close")
   async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -462,7 +503,48 @@ class TicketSelect(discord.ui.Select):
             await ticket_channel.send(content="🤖 L'assistente IA è disattivato. Uno staffer ti risponderà a breve.")
 
 class TicketSelectView(discord.ui.View):
-    def __init__(self): super().__init__(timeout=None); self.add_item(TicketSelect())
+    def __init__(self): 
+        super().__init__(timeout=None)
+        self.add_item(TicketSelect())
+
+
+# ---------------------------------------------------------
+# 7. DEFINIZIONE DEL BOT & REGISTRAZIONE VIEW
+# ---------------------------------------------------------
+class CustomBot(commands.Bot):
+  def __init__(self):
+    super().__init__(command_prefix="!", intents=intents)
+
+  async def setup_hook(self):
+    # Registrazione di tutte le view persistenti
+    self.add_view(TicketControlView())
+    self.add_view(TicketSelectView())
+    self.add_view(TranscriptReopenView())
+    self.add_view(TicketCloseView())
+    self.add_view(VerificationView())
+
+    if not invia_buongiorno_automatico.is_running(): invia_buongiorno_automatico.start()
+    if not invia_buonasera_automatica.is_running(): invia_buonasera_automatica.start()
+    if not aggiorna_messaggio_automatico.is_running(): aggiorna_messaggio_automatico.start()
+
+    await self.tree.sync()
+    print("🚀 [BOT READY]: Bot avviato per Global Roleplay Lounge con tutte le view persistenti registrate.")
+
+bot = CustomBot()
+
+@bot.event
+async def on_member_join(member: discord.Member):
+    canale = member.guild.get_channel(ID_CANALE_WELCOME)
+    if canale:
+        embed = discord.Embed(
+            title="🌍 Benvenuto su Global Roleplay Lounge!",
+            description=f"Ciao {member.mention}, un caloroso benvenuto nella nostra community! 🎉\n\n"
+                        f"Ricordati di dare un'occhiata ai canali informativi e preparati a vivere fantastiche avventure di Roleplay insieme a noi!",
+            color=discord.Color.from_str("#10b981"),
+            timestamp=datetime.datetime.now(TZ_ZONA)
+        )
+        embed.set_image(url=BANNER_URL)
+        await canale.send(content=f"{member.mention}", embed=embed)
 
 @bot.tree.command(name="setup_ticket", description="Invia il pannello principale avanzato dei Ticket")
 @app_commands.checks.has_permissions(administrator=True)
@@ -473,6 +555,18 @@ async def setup_ticket(interaction: discord.Interaction):
         description="Seleziona la categoria di assistenza.", color=discord.Color.from_str("#10b981")
     )
     await interaction.channel.send(embed=embed, view=TicketSelectView())
+
+@bot.tree.command(name="setup_verifica", description="Invia il pannello di verifica con Captcha nel canale corrente")
+@app_commands.checks.has_permissions(administrator=True)
+async def setup_verifica(interaction: discord.Interaction):
+    await interaction.response.send_message("✅ Pannello di verifica inviato con successo!", ephemeral=True)
+    embed = discord.Embed(
+        title="🛡️ Verifica della Community — Global Roleplay Lounge",
+        description="Per accedere a tutti i canali del server e sbloccare l'accesso alla community, devi completare la verifica anti-bot cliccando sul pulsante sottostante.",
+        color=discord.Color.from_str("#10b981")
+    )
+    embed.set_footer(text="Sistema di sicurezza automatico")
+    await interaction.channel.send(embed=embed, view=VerificationView())
 
 @bot.tree.command(name="staff", description="Invia la gerarchia dello staff")
 @app_commands.default_permissions(administrator=True)
@@ -485,7 +579,7 @@ async def staff_command(interaction: discord.Interaction):
     await interaction.followup.send("✅ Gerarchia generata!", ephemeral=True)
 
 # ---------------------------------------------------------
-# 7. TASK AUTOMATICI
+# 8. TASK AUTOMATICI
 # ---------------------------------------------------------
 @tasks.loop(minutes=10)
 async def aggiorna_messaggio_automatico():
