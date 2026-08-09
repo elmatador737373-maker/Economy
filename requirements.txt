@@ -16,3 +16,4 @@ audioop-lts
 pytz
 openai
 supabase
+captcha
