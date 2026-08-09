@@ -52,12 +52,20 @@ ID_CANALE_SALUTI = 1455298208413520014
 ID_CANALE_WELCOME = 0  # Inserisci qui l'ID del canale welcome separato
 LOG_CHANNEL_ID = 1487393847830122597
 
+# ID specifici dei canali delle categorie di ticket forniti
+TICKET_IDS = {
+    "Generale": 1535674581837291601,
+    "Partnership": 1535674582739062874,
+    "Bando Staff": 1535674584781553665,
+    "Blacklist": 1535674583611605045
+}
+
 # Lista dei ruoli da assegnare a verifica completata (sostituisci con i veri ID)
 VERIFIED_ROLE_IDS = [0]  
 
 # Nomi dei file locali presenti nella stessa cartella del bot
-NOME_FILE_BANNER = "399B3005-E3EB-4438-A080-7079F9F8E462.png"
-NOME_FILE_BANNER_VERIFICA = "298087E6-C4DB-42C8-82E9-3A637AD0E4DA.png"  # Sostituisci con il nome esatto del file immagine nella cartella
+NOME_FILE_BANNER = "giphy.gif"
+NOME_FILE_BANNER_VERIFICA = "verifica.png"
 
 TZ_ZONA = pytz.timezone("Europe/Rome")
 ORARIO_BUONGIORNO = datetime.time(hour=8, minute=0, second=0, tzinfo=TZ_ZONA)
@@ -458,11 +466,10 @@ class TranscriptReopenView(discord.ui.View):
 class TicketSelect(discord.ui.Select):
     def __init__(self):
         options = [
-            discord.SelectOption(label="Ticket Generale", description="Assistenza generica", emoji="📩", value="Generale"),
+            discord.SelectOption(label="Generale", description="Assistenza generica", emoji="📩", value="Generale"),
             discord.SelectOption(label="Partnership", description="Richieste partnership", emoji="🤝", value="Partnership"),
-            discord.SelectOption(label="Bando Staff", description="Candidati per lo staff", emoji="📋", value="Staff"),
-            discord.SelectOption(label="Amministrazione", description="Supporto direttivo", emoji="👑", value="Amministrazione"),
-            discord.SelectOption(label="Grafiche & Bot", description="Richieste grafiche o bot", emoji="🎨", value="Grafiche & Bot"),
+            discord.SelectOption(label="Bando Staff", description="Candidati per lo staff", emoji="📋", value="Bando Staff"),
+            discord.SelectOption(label="Blacklist", description="Richieste o ricorsi blacklist", emoji="⛔", value="Blacklist"),
         ]
         super().__init__(placeholder="Scegli la categoria del Ticket...", min_values=1, max_values=1, options=options, custom_id="select_ticket_category")
 
@@ -481,7 +488,7 @@ class TicketSelect(discord.ui.Select):
         
         category = guild.get_channel(TICKET_CATEGORY_ID)
         ticket_channel = await guild.create_text_channel(
-            name=f"ticket-{category_type.lower()}-{user.name}", 
+            name=f"ticket-{category_type.lower().replace(' ', '-')}-{user.name}", 
             overwrites=overwrites, 
             category=category if isinstance(category, discord.CategoryChannel) else None
         )
@@ -499,9 +506,8 @@ class TicketSelect(discord.ui.Select):
         descrizioni_embed = {
             "Generale": "Hai aperto un ticket di **Assistenza Generale**. Esponi il tuo problema o la tua domanda, lo staff ti risponderà il prima possibile.",
             "Partnership": "Hai avviato una richiesta di **Partnership** 🤝.\nSegui le indicazioni per procedere con l'accordo tra community.",
-            "Staff": "Hai scelto di candidarti per il **Bando Staff** 📋.\nRaccontaci le tue esperienze e perché vorresti entrare a far parte del nostro team.",
-            "Amministrazione": "Hai aperto un ticket per l'**Amministrazione** 👑.\nQuesto canale è riservato a comunicazioni direttive o questioni importanti.",
-            "Grafiche & Bot": "Hai richiesto supporto per **Grafiche & Bot** 🎨.\nSpecifica i dettagli del progetto o del bot di cui hai bisogno."
+            "Bando Staff": "Hai scelto di candidarti per il **Bando Staff** 📋.\nRaccontaci le tue esperienze e perché vorresti entrare a far parte del nostro team.",
+            "Blacklist": "Hai aperto un ticket per la **Blacklist** ⛔.\nEsponi la tua situazione o richiedi chiarimenti in merito."
         }
 
         embed = discord.Embed(
