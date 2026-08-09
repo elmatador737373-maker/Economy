@@ -47,21 +47,21 @@ intents.message_content = True
 intents.members = True
 
 STAFF_GENERAL_ROLE_ID = 1455297926468468777  
-TICKET_CATEGORY_ID = 1455298169415012547    
 ID_CANALE_SALUTI = 1455298208413520014
 ID_CANALE_WELCOME = 0  # Inserisci qui l'ID del canale welcome separato
 LOG_CHANNEL_ID = 1487393847830122597
 
-# ID specifici dei canali delle categorie di ticket forniti
+# ID specifici delle categorie di canali fornite per i ticket
 TICKET_IDS = {
     "Generale": 1535674581837291601,
     "Partnership": 1535674582739062874,
-    "Bando Staff": 1535674584781553665,
-    "Blacklist": 1535674583611605045
+    "Blacklist": 1535674583611605045,
+    "Bando Staff": 1535674584781553665
 }
 
 # Lista dei ruoli da assegnare a verifica completata (sostituisci con i veri ID)
 VERIFIED_ROLE_IDS = [0]  
+
 
 # Nomi dei file locali presenti nella stessa cartella del bot
 NOME_FILE_BANNER = "399B3005-E3EB-4438-A080-7079F9F8E462.png"
@@ -427,7 +427,10 @@ class TranscriptReopenView(discord.ui.View):
             return await interaction.followup.send(f"❌ Errore nella lettura del transcript: {e}", ephemeral=True)
 
         guild = interaction.guild
-        category = guild.get_channel(TICKET_CATEGORY_ID)
+        
+        # Cerca la categoria originale tramite il nome del ticket o usa la prima disponibile
+        target_category_id = TICKET_IDS.get("Generale")
+        category = guild.get_channel(target_category_id)
         
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(view_channel=False),
@@ -486,7 +489,10 @@ class TicketSelect(discord.ui.Select):
         staff_role = guild.get_role(STAFF_GENERAL_ROLE_ID)
         if staff_role: overwrites[staff_role] = discord.PermissionOverwrite(read_messages=True, send_messages=True, attach_files=True)
         
-        category = guild.get_channel(TICKET_CATEGORY_ID)
+        # Recupera l'ID specifico della categoria in base all'opzione selezionata
+        target_category_id = TICKET_IDS.get(category_type)
+        category = guild.get_channel(target_category_id) if target_category_id else None
+
         ticket_channel = await guild.create_text_channel(
             name=f"ticket-{category_type.lower().replace(' ', '-')}-{user.name}", 
             overwrites=overwrites, 
