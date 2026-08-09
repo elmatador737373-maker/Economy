@@ -56,7 +56,7 @@ LOG_CHANNEL_ID = 1487393847830122597
 VERIFIED_ROLE_IDS = [0]  
 
 # Nomi dei file locali presenti nella stessa cartella del bot
-NOME_FILE_BANNER = "giphy.gif"
+NOME_FILE_BANNER = "399B3005-E3EB-4438-A080-7079F9F8E462.png"
 NOME_FILE_BANNER_VERIFICA = "298087E6-C4DB-42C8-82E9-3A637AD0E4DA.png"  # Sostituisci con il nome esatto del file immagine nella cartella
 
 TZ_ZONA = pytz.timezone("Europe/Rome")
