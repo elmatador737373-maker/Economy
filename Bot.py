@@ -614,7 +614,7 @@ async def setup_ticket(interaction: discord.Interaction):
     
     file_banner = None
     if os.path.exists(NOME_FILE_BANNER_TICKET):
-        file_banner = discord.File(NOME_FILE_BANNER_TICKET, filename="ticket_banner.png")
+        file_banner = discord.File(NOME_FILE_BANNER_TICKET, filename="C4A8FA6E-8FC0-455E-88B1-6FD6600A2327.png")
         embed.set_image(url="attachment://ticket_banner.png")
 
     if file_banner:
