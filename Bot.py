@@ -167,38 +167,12 @@ async def chiudi_ticket_definitivo(channel: discord.TextChannel, closed_by_name:
     if log_channel:
         embed = discord.Embed(
             title="🔒 Ticket Chiuso ed Archiviato",
-            description=f"Il ticket **`{channel.name}`** è stato chiuso da {closed_by_mention}.\n\n📜 **Cronologia Messaggi Ricostruita (Webhook):**",
-            color=discord.Color.dark_orange(),
+            description=f"Il ticket **`{channel.name}`** è stato chiuso da {closed_by_mention}.\n\n📦 **File JSON di Backup e Ripristino Rapido**",
+            color=discord.Color.dark_teal(),
             timestamp=discord.utils.utcnow()
         )
-        await log_channel.send(embed=embed)
-
-        webhooks = await log_channel.webhooks()
-        webhook = webhooks[0] if webhooks else await log_channel.create_webhook(name="Global RP Transcript Bot")
-
-        for msg_data in messages_list:
-            content = msg_data.get("content", "")
-            raw_username = msg_data.get("author", "Utente Sconosciuto")
-            username = raw_username.replace("discord", "Utente").replace("Discord", "Utente")
-            avatar_url = msg_data.get("avatar_url", None)
-            embeds_list = [discord.Embed.from_dict(e) for e in msg_data.get("embeds", [])]
-
-            if content or embeds_list:
-                try:
-                    await webhook.send(
-                        content=content if content else None,
-                        username=username,
-                        avatar_url=avatar_url,
-                        embeds=embeds_list
-                    )
-                except Exception as e:
-                    print(f"⚠️ [ERRORE INVIO WEBHOOK TRANSCRIPT]: {e}")
-
-        final_embed = discord.Embed(
-            description="📦 **File JSON di Backup e Ripristino Rapido**",
-            color=discord.Color.dark_teal()
-        )
-        await log_channel.send(embed=final_embed, file=file, view=TranscriptReopenView())
+        # Invia l'embed di notifica con il file JSON allegato e la view con il pulsante per riaprire
+        await log_channel.send(embed=embed, file=file, view=TranscriptReopenView())
 
     await db_delete_ticket(channel.id)
     try:
