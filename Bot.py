@@ -562,7 +562,7 @@ class CustomBot(commands.Bot):
         self.add_view(TicketControlView())
         self.add_view(TicketCloseView())
         self.add_view(TranscriptReopenView())
-
+        self.add_view(FontView())
         if not invia_buongiorno_automatico.is_running(): invia_buongiorno_automatico.start()
         if not invia_buonasera_automatica.is_running(): invia_buonasera_automatica.start()
         if not aggiorna_messaggio_automatico.is_running(): aggiorna_messaggio_automatico.start()
@@ -655,6 +655,86 @@ async def staff_command(interaction: discord.Interaction):
     global TARGET_CHANNEL_ID, TARGET_MESSAGE_ID
     TARGET_CHANNEL_ID, TARGET_MESSAGE_ID = interaction.channel.id, msg.id
     await interaction.followup.send("✅ Gerarchia generata!", ephemeral=True)
+import re
+import discord
+from discord import app_commands
+from discord.ui import Button, View, Modal, TextInput
+
+# Funzione per convertire il testo nello stile di 𝖦𝖾𝗇𝖾𝗋𝖺_𝖥𝗈𝗇𝗍
+def convert_to_genera_font(text: str) -> str:
+    normal = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+    genera_bold = "𝗔𝗕𝗖𝗗𝗘𝗙𝗚𝗛𝗜𝗝𝗞𝗟𝗠𝗡𝗢𝗣𝗤𝗥𝗦𝗧𝗨𝗩𝗪𝗫𝗬𝗭𝗮𝗯𝗰𝗱𝗲𝗳𝗴𝗵𝗶𝗷𝗸𝗹𝗺𝗻𝗼𝗽𝗾𝗿𝘀𝘁𝘂𝘃𝘄𝘅𝘆𝘇𝟬𝟭𝟮𝟯𝟰𝟱𝟲𝟳𝟴𝟵"
+    table = str.maketrans(normal, genera_bold)
+    return text.translate(table)
+
+# 1. Modulo (Finestra di input)
+class FontModal(Modal, title="Generatore Pannello Font Canali"):
+    def __init__(self):
+        super().__init__()
+        
+        self.user_input = TextInput(
+            label="Inserisci nel formato: emoji (Nome_Canale)",
+            placeholder="💬 (generale)",
+            style=discord.TextStyle.short,
+            required=True,
+            max_length=100
+        )
+        self.add_item(self.user_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        input_val = self.user_input.value.strip()
+        
+        # Estrae l'emoji e il nome del canale usando una Regex
+        match = re.match(r"^(.*?)\s*\((.*?)\)$", input_val)
+        
+        if match:
+            emoji_parte = match.group(1).strip()
+            nome_canale = match.group(2).strip()
+            
+            # Converte il nome del canale nel font desiderato
+            font_convertito = convert_to_genera_font(nome_canale)
+            
+            # Risultato finale senza parentesi: 「emoji」Font_Scelto
+            risultato_finale = f"「{emoji_parte}」{font_convertito}"
+        else:
+            risultato_finale = "Formato non valido. Usa: emoji (Nome_Canale)"
+
+        await interaction.response.send_message(
+            f"Ecco il tuo risultato:\n{risultato_finale}", 
+            ephemeral=True
+        )
+
+# 2. Vista con il Pulsante (Persistente)
+class FontView(View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="Genera Canale", style=discord.ButtonStyle.primary, emoji="📢", custom_id="persistent_font_channels_button_v3")
+    async def open_modal(self, interaction: discord.Interaction, button: Button):
+        await interaction.response.send_modal(FontModal())
+
+
+    # Comando registrato direttamente su bot.tree
+    @bot.tree.command(name="pannello_font_canali", description="Invia il pannello interattivo per formattare i nomi dei canali")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def pannello_font_canali(interaction: discord.Interaction):
+        embed = discord.Embed(
+            title="✨ 𝖦𝖾𝗇𝖾𝗋𝖺_𝖥𝗈𝗇𝗍 - Pannello Canali",
+            description="Clicca sul pulsante qui sotto per inserire la tua **emoji** e il **Nome del Canale**!",
+            color=discord.Color.blurple()
+        )
+        embed.set_footer(text="Sistema di formattazione canali")
+        
+        await interaction.channel.send(embed=embed, view=FontView())
+        await interaction.response.send_message("Pannello dei canali inviato con successo!", ephemeral=True)
+
+    # Gestione permessi mancanti per il comando su bot.tree
+    @pannello_font_canali.error
+    async def pannello_font_canali_error(interaction: discord.Interaction, error):
+        if isinstance(error, app_commands.errors.MissingPermissions):
+            await interaction.response.send_message("Non hai i permessi di amministratore per usare questo comando.", ephemeral=True)
+        else:
+            await interaction.response.send_message(f"Si è verificato un errore: {error}", ephemeral=True)
 
 # ---------------------------------------------------------
 # 7. TASK AUTOMATICI
