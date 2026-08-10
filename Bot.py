@@ -663,7 +663,7 @@ from discord.ui import Button, View, Modal, TextInput
 # Funzione per convertire il testo nello stile di 𝖦𝖾𝗇𝖾𝗋𝖺_𝖥𝗈𝗇𝗍
 def convert_to_genera_font(text: str) -> str:
     normal = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
-    genera_bold = "𝗔𝗕𝗖𝗗𝗘𝗙𝗚𝗛𝗜𝗝𝗞𝗟𝗠𝗡𝗢𝗣𝗤𝗥𝗦𝗧𝗨𝗩𝗪𝗫𝗬𝗭𝗮𝗯𝗰𝗱𝗲𝗳𝗴𝗵𝗶𝗷𝗸𝗹𝗺𝗻𝗼𝗽𝗾𝗿𝘀𝘁𝘂𝘃𝘄𝘅𝘆𝘇𝟬𝟭𝟮𝟯𝟰𝟱𝟲𝟳𝟴𝟵"
+    genera_bold = "𝘈𝘉𝘊𝘋𝘌𝘍𝘎𝘏𝘐𝘑𝘒𝘓𝘔𝘕𝘖𝘗𝘘𝘙𝘚𝘛𝘜𝘝𝘞𝘟𝘠𝘡𝘢𝘣𝘤𝘥𝘦𝘧𝘨𝘩𝘪𝘫𝘬𝘭𝘮𝘯𝘰𝘱𝘲𝘳𝘴𝘵𝘶𝘷𝘸𝘹𝘺𝘻𝟎𝟏𝟮𝟯𝟰𝟱𝟲𝟳𝟴𝟵"
     table = str.maketrans(normal, genera_bold)
     return text.translate(table)
 
@@ -674,7 +674,7 @@ class FontModal(Modal, title="Generatore Pannello Font Canali"):
         
         self.user_input = TextInput(
             label="Inserisci nel formato: emoji (Nome_Canale)",
-            placeholder="💬 (generale)",
+            placeholder="💬 generale",
             style=discord.TextStyle.short,
             required=True,
             max_length=100
@@ -684,20 +684,28 @@ class FontModal(Modal, title="Generatore Pannello Font Canali"):
     async def on_submit(self, interaction: discord.Interaction):
         input_val = self.user_input.value.strip()
         
-        # Estrae l'emoji e il nome del canale usando una Regex
+        # Prova prima il formato con le parentesi: emoji (Nome_Canale)
         match = re.match(r"^(.*?)\s*\((.*?)\)$", input_val)
         
         if match:
             emoji_parte = match.group(1).strip()
             nome_canale = match.group(2).strip()
-            
-            # Converte il nome del canale nel font desiderato
+        else:
+            # Se non ci sono parentesi, divide il testo in base al primo spazio o carattere separatore
+            parts = input_val.split(maxsplit=1)
+            if len(parts) == 2:
+                emoji_parte = parts[0].strip()
+                nome_canale = parts[1].strip()
+            else:
+                emoji_parte = input_val
+                nome_canale = ""
+        
+        # Converte il nome del canale nel font corretto se presente
+        if nome_canale:
             font_convertito = convert_to_genera_font(nome_canale)
-            
-            # Risultato finale senza parentesi: 「emoji」Font_Scelto
             risultato_finale = f"「{emoji_parte}」{font_convertito}"
         else:
-            risultato_finale = "Formato non valido. Usa: emoji (Nome_Canale)"
+            risultato_finale = f"「{emoji_parte}」"
 
         await interaction.response.send_message(
             f"Ecco il tuo risultato:\n{risultato_finale}", 
