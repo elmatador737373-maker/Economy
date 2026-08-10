@@ -713,28 +713,31 @@ class FontView(View):
     async def open_modal(self, interaction: discord.Interaction, button: Button):
         await interaction.response.send_modal(FontModal())
 
+# Registrazione della view persistente all'avvio (da inserire nel file principale del bot, es. dentro on_ready)
+# Esempio: bot.add_view(FontView())
 
-    # Comando registrato direttamente su bot.tree
-    @bot.tree.command(name="pannello_font_canali", description="Invia il pannello interattivo per formattare i nomi dei canali")
-    @app_commands.checks.has_permissions(administrator=True)
-    async def pannello_font_canali(interaction: discord.Interaction):
-        embed = discord.Embed(
-            title="✨ 𝖦𝖾𝗇𝖾𝗋𝖺_𝖥𝗈𝗇𝗍 - Pannello Canali",
-            description="Clicca sul pulsante qui sotto per inserire la tua **emoji** e il **Nome del Canale**!",
-            color=discord.Color.blurple()
-        )
-        embed.set_footer(text="Sistema di formattazione canali")
-        
-        await interaction.channel.send(embed=embed, view=FontView())
-        await interaction.response.send_message("Pannello dei canali inviato con successo!", ephemeral=True)
+# 3. Comando registrato direttamente su bot.tree (all'esterno di qualsiasi funzione di setup)
+# Assicurati che 'bot' sia la tua istanza del client/bot di Discord.
 
-    # Gestione permessi mancanti per il comando su bot.tree
-    @pannello_font_canali.error
-    async def pannello_font_canali_error(interaction: discord.Interaction, error):
-        if isinstance(error, app_commands.errors.MissingPermissions):
-            await interaction.response.send_message("Non hai i permessi di amministratore per usare questo comando.", ephemeral=True)
-        else:
-            await interaction.response.send_message(f"Si è verificato un errore: {error}", ephemeral=True)
+@bot.tree.command(name="pannello_font_canali", description="Invia il pannello interattivo per formattare i nomi dei canali")
+@app_commands.checks.has_permissions(administrator=True)
+async def pannello_font_canali(interaction: discord.Interaction):
+    embed = discord.Embed(
+        title="✨ 𝖦𝖾𝗇𝖾𝗋𝖺_𝖥𝗈𝗇𝗍 - Pannello Canali",
+        description="Clicca sul pulsante qui sotto per inserire la tua **emoji** e il **Nome del Canale**!",
+        color=discord.Color.blurple()
+    )
+    embed.set_footer(text="Sistema di formattazione canali")
+    
+    await interaction.channel.send(embed=embed, view=FontView())
+    await interaction.response.send_message("Pannello dei canali inviato con successo!", ephemeral=True)
+
+@pannello_font_canali.error
+async def pannello_font_canali_error(interaction: discord.Interaction, error):
+    if isinstance(error, app_commands.errors.MissingPermissions):
+        await interaction.response.send_message("Non hai i permessi di amministratore per usare questo comando.", ephemeral=True)
+    else:
+        await interaction.response.send_message(f"Si è verificato un errore: {error}", ephemeral=True)
 
 # ---------------------------------------------------------
 # 7. TASK AUTOMATICI
