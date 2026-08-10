@@ -325,7 +325,7 @@ async def genera_embed_staff(guild: discord.Guild) -> discord.Embed:
 # ---------------------------------------------------------
 class CaptchaModal(discord.ui.Modal, title="Verifica Anti-Bot (Captcha)"):
     codice_inserito = discord.ui.TextInput(
-        label="Inserisci il codice che vedi nell'immagine",
+        label="Digita il codice che vedi sopra nell'immagine",
         placeholder="Es: A3f9K",
         min_length=4,
         max_length=6,
@@ -337,7 +337,7 @@ class CaptchaModal(discord.ui.Modal, title="Verifica Anti-Bot (Captcha)"):
         codice_esatto = active_captchas.get(user_id)
 
         if not codice_esatto:
-            return await interaction.response.send_message("❌ Il tuo codice captcha è scaduto o non valido. Clicca nuovamente sul pulsante di verifica.", ephemeral=True)
+            return await interaction.response.send_message("❌ Il tuo codice captcha è scaduto o non valido. Clicca nuovamente sul pulsante di verifica nel canale.", ephemeral=True)
 
         if self.codice_inserito.value.strip().upper() == codice_esatto.upper():
             active_captchas.pop(user_id, None)
@@ -346,21 +346,25 @@ class CaptchaModal(discord.ui.Modal, title="Verifica Anti-Bot (Captcha)"):
             member = interaction.user
 
             roles_to_add = [guild.get_role(r_id) for r_id in VERIFIED_ROLE_IDS if guild.get_role(r_id) is not None]
-            roles_to_remove = [r for r in member.roles if r.id in VERIFIED_ROLE_IDS]
+            
+            # INSERISCI QUI L'ID DEL RUOLO SPECIFICO DA RIMUOVERE (es. il ruolo non verificato)
+            ID_RUOLO_DA_RIMUOVERE = 1536162317228711936  # Sostituisci 0 con l'ID reale del ruolo da togliere
+            ruolo_da_rimuovere = guild.get_role(ID_RUOLO_DA_RIMUOVERE)
 
-            if roles_to_add:
-                try:
-                    if roles_to_remove:
-                        await member.remove_roles(*roles_to_remove, reason="Pulizia ruoli verifica precedente.")
-                    
+            try:
+                # Rimuove il ruolo specifico se l'utente ce l'ha e l'ID è valido
+                if ruolo_da_rimuovere and ruolo_da_rimuovere in member.roles:
+                    await member.remove_roles(ruolo_da_rimuovere, reason="Verifica Captcha completata.")
+
+                # Aggiunge i ruoli verificati
+                if roles_to_add:
                     await member.add_roles(*roles_to_add, reason="Verifica Captcha completata con successo.")
-                    await interaction.response.send_message("✅ **Verifica completata con successo!** Ruoli aggiornati e benvenuto su Global Roleplay Lounge.", ephemeral=True)
-                except Exception as e:
-                    await interaction.response.send_message(f"⚠️ Verifica riuscita, ma c'è stato un errore nella gestione dei ruoli: {e}", ephemeral=True)
-            else:
-                await interaction.response.send_message("✅ **Verifica completata!** (Errore di configurazione: Nessun ruolo valido trovato nel server).", ephemeral=True)
+                
+                await interaction.response.send_message("✅ **Verifica completata con successo!** Ruoli aggiornati e benvenuto su Global Roleplay Lounge.", ephemeral=True)
+            except Exception as e:
+                await interaction.response.send_message(f"⚠️ Verifica riuscita, ma c'è stato un errore nella gestione dei ruoli: {e}", ephemeral=True)
         else:
-            await interaction.response.send_message("❌ **Codice errato!** Riprova cliccando nuovamente sul pulsante di verifica.", ephemeral=True)
+            await interaction.response.send_message("❌ **Codice errato!** Riprova cliccando nuovamente sul pulsante.", ephemeral=True)
 
 class VerificationModalButtonView(discord.ui.View):
     def __init__(self):
@@ -586,15 +590,39 @@ async def on_member_join(member: discord.Member):
             
         await canale.send(content=f"{member.mention}", embed=embed, file=file_banner)
 
+# Aggiungi questa costante in cima al codice insieme alle altre (es. vicino a NOME_FILE_BANNER)
+NOME_FILE_BANNER_TICKET = "banner_ticket.png"  # Sostituisci con il nome del file del tuo banner per i ticket
+
 @bot.tree.command(name="setup_ticket", description="Invia il pannello principale avanzato dei Ticket")
 @app_commands.checks.has_permissions(administrator=True)
 async def setup_ticket(interaction: discord.Interaction):
-    await interaction.response.send_message("✅ Pannello inviato", ephemeral=True)
     embed = discord.Embed(
         title="🌍 Global Roleplay Lounge — Assistenza & Supporto Ufficiale",
-        description="Seleziona la categoria di assistenza.", color=discord.Color.from_str("#10b981")
+        description=(
+            "Hai bisogno di aiuto o desideri metterti in contatto con lo staff?\n"
+            "Seleziona la categoria più adatta alle tue esigenze nel menu a tendina sottostante.\n\n"
+            "📋 **Categorie Disponibili:**\n"
+            "📩 **Generale** — Per qualsiasi domanda, dubbio o assistenza generale.\n"
+            "🤝 **Partnership** — Per avviare una collaborazione o accordo tra community.\n"
+            "📋 **Bando Staff** — Per candidarti ed entrare a far parte del nostro team.\n"
+            "⛔ **Blacklist** — Per richiedere chiarimenti, revisioni o presentare un ricorso.\n\n"
+            "⚠️ *Ti chiediamo di aprire un solo ticket alla volta e di mantenere un comportamento educato.*"
+        ), 
+        color=discord.Color.from_str("#10b981")
     )
-    await interaction.channel.send(embed=embed, view=TicketSelectView())
+    embed.set_footer(text="Global Roleplay Lounge — Sistema Ticket")
+    
+    file_banner = None
+    if os.path.exists(NOME_FILE_BANNER_TICKET):
+        file_banner = discord.File(NOME_FILE_BANNER_TICKET, filename="ticket_banner.png")
+        embed.set_image(url="attachment://ticket_banner.png")
+
+    if file_banner:
+        await interaction.channel.send(embed=embed, file=file_banner, view=TicketSelectView())
+    else:
+        await interaction.channel.send(embed=embed, view=TicketSelectView())
+        
+    await interaction.response.send_message("✅ Pannello dei ticket inviato con successo!", ephemeral=True)
 
 @bot.tree.command(name="setup_verifica", description="Invia il pannello di verifica con Captcha nel canale corrente")
 @app_commands.checks.has_permissions(administrator=True)
