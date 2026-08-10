@@ -215,7 +215,7 @@ DESCRIZIONE_UFFICIALE_GLOBAL_RP = (
     "→ 🌐 Entrare in un network globale dinamico e professionale\n\n"
     "---\n\n"
     "🎯 **Unisciti al nostro universo di gioco!**\n"
-    "🔗 **Link:** https://discord.gg/globalroleplay"
+    "🔗 **Link:** https://discord.gg/discord-talia-1-3k-1348947150641303583"
 )
 
 ai_tools = [
