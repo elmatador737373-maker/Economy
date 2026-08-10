@@ -591,7 +591,7 @@ async def on_member_join(member: discord.Member):
         await canale.send(content=f"{member.mention}", embed=embed, file=file_banner)
 
 # Aggiungi questa costante in cima al codice insieme alle altre (es. vicino a NOME_FILE_BANNER)
-NOME_FILE_BANNER_TICKET = "banner_ticket.png"  # Sostituisci con il nome del file del tuo banner per i ticket
+NOME_FILE_BANNER_TICKET = "C4A8FA6E-8FC0-455E-88B1-6FD6600A2327.png"  # Sostituisci con il nome del file del tuo banner per i ticket
 
 @bot.tree.command(name="setup_ticket", description="Invia il pannello principale avanzato dei Ticket")
 @app_commands.checks.has_permissions(administrator=True)
@@ -614,7 +614,7 @@ async def setup_ticket(interaction: discord.Interaction):
     
     file_banner = None
     if os.path.exists(NOME_FILE_BANNER_TICKET):
-        file_banner = discord.File(NOME_FILE_BANNER_TICKET, filename="C4A8FA6E-8FC0-455E-88B1-6FD6600A2327.png")
+        file_banner = discord.File(NOME_FILE_BANNER_TICKET, filename="ticket_banner.png")
         embed.set_image(url="attachment://ticket_banner.png")
 
     if file_banner:
