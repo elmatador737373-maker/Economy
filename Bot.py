@@ -46,7 +46,7 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 
-STAFF_GENERAL_ROLE_ID = 1455297926468468777  
+STAFF_GENERAL_ROLE_ID = 1536159205289885796  
 ID_CANALE_SALUTI = 1536159205289885796
 ID_CANALE_WELCOME = 1536159444621205637  # Inserisci qui l'ID del canale welcome separato
 LOG_CHANNEL_ID = 1536159424983339109
